@@ -213,10 +213,15 @@ class Display:
     On the first call to show(), lines are printed normally.  On subsequent
     calls the cursor is moved back up and lines are overwritten in place so
     the widget stays anchored in the scrollback buffer.
+
+    The optional *output* argument controls where rendered text is sent;
+    it defaults to sys.stdout.  Pass an explicit file object (e.g. a pty
+    slave fd wrapped with os.fdopen) to capture output in tests.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, output=None) -> None:
         self._prev_n = 0   # number of table lines already printed
+        self._out = output if output is not None else sys.stdout
 
     def show(self, table_lines: list[str], footer: str) -> None:
         n = len(table_lines)
@@ -224,13 +229,13 @@ class Display:
         if self._prev_n > 0:
             # Return to start of first table line:
             # \r  → go to column 0 of the footer line (current position)
-            # \033[N]A → move up N lines to the first table line
+            # \033[NA → move up N lines to the first table line
             buf += f"\r\033[{self._prev_n}A"
         for line in table_lines:
             buf += f"\033[2K\r{line}\n"   # clear + overwrite each table line
         buf += f"\033[2K\r{footer}"        # clear + overwrite footer (no \n)
-        sys.stdout.write(buf)
-        sys.stdout.flush()
+        self._out.write(buf)
+        self._out.flush()
         self._prev_n = n
 
 
@@ -266,8 +271,20 @@ def read_key(fd: int) -> str:
 
 # ─── Interactive loop ─────────────────────────────────────────────────────────
 
-def run(rows: list[Row]) -> str:
-    """Run the interactive editor. Returns 'accepted' or 'cancelled'."""
+def run(rows: list[Row], *, stdin_fd: Optional[int] = None, output=None) -> str:
+    """Run the interactive editor. Returns 'accepted' or 'cancelled'.
+
+    Keyword arguments
+    -----------------
+    stdin_fd : int | None
+        File descriptor to use for keyboard input.  When *None* (default)
+        falls back to ``sys.stdin.fileno()``.  Pass a pty slave fd in tests
+        to drive the TUI without touching the real terminal.
+    output : file-like | None
+        Where rendered text is written.  When *None* (default) falls back to
+        ``sys.stdout``.  Pass an explicit file object in tests to capture
+        TUI output independently of the process's stdout.
+    """
     n = len(rows)
     try:
         term_h = os.get_terminal_size().lines
@@ -283,7 +300,7 @@ def run(rows: list[Row]) -> str:
     edit_err: Optional[str] = None
     vstart   = 0
     collisions, invalid = recompute(rows)
-    display  = Display()
+    display  = Display(output=output)
 
     def refresh() -> None:
         tbl = build_table(rows, mode, vstart, viewport_h, edit_row, edit_buf, collisions)
@@ -305,7 +322,7 @@ def run(rows: list[Row]) -> str:
 
     refresh()
 
-    fd = sys.stdin.fileno()
+    fd = stdin_fd if stdin_fd is not None else sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     result = "cancelled"
 
