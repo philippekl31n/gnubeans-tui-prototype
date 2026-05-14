@@ -219,6 +219,37 @@ class TestInlineLayout(unittest.TestCase):
             "Blank line found between table bottom border and footer",
         )
 
+    def test_no_blank_line_between_last_data_row_and_footer_pty(self) -> None:
+        """PTY output: the line after the row-4 data must not be blank.
+
+        Display.show() writes each line as b'\\033[2K\\r{content}\\n', so
+        splitting on '\\n' and stripping leading '\\r' gives the actual
+        content lines without spurious blank lines.
+        """
+        # TODO: update after #6 — in the borderless design there is no bottom
+        # border between the data row and the footer; adjust the comment to
+        # note that the footer hint line follows the data row directly.
+        _, raw = _drive([b"\x03"])
+        text = raw.decode("utf-8", errors="replace")
+        # Strip ANSI, split on \n, remove the leading \r that Display.show()
+        # places at the start of each line (it moves to column 0, not a newline).
+        clean = strip_ansi(text)
+        lines = [part.lstrip("\r") for part in clean.split("\n")]
+        # Locate the last occurrence of the line containing "1003057".
+        idx = None
+        for i, line in enumerate(lines):
+            if "1003057" in line:
+                idx = i
+        self.assertIsNotNone(idx, "Row containing '1003057' not found in PTY output")
+        # The line immediately after must not be blank.
+        # Current design: bottom border (└─…) appears there.
+        # Post-#6: footer hint line appears there directly.
+        next_line = lines[idx + 1] if idx is not None and idx + 1 < len(lines) else ""
+        self.assertTrue(
+            next_line.strip(),
+            f"Blank line found immediately after row-4 data line (index {idx})",
+        )
+
     # ── test 7 ────────────────────────────────────────────────────────────────
 
     def test_cursor_up_emitted_on_rerender(self) -> None:
@@ -273,6 +304,30 @@ class TestInteractionFlows(unittest.TestCase):
             [b"a"]
         )
         result, _ = _drive(keystrokes, timeout=8.0)
+        self.assertEqual(result, "accepted")
+
+    def test_edit_all_four_rows_then_accept(self) -> None:
+        """Edit all four rows explicitly before accepting — mirrors plan step 11."""
+        # Row 3 (VBMPX) and row 4 (C1003057) are already valid; we still open
+        # them to confirm the edit→select→accept round-trip with every row.
+        BS = b"\x7f"
+        keystrokes: list[bytes] = (
+            # Row 1 → ATANDT  (clears 4-char "AT-T")
+            [b"1", b"\r"] + [BS] * 4 +
+            [b"A", b"T", b"A", b"N", b"D", b"T", b"\r"] +
+            # Row 2 → ATT    (clears 4-char "AT-T")
+            [b"2", b"\r"] + [BS] * 4 +
+            [b"A", b"T", b"T", b"\r"] +
+            # Row 4 → CTHREE (clears 8-char "C1003057")
+            [b"4", b"\r"] + [BS] * 8 +
+            [b"C", b"T", b"H", b"R", b"E", b"E", b"\r"] +
+            # Row 3 → VBMPX  (confirmed unchanged; clears 5-char "VBMPX")
+            [b"3", b"\r"] + [BS] * 5 +
+            [b"V", b"B", b"M", b"P", b"X", b"\r"] +
+            # All four rows confirmed, zero collisions → accept
+            [b"a"]
+        )
+        result, _ = _drive(keystrokes, timeout=12.0)
         self.assertEqual(result, "accepted")
 
     def test_accept_blocked_while_collisions_remain(self) -> None:
