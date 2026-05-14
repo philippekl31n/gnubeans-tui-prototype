@@ -23,20 +23,26 @@ from rich.text import Text
 
 # ─── Symbol logic ─────────────────────────────────────────────────────────────
 
-_CURRENCY_RE = re.compile(r"^[A-Z]([A-Z0-9'\-\.]{0,22}[A-Z0-9])?$")
+_CURRENCY_RE = re.compile(r"^[A-Z]([A-Z0-9\-]{0,22}[A-Z0-9])?$")
 
 
 def is_valid_currency(s: str) -> bool:
-    """Return True if *s* is a valid Beancount currency symbol."""
+    """Return True if *s* is a valid Beancount currency symbol.
+
+    Rules: uppercase letters, digits, and hyphens only; must start with a
+    letter; must end with a letter or digit; 1–24 characters total.
+    """
     return bool(s and _CURRENCY_RE.match(s))
 
 
 def suggest_currency(raw: str) -> str:
     """Sanitise an arbitrary commodity id into a valid Beancount currency."""
     s = raw.upper()
-    s = re.sub(r"[^A-Z0-9'\-\.]", "-", s)
-    s = re.sub(r"[-'\.]{2,}", "-", s)
-    s = s.strip("-'.")
+    # Replace every character that isn't A-Z, 0-9, or hyphen with a hyphen
+    s = re.sub(r"[^A-Z0-9\-]", "-", s)
+    # Collapse consecutive hyphens into one
+    s = re.sub(r"-{2,}", "-", s)
+    s = s.strip("-")
     if not s:
         return "UNKNOWN"
     if not s[0].isalpha():
@@ -381,7 +387,7 @@ class CommodityEditor(App[str]):
         if self.edit_buf and not is_valid_currency(self.edit_buf):
             self.edit_err = (
                 f'"{self.edit_buf}" \u2014 must start with A\u2013Z; '
-                f"only A\u2013Z 0\u20139 - . ' allowed"
+                f"only uppercase A\u2013Z, 0\u20139, and hyphens allowed"
             )
         else:
             self.edit_err = None
