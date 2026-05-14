@@ -130,19 +130,25 @@ class CommodityEditor(App[str]):
         Binding("ctrl+c", "force_quit", "Quit", priority=True, show=False),
     ]
 
-    CSS = """
-    Screen {
+    # Total inline height: table header (3 lines) + data rows + bottom border
+    # (1 line) + footer (1 line).  Change INLINE_ROWS to show more/fewer rows.
+    INLINE_ROWS = 10
+    INLINE_HEIGHT = INLINE_ROWS + 5  # 3 header lines + 1 bottom border + 1 footer
+
+    CSS = f"""
+    Screen {{
         layout: vertical;
         background: $background;
-    }
-    #table-area {
+        height: {INLINE_HEIGHT};
+    }}
+    #table-area {{
         height: 1fr;
         overflow: hidden;
-    }
-    #footer-area {
+    }}
+    #footer-area {{
         height: 1;
         background: $panel;
-    }
+    }}
     """
 
     def __init__(self, rows: list[Row]) -> None:
@@ -415,7 +421,7 @@ def main() -> None:
     emit_warnings(rows)
 
     app = CommodityEditor(rows)
-    result = app.run()
+    result = app.run(inline=True)
 
     if result == "accepted":
         print("\nAccepted \u2014 final currency map:")
