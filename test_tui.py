@@ -89,14 +89,15 @@ def _drive(
     slave_out = os.fdopen(os.dup(slave), "w", buffering=1, closefd=True)
 
     result: list[Optional[str]] = [None]
+    exc: list[Optional[BaseException]] = [None]
     chunks: list[bytes] = []
     _drain_stop = threading.Event()
 
     def _runner() -> None:
         try:
             result[0] = tui_prototype.run(rows, stdin_fd=slave, output=slave_out)
-        except Exception:
-            pass
+        except BaseException as e:  # noqa: BLE001
+            exc[0] = e
 
     def _drainer() -> None:
         """Continuously empty the master fd so the TUI can write freely."""
@@ -139,6 +140,17 @@ def _drive(
             os.close(fd)
         except OSError:
             pass
+
+    # Surface any exception raised inside the runner thread so tests fail
+    # loudly instead of silently returning result=None.
+    if exc[0] is not None:
+        raise exc[0]
+
+    # Guard: if the runner thread is still alive the TUI hung; surface it.
+    if t.is_alive():
+        raise TimeoutError(
+            f"TUI runner thread did not finish within {timeout}s timeout"
+        )
 
     return result[0], b"".join(chunks)
 
