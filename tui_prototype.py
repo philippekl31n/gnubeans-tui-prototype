@@ -2,23 +2,21 @@
 """
 tui_prototype.py — Interactive Beancount commodity symbol editor.
 
-Usage:
-    python tui_prototype.py
+Renders inline in the terminal — no full-screen takeover, no TUI frame.
+The table appears immediately below any pre-flight warnings and stays in
+the scrollback buffer after exit.
 """
 
 from __future__ import annotations
 
+import os
 import re
+import select
 import sys
+import termios
+import tty
 from dataclasses import dataclass
 from typing import Optional
-
-from textual.app import App, ComposeResult
-from textual.binding import Binding
-from textual.containers import Vertical
-from textual.widgets import Static
-from textual import events
-from rich.text import Text
 
 
 # ─── Symbol logic ─────────────────────────────────────────────────────────────
@@ -27,20 +25,14 @@ _CURRENCY_RE = re.compile(r"^[A-Z]([A-Z0-9\-]{0,22}[A-Z0-9])?$")
 
 
 def is_valid_currency(s: str) -> bool:
-    """Return True if *s* is a valid Beancount currency symbol.
-
-    Rules: uppercase letters, digits, and hyphens only; must start with a
-    letter; must end with a letter or digit; 1–24 characters total.
-    """
+    """True if *s* is a valid Beancount currency symbol."""
     return bool(s and _CURRENCY_RE.match(s))
 
 
 def suggest_currency(raw: str) -> str:
     """Sanitise an arbitrary commodity id into a valid Beancount currency."""
     s = raw.upper()
-    # Replace every character that isn't A-Z, 0-9, or hyphen with a hyphen
     s = re.sub(r"[^A-Z0-9\-]", "-", s)
-    # Collapse consecutive hyphens into one
     s = re.sub(r"-{2,}", "-", s)
     s = s.strip("-")
     if not s:
@@ -58,9 +50,9 @@ def suggest_currency(raw: str) -> str:
 class Row:
     num: int
     cmdty_id: str
-    user_symbol: str   # "(not set)" when absent
-    suggested: str     # auto-suggested Beancount currency
-    currency: str      # current working value (the editable field)
+    user_symbol: str
+    suggested: str
+    currency: str
     confirmed: bool = False
 
 
@@ -91,327 +83,315 @@ def recompute(rows: list[Row]) -> tuple[set[int], set[int]]:
 
 
 def emit_warnings(rows: list[Row]) -> None:
-    """Print pre-flight WARNINGs to stderr before the TUI starts.
-
-    The ordering mirrors what a streaming processor would see:
-    - invalid-symbol warning fires as each bad row is encountered
-    - collision warning fires as soon as the *second* row that maps to the
-      same suggested currency is encountered
-    """
-    seen: dict[str, list[str]] = {}   # suggested currency → [cmdty_ids]
-    reported_collisions: set[str] = set()
-
+    """Print pre-flight WARNINGs (streaming order: invalid then collision per row)."""
+    seen: dict[str, list[str]] = {}
+    reported: set[str] = set()
     for r in rows:
         if not is_valid_currency(r.cmdty_id):
             print(
                 f'WARNING: commodity "{r.cmdty_id}" is not a valid Beancount symbol'
-                f' \u2014 suggesting "{r.suggested}"',
-                file=sys.stderr,
+                f' \u2014 suggesting "{r.suggested}"'
             )
         seen.setdefault(r.suggested, []).append(r.cmdty_id)
-        if len(seen[r.suggested]) > 1 and r.suggested not in reported_collisions:
-            reported_collisions.add(r.suggested)
-            ids = seen[r.suggested]
-            parts = " and ".join(f'"{i}"' for i in ids)
+        if len(seen[r.suggested]) > 1 and r.suggested not in reported:
+            reported.add(r.suggested)
+            parts = " and ".join(f'"{i}"' for i in seen[r.suggested])
             print(
                 f'WARNING: collision \u2014 {parts} both produce the Beancount currency'
-                f' "{r.suggested}". Assign distinct symbols in the plan.',
-                file=sys.stderr,
+                f' "{r.suggested}". Assign distinct symbols in the plan.'
             )
 
 
-# ─── TUI App ──────────────────────────────────────────────────────────────────
+# ─── ANSI helpers ─────────────────────────────────────────────────────────────
 
-class CommodityEditor(App[str]):
-    """Two-mode table editor for resolving Beancount commodity symbols."""
+def _a(codes: str, t: str) -> str:
+    return f"\033[{codes}m{t}\033[0m"
 
-    BINDINGS = [
-        # Let ctrl+c exit cleanly rather than crashing
-        Binding("ctrl+c", "force_quit", "Quit", priority=True, show=False),
-    ]
+def red(t: str)   -> str: return _a("31;1", t)
+def green(t: str) -> str: return _a("32;1", t)
+def dim(t: str)   -> str: return _a("2",    t)
+def bold(t: str)  -> str: return _a("1",    t)
 
-    # Total inline height: table header (3 lines) + data rows + bottom border
-    # (1 line) + footer (1 line).  Change INLINE_ROWS to show more/fewer rows.
-    INLINE_ROWS = 10
-    INLINE_HEIGHT = INLINE_ROWS + 5  # 3 header lines + 1 bottom border + 1 footer
 
-    CSS = f"""
-    Screen {{
-        layout: vertical;
-        background: $background;
-        height: {INLINE_HEIGHT};
-    }}
-    #table-area {{
-        height: 1fr;
-        overflow: hidden;
-    }}
-    #footer-area {{
-        height: 1;
-        background: $panel;
-    }}
+# ─── Rendering ────────────────────────────────────────────────────────────────
+
+def build_table(
+    rows: list[Row],
+    mode: str,
+    vstart: int,
+    viewport_h: int,
+    edit_row: int,
+    edit_buf: str,
+    collisions: set[int],
+) -> list[str]:
+    """Return ANSI-coloured lines for the visible portion of the table."""
+    n = len(rows)
+    visible = rows[vstart: vstart + viewport_h]
+
+    w_n = max(4, len(str(n)))
+    w_c = max(8,  max((len(r.cmdty_id)   for r in rows), default=8))
+    w_s = max(11, max((len(r.user_symbol) for r in rows), default=11))
+    w_u = max(24, max((len(r.currency) + 3 for r in rows), default=24))
+
+    def p(s: str, w: int) -> str:
+        return s.ljust(w)[:w]
+
+    H, h = "\u2501", "\u2500"  # ━ ─
+    out: list[str] = []
+    out.append(
+        f"\u250f{H*(w_n+2)}\u2533{H*(w_c+2)}\u2533{H*(w_s+2)}\u2533{H*(w_u+2)}\u2513"
+    )
+    out.append(bold(
+        f"\u2503 {p('#',w_n)} \u2503 {p('cmdty:id',w_c)} \u2503"
+        f" {p('user_symbol',w_s)} \u2503 {p('CURRENCY',w_u)} \u2503"
+    ))
+    out.append(
+        f"\u2521{H*(w_n+2)}\u2547{H*(w_c+2)}\u2547{H*(w_s+2)}\u2547{H*(w_u+2)}\u2529"
+    )
+
+    for row in visible:
+        editing      = mode == "edit" and edit_row == row.num
+        collision    = row.num in collisions
+        confirmed_ok = row.confirmed and row.num not in collisions
+
+        if editing:
+            cur_cell = p(edit_buf + "\u2587", w_u)   # ▇ block cursor
+        elif confirmed_ok:
+            cur_cell = p(row.currency + " \u2713", w_u)  # ✓
+        else:
+            cur_cell = p(row.currency, w_u)
+
+        line = (
+            f"\u2502 {p(str(row.num),w_n)} \u2502 {p(row.cmdty_id,w_c)} \u2502"
+            f" {p(row.user_symbol,w_s)} \u2502 {cur_cell} \u2502"
+        )
+
+        if collision:
+            out.append(red(line))
+        elif confirmed_ok:
+            out.append(green(line))
+        else:
+            out.append(line)
+
+    out.append(
+        f"\u2514{h*(w_n+2)}\u2534{h*(w_c+2)}\u2534{h*(w_s+2)}\u2534{h*(w_u+2)}\u2518"
+    )
+    return out
+
+
+def build_footer(
+    mode: str,
+    sel_buf: str,
+    edit_row: int,
+    edit_err: Optional[str],
+    collisions: set[int],
+    invalid: set[int],
+    n_rows: int,
+) -> str:
+    if mode == "select":
+        unresolved = len(collisions | invalid)
+        hint = (
+            "[ row number to edit ]"
+            if unresolved else
+            "[ row number to edit \u00b7 a accept all ]"
+        )
+        return f"{dim(hint)}: {bold(sel_buf)}\u2587"
+    else:
+        unresolved = len(collisions | invalid)
+        pos = f"Row {edit_row} of {n_rows} \u00b7 {unresolved} unresolved"
+        if edit_err:
+            return f"{red(edit_err)}  {dim(pos)}"
+        inst = "Enter to confirm \u00b7 Esc to cancel \u00b7 \u2191\u2193 move row"
+        return f"{dim(inst)}  {dim(pos)}"
+
+
+# ─── Inline display ───────────────────────────────────────────────────────────
+
+class Display:
+    """Renders and updates the table+footer inline in the terminal.
+
+    On the first call to show(), lines are printed normally.  On subsequent
+    calls the cursor is moved back up and lines are overwritten in place so
+    the widget stays anchored in the scrollback buffer.
     """
 
-    def __init__(self, rows: list[Row]) -> None:
-        super().__init__()
-        self.rows = rows
-        # Mode: "select" (footer input) | "edit" (cell input)
-        self.mode: str = "select"
-        # Row-selection mode: accumulate typed digits here
-        self.sel_buf: str = ""
-        # Cell-edit mode: accumulate typed characters here
-        self.edit_buf: str = ""
-        # 1-based index of the row being edited (0 = none)
-        self.edit_row: int = 0
-        # Validation error string shown in the footer during cell-edit
-        self.edit_err: Optional[str] = None
-        # Index (0-based) of the first visible data row
-        self.viewport_start: int = 0
-        # How many data rows fit in the current terminal height
-        self.viewport_h: int = 10
-        self.collisions, self.invalid = recompute(rows)
+    def __init__(self) -> None:
+        self._prev_n = 0   # number of table lines already printed
 
-    # ── Lifecycle ─────────────────────────────────────────────────────────────
+    def show(self, table_lines: list[str], footer: str) -> None:
+        n = len(table_lines)
+        buf = ""
+        if self._prev_n > 0:
+            # Return to start of first table line:
+            # \r  → go to column 0 of the footer line (current position)
+            # \033[N]A → move up N lines to the first table line
+            buf += f"\r\033[{self._prev_n}A"
+        for line in table_lines:
+            buf += f"\033[2K\r{line}\n"   # clear + overwrite each table line
+        buf += f"\033[2K\r{footer}"        # clear + overwrite footer (no \n)
+        sys.stdout.write(buf)
+        sys.stdout.flush()
+        self._prev_n = n
 
-    def compose(self) -> ComposeResult:
-        yield Static(id="table-area", expand=True)
-        yield Static(id="footer-area")
 
-    def on_mount(self) -> None:
-        self.viewport_h = max(1, self.app.size.height - 5)
-        self._refresh()
+# ─── Raw keyboard input ───────────────────────────────────────────────────────
 
-    def on_resize(self, event: events.Resize) -> None:
-        self.viewport_h = max(1, event.size.height - 5)
-        self._refresh()
+def _readb(fd: int, timeout: float = 0.05) -> bytes:
+    r, _, _ = select.select([fd], [], [], timeout)
+    return os.read(fd, 1) if r else b""
 
-    # ── Viewport helpers ──────────────────────────────────────────────────────
 
-    def _scroll_to(self, row_num: int) -> None:
-        """Ensure the given 1-based row number is visible."""
+def read_key(fd: int) -> str:
+    """Block until a keypress and return a key-name string."""
+    ch = os.read(fd, 1)
+    if ch == b"\x1b":
+        ch2 = _readb(fd)
+        if ch2 == b"[":
+            ch3 = _readb(fd)
+            if ch3 == b"A": return "up"
+            if ch3 == b"B": return "down"
+            if ch3 == b"C": return "right"
+            if ch3 == b"D": return "left"
+            if ch3 == b"5": _readb(fd); return "pageup"
+            if ch3 == b"6": _readb(fd); return "pagedown"
+        return "escape"
+    if ch in (b"\r", b"\n"): return "enter"
+    if ch in (b"\x7f", b"\x08"): return "backspace"
+    if ch == b"\x03": return "ctrl_c"
+    try:
+        return ch.decode("utf-8")
+    except UnicodeDecodeError:
+        return ""
+
+
+# ─── Interactive loop ─────────────────────────────────────────────────────────
+
+def run(rows: list[Row]) -> str:
+    """Run the interactive editor. Returns 'accepted' or 'cancelled'."""
+    n = len(rows)
+    try:
+        term_h = os.get_terminal_size().lines
+        viewport_h = max(3, term_h - 6)   # leave headroom above for warnings
+    except OSError:
+        viewport_h = 10
+    viewport_h = min(viewport_h, n)       # no need to be taller than the data
+
+    mode     = "select"
+    sel_buf  = ""
+    edit_buf = ""
+    edit_row = 0
+    edit_err: Optional[str] = None
+    vstart   = 0
+    collisions, invalid = recompute(rows)
+    display  = Display()
+
+    def refresh() -> None:
+        tbl = build_table(rows, mode, vstart, viewport_h, edit_row, edit_buf, collisions)
+        ftr = build_footer(mode, sel_buf, edit_row, edit_err, collisions, invalid, n)
+        display.show(tbl, ftr)
+
+    def scroll_to(row_num: int) -> None:
+        nonlocal vstart
         idx = row_num - 1
-        if idx < self.viewport_start:
-            self.viewport_start = idx
-        elif idx >= self.viewport_start + self.viewport_h:
-            self.viewport_start = idx - self.viewport_h + 1
-        self.viewport_start = max(0, self.viewport_start)
+        if idx < vstart:
+            vstart = idx
+        elif idx >= vstart + viewport_h:
+            vstart = idx - viewport_h + 1
+        vstart = max(0, vstart)
 
-    def _scroll_by(self, delta: int) -> None:
-        n = len(self.rows)
-        limit = max(0, n - self.viewport_h)
-        self.viewport_start = max(0, min(limit, self.viewport_start + delta))
+    def scroll_by(delta: int) -> None:
+        nonlocal vstart
+        vstart = max(0, min(max(0, n - viewport_h), vstart + delta))
 
-    # ── Rendering ─────────────────────────────────────────────────────────────
+    refresh()
 
-    def _render_table(self) -> Text:
-        rows = self.rows
-        n = len(rows)
-        vstart = self.viewport_start
-        visible = rows[vstart: vstart + self.viewport_h]
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    result = "cancelled"
 
-        # Dynamic column widths
-        w_n = max(4, len(str(n)))
-        w_c = max(8, max((len(r.cmdty_id) for r in rows), default=8))
-        w_s = max(11, max((len(r.user_symbol) for r in rows), default=11))
-        # +3 for " ✓" suffix and cursor char
-        w_u = max(24, max((len(r.currency) + 3 for r in rows), default=24))
+    try:
+        tty.setraw(fd)
 
-        def p(s: str, w: int) -> str:
-            return s.ljust(w)[:w]
+        while True:
+            key = read_key(fd)
 
-        H = "\u2501"  # ━ heavy horizontal
-        h = "\u2500"  # ─ light horizontal
-        top = f"\u250f{H*(w_n+2)}\u2533{H*(w_c+2)}\u2533{H*(w_s+2)}\u2533{H*(w_u+2)}\u2513\n"
-        hdr = (
-            f"\u2503 {p('#', w_n)} \u2503 {p('cmdty:id', w_c)} \u2503"
-            f" {p('user_symbol', w_s)} \u2503 {p('CURRENCY', w_u)} \u2503\n"
-        )
-        sep = f"\u2521{H*(w_n+2)}\u2547{H*(w_c+2)}\u2547{H*(w_s+2)}\u2547{H*(w_u+2)}\u2529\n"
-        bot = f"\u2514{h*(w_n+2)}\u2534{h*(w_c+2)}\u2534{h*(w_s+2)}\u2534{h*(w_u+2)}\u2518\n"
+            if mode == "select":
+                page = max(1, viewport_h)
+                if key in ("escape", "ctrl_c"):
+                    result = "cancelled"; break
+                elif key in ("up", "pageup"):
+                    scroll_by(-page)
+                elif key in ("down", "pagedown"):
+                    scroll_by(page)
+                elif key == "backspace":
+                    sel_buf = sel_buf[:-1]
+                elif key == "enter":
+                    if sel_buf:
+                        try:
+                            row_num = int(sel_buf)
+                        except ValueError:
+                            row_num = 0
+                        sel_buf = ""
+                        if 1 <= row_num <= n:
+                            edit_row = row_num
+                            edit_buf = rows[row_num - 1].currency
+                            edit_err = None
+                            mode = "edit"
+                            scroll_to(row_num)
+                elif key == "a":
+                    if not (collisions | invalid):
+                        result = "accepted"; break
+                elif key.isdigit():
+                    sel_buf += key
 
-        result = Text(no_wrap=True)
-        result.append(top)
-        result.append(hdr, style="bold")
-        result.append(sep)
+            else:  # cell-edit mode
+                page = max(1, viewport_h)
+                if key == "escape":
+                    mode = "select"; edit_buf = ""; edit_err = None; edit_row = 0
+                elif key == "enter":
+                    if not edit_err and is_valid_currency(edit_buf):
+                        rows[edit_row - 1].currency = edit_buf
+                        rows[edit_row - 1].confirmed = True
+                        collisions, invalid = recompute(rows)
+                        mode = "select"; edit_buf = ""; edit_err = None; edit_row = 0
+                elif key == "up":
+                    if edit_row > 1:
+                        edit_row -= 1
+                        edit_buf = rows[edit_row - 1].currency
+                        edit_err = None
+                        scroll_to(edit_row)
+                elif key == "down":
+                    if edit_row < n:
+                        edit_row += 1
+                        edit_buf = rows[edit_row - 1].currency
+                        edit_err = None
+                        scroll_to(edit_row)
+                elif key == "pageup":
+                    scroll_by(-page)
+                elif key == "pagedown":
+                    scroll_by(page)
+                elif key == "backspace":
+                    edit_buf = edit_buf[:-1]
+                    edit_err = (
+                        None if not edit_buf or is_valid_currency(edit_buf)
+                        else f'"{edit_buf}" \u2014 must start with A\u2013Z; only A\u2013Z 0\u20139 \u2013 allowed'
+                    )
+                elif len(key) == 1 and key.isprintable() and key != "\t":
+                    edit_buf += key.upper()
+                    edit_err = (
+                        None if is_valid_currency(edit_buf)
+                        else f'"{edit_buf}" \u2014 must start with A\u2013Z; only A\u2013Z 0\u20139 \u2013 allowed'
+                    )
+                elif key == "ctrl_c":
+                    result = "cancelled"; break
 
-        for row in visible:
-            editing = self.mode == "edit" and self.edit_row == row.num
-            collision = row.num in self.collisions
-            # Only show green ✓ when confirmed AND not currently colliding
-            confirmed_clean = row.confirmed and row.num not in self.collisions
+            refresh()
 
-            if editing:
-                cur_cell = p(self.edit_buf + "\u2587", w_u)  # ▇ block cursor
-            elif confirmed_clean:
-                cur_cell = p(row.currency + " \u2713", w_u)  # ✓
-            else:
-                cur_cell = p(row.currency, w_u)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        print()   # leave cursor on a fresh line after the footer
 
-            line = (
-                f"\u2502 {p(str(row.num), w_n)} \u2502 {p(row.cmdty_id, w_c)} \u2502"
-                f" {p(row.user_symbol, w_s)} \u2502 {cur_cell} \u2502\n"
-            )
-
-            if collision:
-                result.append(line, style="bold red")
-            elif confirmed_clean:
-                result.append(line, style="bold green")
-            elif editing:
-                result.append(line, style="bold yellow")
-            else:
-                result.append(line)
-
-        result.append(bot)
-        return result
-
-    def _render_footer(self) -> Text:
-        if self.mode == "select":
-            unresolved = len(self.collisions | self.invalid)
-            if unresolved:
-                hint = "[ row number to edit ]"
-            else:
-                hint = "[ row number to edit \u00b7 a accept all ]"  # ·
-            return Text.from_markup(
-                f"[dim]{hint}[/dim]: [bold]{self.sel_buf}[/bold]\u2587"
-            )
-        else:
-            n = len(self.rows)
-            unresolved = len(self.collisions | self.invalid)
-            pos = f"Row {self.edit_row} of {n} \u00b7 {unresolved} unresolved"
-            if self.edit_err:
-                return Text.from_markup(
-                    f"[bold red]{self.edit_err}[/bold red]  [dim]{pos}[/dim]"
-                )
-            return Text.from_markup(
-                f"[dim]Enter to confirm \u00b7 Esc to cancel \u00b7 \u2191\u2193 move row[/dim]"
-                f"  [dim]{pos}[/dim]"
-            )
-
-    def _refresh(self) -> None:
-        self.query_one("#table-area", Static).update(self._render_table())
-        self.query_one("#footer-area", Static).update(self._render_footer())
-
-    # ── Key handling ──────────────────────────────────────────────────────────
-
-    async def on_key(self, event: events.Key) -> None:
-        event.stop()
-        key = event.key
-        char = event.character  # actual unicode char, or None for special keys
-
-        if self.mode == "select":
-            self._handle_select(key, char)
-        else:
-            self._handle_edit(key, char)
-
-        self._refresh()
-
-    # ── Row-selection mode ────────────────────────────────────────────────────
-
-    def _handle_select(self, key: str, char: Optional[str]) -> None:
-        n = len(self.rows)
-        page = max(1, self.viewport_h)
-
-        if key == "escape":
-            self.exit("cancelled")
-        elif key in ("up", "pageup"):
-            self._scroll_by(-page)
-        elif key in ("down", "pagedown"):
-            self._scroll_by(page)
-        elif key == "backspace":
-            self.sel_buf = self.sel_buf[:-1]
-        elif key == "enter":
-            if self.sel_buf:
-                try:
-                    row_num = int(self.sel_buf)
-                except ValueError:
-                    row_num = 0
-                self.sel_buf = ""
-                if 1 <= row_num <= n:
-                    self._enter_edit(row_num)
-        elif char and char.isdigit():
-            self.sel_buf += char
-        elif char == "a":
-            unresolved = len(self.collisions | self.invalid)
-            if unresolved == 0:
-                self.exit("accepted")
-
-    def _enter_edit(self, row_num: int) -> None:
-        self.edit_row = row_num
-        self.edit_buf = self.rows[row_num - 1].currency
-        self.edit_err = None
-        self.mode = "edit"
-        self._scroll_to(row_num)
-
-    # ── Cell-edit mode ────────────────────────────────────────────────────────
-
-    def _handle_edit(self, key: str, char: Optional[str]) -> None:
-        n = len(self.rows)
-        page = max(1, self.viewport_h)
-
-        if key == "escape":
-            # Return to select mode without committing
-            self.mode = "select"
-            self.edit_buf = ""
-            self.edit_err = None
-            self.edit_row = 0
-
-        elif key == "enter":
-            # Confirm only when edit_buf is non-empty and valid
-            if not self.edit_err and is_valid_currency(self.edit_buf):
-                self._confirm_edit()
-
-        elif key == "up":
-            # Move cursor to previous row; discard uncommitted edit_buf
-            if self.edit_row > 1:
-                self.edit_row -= 1
-                self.edit_buf = self.rows[self.edit_row - 1].currency
-                self.edit_err = None
-                self._scroll_to(self.edit_row)
-
-        elif key == "down":
-            if self.edit_row < n:
-                self.edit_row += 1
-                self.edit_buf = self.rows[self.edit_row - 1].currency
-                self.edit_err = None
-                self._scroll_to(self.edit_row)
-
-        elif key == "pageup":
-            self._scroll_by(-page)
-
-        elif key == "pagedown":
-            self._scroll_by(page)
-
-        elif key == "backspace":
-            self.edit_buf = self.edit_buf[:-1]
-            self._validate()
-
-        elif char and char.isprintable() and char not in ("\t",):
-            self.edit_buf += char.upper()
-            self._validate()
-
-    def _validate(self) -> None:
-        """Update self.edit_err based on current self.edit_buf."""
-        if self.edit_buf and not is_valid_currency(self.edit_buf):
-            self.edit_err = (
-                f'"{self.edit_buf}" \u2014 must start with A\u2013Z; '
-                f"only uppercase A\u2013Z, 0\u20139, and hyphens allowed"
-            )
-        else:
-            self.edit_err = None
-
-    def _confirm_edit(self) -> None:
-        row = self.rows[self.edit_row - 1]
-        row.currency = self.edit_buf
-        row.confirmed = True
-        # Re-evaluate all rows reactively
-        self.collisions, self.invalid = recompute(self.rows)
-        # Return to row-selection mode
-        self.mode = "select"
-        self.edit_buf = ""
-        self.edit_err = None
-        self.edit_row = 0
-
-    def action_force_quit(self) -> None:
-        self.exit("cancelled")
+    return result
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
@@ -419,19 +399,13 @@ class CommodityEditor(App[str]):
 def main() -> None:
     rows = make_rows(FIXTURE)
     emit_warnings(rows)
-
-    app = CommodityEditor(rows)
-    result = app.run(inline=True)
-
+    result = run(rows)
     if result == "accepted":
-        print("\nAccepted \u2014 final currency map:")
+        print("Accepted \u2014 final currency map:")
         for r in rows:
             print(f"  {r.cmdty_id!r:12s}  \u2192  {r.currency}")
-    elif result == "cancelled":
-        print("\nCancelled.")
     else:
-        # ctrl+c / window close
-        print("\nExited.")
+        print("Cancelled.")
 
 
 if __name__ == "__main__":
