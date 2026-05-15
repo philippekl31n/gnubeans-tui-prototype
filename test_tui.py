@@ -523,6 +523,13 @@ class TestBuildFooter(unittest.TestCase):
         self.assertIn("42", strip_ansi(footer[1]))
         self.assertIn("\u203a", footer[1])  # › prompt glyph on line 1
 
+    def test_empty_buffer_prompt_shows_dim_placeholder(self) -> None:
+        """When no digits typed yet the prompt line shows a · placeholder before the cursor."""
+        collisions, invalid = self._collisions_invalid()
+        footer = build_footer("select", "", 0, None, collisions, invalid, 4)
+        self.assertIn("\u00b7", strip_ansi(footer[1]))  # · placeholder present
+        self.assertIn("\u203a", footer[1])              # › prompt glyph still there
+
     # ── test 21 ───────────────────────────────────────────────────────────────
 
     def test_edit_error_text_appears_in_footer(self) -> None:

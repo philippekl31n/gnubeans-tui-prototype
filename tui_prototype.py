@@ -301,6 +301,8 @@ def build_footer(
     # sel_buf is normalised by the caller: sel_buf in select mode, edit_buf in edit
     if sel_buf:
         prompt.append(sel_buf, style="bold")
+    else:
+        prompt.append("\u00b7", style="dim")               # · dim placeholder when empty
     prompt.append("\u2587", style="dim")                   # ▇ cursor
 
     hint_lines   = _render(hint,   width)
