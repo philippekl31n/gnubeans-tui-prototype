@@ -5,10 +5,18 @@ tui_prototype.py — Interactive Beancount commodity symbol editor.
 Renders inline in the terminal — no full-screen takeover, no TUI frame.
 The table appears immediately below any pre-flight warnings and stays in
 the scrollback buffer after exit.
+
+Visual design (task #6):
+  - Rich table with box.SIMPLE_HEAD (header underline only, no outer frame)
+  - Indicator column: ·/✓/≠/✗/▸ glyphs with semantic colour slots
+  - Two-line footer: hint/status line above, › prompt line below
+  - Colour slots: amber #FFAA00 (collision), red #FF4466 (invalid),
+    green #04B575 (confirmed), bright yellow #ECFD65 (editing)
 """
 
 from __future__ import annotations
 
+import io
 import os
 import re
 import select
@@ -17,6 +25,11 @@ import termios
 import tty
 from dataclasses import dataclass
 from typing import Optional
+
+from rich import box
+from rich.console import Console
+from rich.table import Table
+from rich.text import Text
 
 
 # ─── Symbol logic ─────────────────────────────────────────────────────────────
@@ -102,15 +115,45 @@ def emit_warnings(rows: list[Row]) -> None:
             )
 
 
-# ─── ANSI helpers ─────────────────────────────────────────────────────────────
+# ─── Semantic colour slots ─────────────────────────────────────────────────────
 
-def _a(codes: str, t: str) -> str:
-    return f"\033[{codes}m{t}\033[0m"
+_CLR_CONFIRMED = "#04B575"   # Charm soft green
+_CLR_COLLISION = "#FFAA00"   # Amber  (warning severity)
+_CLR_INVALID   = "#FF4466"   # Charm hot-pink red
+_CLR_EDITING   = "#ECFD65"   # Charm bright yellow
 
-def red(t: str)   -> str: return _a("31;1", t)
-def green(t: str) -> str: return _a("32;1", t)
-def dim(t: str)   -> str: return _a("2",    t)
-def bold(t: str)  -> str: return _a("1",    t)
+
+# ─── Rendering bridge ─────────────────────────────────────────────────────────
+
+def _term_width() -> int:
+    try:
+        return os.get_terminal_size().columns
+    except OSError:
+        return 80
+
+
+def _render(renderable, width: int) -> list[str]:
+    """Render a Rich renderable to a list of ANSI-coded strings (one per line).
+
+    Rich always appends a trailing newline after each print(); we strip the
+    resulting trailing empty element after splitting on '\\n'.
+
+    ``color_system="truecolor"`` is set explicitly so Rich never queries the
+    terminal for color support (which would block in a pty test context).
+    """
+    buf = io.StringIO()
+    con = Console(
+        file=buf,
+        force_terminal=True,
+        color_system="truecolor",
+        width=width,
+        highlight=False,
+    )
+    con.print(renderable)
+    lines = buf.getvalue().split("\n")
+    while lines and lines[-1] == "":
+        lines.pop()
+    return lines
 
 
 # ─── Rendering ────────────────────────────────────────────────────────────────
@@ -123,60 +166,90 @@ def build_table(
     edit_row: int,
     edit_buf: str,
     collisions: set[int],
+    invalid: Optional[set[int]] = None,
 ) -> list[str]:
-    """Return ANSI-coloured lines for the visible portion of the table."""
-    n = len(rows)
+    """Return Rich-rendered ANSI lines for the visible portion of the table.
+
+    Line layout (SIMPLE_HEAD, show_edge=False):
+      lines[0]           — header row (column labels)
+      lines[1]           — underline rule (─────)
+      lines[2..2+N-1]    — data rows
+
+    Total = N + 2 for N visible rows.
+    """
+    if invalid is None:
+        invalid = set()
+    width = _term_width()
     visible = rows[vstart: vstart + viewport_h]
 
-    w_n = max(4, len(str(n)))
-    w_c = max(8,  max((len(r.cmdty_id)   for r in rows), default=8))
-    w_s = max(11, max((len(r.user_symbol) for r in rows), default=11))
-    w_u = max(24, max((len(r.currency) + 3 for r in rows), default=24))
-
-    def p(s: str, w: int) -> str:
-        return s.ljust(w)[:w]
-
-    H, h = "\u2501", "\u2500"  # ━ ─
-    out: list[str] = []
-    out.append(
-        f"\u250f{H*(w_n+2)}\u2533{H*(w_c+2)}\u2533{H*(w_s+2)}\u2533{H*(w_u+2)}\u2513"
+    tbl = Table(
+        box=box.SIMPLE_HEAD,
+        padding=(0, 2),
+        show_edge=False,
+        row_styles=["", "dim"],
+        header_style="bold",
     )
-    out.append(bold(
-        f"\u2503 {p('#',w_n)} \u2503 {p('cmdty:id',w_c)} \u2503"
-        f" {p('user_symbol',w_s)} \u2503 {p('CURRENCY',w_u)} \u2503"
-    ))
-    out.append(
-        f"\u2521{H*(w_n+2)}\u2547{H*(w_c+2)}\u2547{H*(w_s+2)}\u2547{H*(w_u+2)}\u2529"
-    )
+    tbl.add_column("",             no_wrap=True)           # indicator glyph
+    tbl.add_column("#",            justify="right", no_wrap=True)
+    tbl.add_column("cmdty:id",     no_wrap=True)
+    tbl.add_column("user_symbol",  no_wrap=True)
+    tbl.add_column("CURRENCY",     no_wrap=True)
 
     for row in visible:
         editing      = mode == "edit" and edit_row == row.num
         collision    = row.num in collisions
         confirmed_ok = row.confirmed and row.num not in collisions
+        is_invalid   = row.num in invalid
 
         if editing:
-            cur_cell = p(edit_buf + "\u2587", w_u)   # ▇ block cursor
+            # ▸ in indicator; ▇ cursor lives in the footer prompt, not the table
+            tbl.add_row(
+                Text("\u25b8", style=f"bold {_CLR_EDITING}"),      # ▸
+                str(row.num),
+                row.cmdty_id,
+                row.user_symbol,
+                Text(edit_buf, style=f"bold {_CLR_EDITING}"),
+                style=f"bold {_CLR_EDITING}",
+            )
+        elif collision:
+            # ≠ + amber + strikethrough on CURRENCY; other cells default/dim
+            tbl.add_row(
+                Text("\u2260", style=_CLR_COLLISION),               # ≠
+                str(row.num),
+                row.cmdty_id,
+                row.user_symbol,
+                Text(row.currency, style=f"{_CLR_COLLISION} strike"),
+            )
         elif confirmed_ok:
-            cur_cell = p(row.currency + " \u2713", w_u)  # ✓
+            # ✓ + soft green on all cells
+            tbl.add_row(
+                Text("\u2713", style=_CLR_CONFIRMED),               # ✓
+                str(row.num),
+                row.cmdty_id,
+                row.user_symbol,
+                row.currency,
+                style=_CLR_CONFIRMED,
+            )
+        elif is_invalid:
+            # ✗ + hot-pink red on indicator + CURRENCY; other cells default
+            tbl.add_row(
+                Text("\u2717", style=_CLR_INVALID),                 # ✗
+                str(row.num),
+                row.cmdty_id,
+                row.user_symbol,
+                Text(row.currency, style=_CLR_INVALID),
+            )
         else:
-            cur_cell = p(row.currency, w_u)
+            # · dim dot; cells get alternating dim from row_styles
+            tbl.add_row(
+                Text("\u00b7", style="dim"),                        # ·
+                str(row.num),
+                row.cmdty_id,
+                row.user_symbol,
+                row.currency,
+            )
 
-        line = (
-            f"\u2502 {p(str(row.num),w_n)} \u2502 {p(row.cmdty_id,w_c)} \u2502"
-            f" {p(row.user_symbol,w_s)} \u2502 {cur_cell} \u2502"
-        )
-
-        if collision:
-            out.append(red(line))
-        elif confirmed_ok:
-            out.append(green(line))
-        else:
-            out.append(line)
-
-    out.append(
-        f"\u2514{h*(w_n+2)}\u2534{h*(w_c+2)}\u2534{h*(w_s+2)}\u2534{h*(w_u+2)}\u2518"
-    )
-    return out
+    return _render(tbl, width)
 
 
 def build_footer(
@@ -187,22 +260,55 @@ def build_footer(
     collisions: set[int],
     invalid: set[int],
     n_rows: int,
-) -> str:
+) -> list[str]:
+    """Return a 2-element list [hint_line, prompt_line] as ANSI strings.
+
+    Line 0 (hint): dim italic prose with bold key names; amber ⚠ on error.
+    Line 1 (prompt): bold › glyph followed by the active input buffer.
+    """
+    width = _term_width()
+    unresolved = len(collisions | invalid)
+
+    # ── hint line ─────────────────────────────────────────────────────────────
     if mode == "select":
-        unresolved = len(collisions | invalid)
-        hint = (
-            "[ row number to edit ]"
-            if unresolved else
-            "[ row number to edit \u00b7 a accept all ]"
-        )
-        return f"{dim(hint)}: {bold(sel_buf)}\u2587"
-    else:
-        unresolved = len(collisions | invalid)
-        pos = f"Row {edit_row} of {n_rows} \u00b7 {unresolved} unresolved"
+        hint = Text(no_wrap=True)
+        hint.append("\u2191\u2193", style="bold")          # ↑↓
+        hint.append(" scroll  \u00b7  type a row number", style="dim italic")
+        if not unresolved:
+            hint.append("  \u00b7  ", style="dim italic")
+            hint.append("a", style="bold")
+            hint.append("  accept all", style="dim italic")
+    else:  # edit mode
         if edit_err:
-            return f"{red(edit_err)}  {dim(pos)}"
-        inst = "Enter to confirm \u00b7 Esc to cancel \u00b7 \u2191\u2193 move row"
-        return f"{dim(inst)}  {dim(pos)}"
+            hint = Text(no_wrap=True)
+            hint.append("\u26a0", style=f"bold {_CLR_COLLISION}")  # ⚠ amber badge
+            hint.append(f"  {edit_err}", style="dim italic")
+        else:
+            hint = Text(no_wrap=True)
+            hint.append("\u21b5", style="bold")            # ↵
+            hint.append(" confirm  \u00b7  ", style="dim italic")
+            hint.append("esc", style="bold")
+            hint.append(
+                " cancel  \u00b7  \u2191\u2193 move row  \u00b7  ",
+                style="dim italic",
+            )
+            hint.append(str(unresolved), style="bold")
+            hint.append(" unresolved", style="dim italic")
+
+    # ── prompt line ───────────────────────────────────────────────────────────
+    prompt = Text(no_wrap=True)
+    prompt.append("\u203a  ", style="bold")                # ›
+    # sel_buf is normalised by the caller: sel_buf in select mode, edit_buf in edit
+    if sel_buf:
+        prompt.append(sel_buf, style="bold")
+    prompt.append("\u2587", style="dim")                   # ▇ cursor
+
+    hint_lines   = _render(hint,   width)
+    prompt_lines = _render(prompt, width)
+    return [
+        hint_lines[0]   if hint_lines   else "",
+        prompt_lines[0] if prompt_lines else "",
+    ]
 
 
 # ─── Inline display ───────────────────────────────────────────────────────────
@@ -220,11 +326,17 @@ class Display:
     """
 
     def __init__(self, output=None) -> None:
-        self._prev_n = 0   # number of table lines already printed
+        self._prev_n = 0   # total lines printed on the previous render
         self._out = output if output is not None else sys.stdout
 
-    def show(self, table_lines: list[str], footer: str) -> None:
-        n = len(table_lines)
+    def show(self, table_lines: list[str], footer_lines: list[str]) -> None:
+        """Overwrite the widget in place.
+
+        Cursor-up count = len(table_lines) + len(footer_lines) - 1.
+        The -1 accounts for the last footer line having no trailing \\n,
+        so the cursor ends on that line rather than one line below.
+        """
+        n = len(table_lines) + len(footer_lines) - 1
         buf = ""
         if self._prev_n > 0:
             # Return to start of first table line:
@@ -232,8 +344,12 @@ class Display:
             # \033[NA → move up N lines to the first table line
             buf += f"\r\033[{self._prev_n}A"
         for line in table_lines:
-            buf += f"\033[2K\r{line}\n"   # clear + overwrite each table line
-        buf += f"\033[2K\r{footer}"        # clear + overwrite footer (no \n)
+            buf += f"\033[2K\r{line}\n"          # clear + overwrite, then newline
+        for i, line in enumerate(footer_lines):
+            if i < len(footer_lines) - 1:
+                buf += f"\033[2K\r{line}\n"      # hint line: trailing newline
+            else:
+                buf += f"\033[2K\r{line}"        # prompt line: no trailing newline
         self._out.write(buf)
         self._out.flush()
         self._prev_n = n
@@ -303,8 +419,11 @@ def run(rows: list[Row], *, stdin_fd: Optional[int] = None, output=None) -> str:
     display  = Display(output=output)
 
     def refresh() -> None:
-        tbl = build_table(rows, mode, vstart, viewport_h, edit_row, edit_buf, collisions)
-        ftr = build_footer(mode, sel_buf, edit_row, edit_err, collisions, invalid, n)
+        tbl = build_table(
+            rows, mode, vstart, viewport_h, edit_row, edit_buf, collisions, invalid
+        )
+        buf_for_footer = edit_buf if mode == "edit" else sel_buf
+        ftr = build_footer(mode, buf_for_footer, edit_row, edit_err, collisions, invalid, n)
         display.show(tbl, ftr)
 
     def scroll_to(row_num: int) -> None:
