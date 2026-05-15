@@ -2,18 +2,15 @@
 """
 test_tui.py — Behavioral and layout tests for tui_prototype.py.
 
-Tests are written against the CURRENT design:
-  - Hand-rolled ANSI escape codes
-  - Full box-border table (┏ top + ┗ bottom, ┡ separator)
-  - Single-line footer (str)
-  - Red ANSI (\033[31;1m) for collision rows
-  - Green ANSI (\033[32;1m) for confirmed-ok rows
-
-Assertions that will change after task #6 (Rich renderer, borderless
-SIMPLE_HEAD table, two-line footer, amber=collision / red=invalid semantic
-states, indicator glyph column) are marked:
-
-    # TODO: update after #6 — <what changes and how>
+Tests are written against the #6 (Rich-renderer) design:
+  - Rich table with box=SIMPLE_HEAD (header underline only, no outer frame)
+  - N + 2 lines per table render (header + rule + N data rows)
+  - Two-line footer: list[str] of length 2 (hint line + prompt line)
+  - Amber #FFAA00 + ≠ glyph for collision rows
+  - Red #FF4466 + ✗ glyph for invalid rows
+  - Green #04B575 + ✓ glyph for confirmed-ok rows
+  - Bold #ECFD65 + ▸ glyph in indicator column for the editing row
+  - Indicator column (·/✓/≠/✗/▸) present in every data row
 
 Run with:  python3 -m pytest test_tui.py -v
 """
@@ -182,12 +179,12 @@ class TestInlineLayout(unittest.TestCase):
         clean = strip_ansi(raw.decode("utf-8", errors="replace"))
         self.assertIn("cmdty:id", clean)
 
-    def test_box_corners_present_in_current_design(self) -> None:
-        # TODO: update after #6 — SIMPLE_HEAD removes outer box corners;
-        # assertIn('\u250f') should flip to assertNotIn once #6 is merged.
+    def test_no_box_corners_in_borderless_design(self) -> None:
+        """SIMPLE_HEAD box style must produce no outer box corners (┏ ┗ ┓ ┘)."""
         _, raw = _drive([b"\x03"])
         text = raw.decode("utf-8", errors="replace")
-        self.assertIn("\u250f", text)  # ┏ top-left corner (current design)
+        self.assertNotIn("\u250f", text)  # ┏ top-left corner must be absent
+        self.assertNotIn("\u2513", text)  # ┓ top-right corner must be absent
 
     # ── test 6 (unit version) ─────────────────────────────────────────────────
 
@@ -196,27 +193,31 @@ class TestInlineLayout(unittest.TestCase):
         rows = make_rows(FIXTURE)
         collisions, _ = recompute(rows)
         table_lines = build_table(rows, "select", 0, len(rows), 0, "", collisions)
-        footer = build_footer("select", "", 0, None, collisions, set(), len(rows))
+        footer_lines = build_footer("select", "", 0, None, collisions, set(), len(rows))
         buf = io.StringIO()
-        Display(output=buf).show(table_lines, footer)
+        Display(output=buf).show(table_lines, footer_lines)
         self.assertNotIn("\n\n", strip_ansi(buf.getvalue()))
 
     def test_footer_immediately_follows_last_table_line(self) -> None:
-        """No blank lines appear between the bottom border and the footer."""
+        """No blank lines appear between the last data row and the footer.
+
+        In the #6 borderless design there is no bottom border line;
+        table_lines[-1] is the last data row itself.
+        """
         rows = make_rows(FIXTURE)
         collisions, _ = recompute(rows)
         table_lines = build_table(rows, "select", 0, len(rows), 0, "", collisions)
-        footer = build_footer("select", "", 0, None, collisions, set(), len(rows))
+        footer_lines = build_footer("select", "", 0, None, collisions, set(), len(rows))
         buf = io.StringIO()
-        Display(output=buf).show(table_lines, footer)
+        Display(output=buf).show(table_lines, footer_lines)
         clean = strip_ansi(buf.getvalue())
-        last_border = strip_ansi(table_lines[-1])  # bottom border line
-        idx = clean.rfind(last_border)
-        self.assertNotEqual(idx, -1, "Bottom border line not found in output")
-        after = clean[idx + len(last_border):]
+        last_data_line = strip_ansi(table_lines[-1])  # last data row (no border in #6)
+        idx = clean.rfind(last_data_line)
+        self.assertNotEqual(idx, -1, "Last table line not found in output")
+        after = clean[idx + len(last_data_line):]
         self.assertFalse(
             after.startswith("\n\n"),
-            "Blank line found between table bottom border and footer",
+            "Blank line found between last table line and footer",
         )
 
     def test_no_blank_line_between_last_data_row_and_footer_pty(self) -> None:
@@ -225,10 +226,10 @@ class TestInlineLayout(unittest.TestCase):
         Display.show() writes each line as b'\\033[2K\\r{content}\\n', so
         splitting on '\\n' and stripping leading '\\r' gives the actual
         content lines without spurious blank lines.
+
+        In the #6 borderless design there is no bottom border; the hint line
+        of the two-line footer follows the last data row directly.
         """
-        # TODO: update after #6 — in the borderless design there is no bottom
-        # border between the data row and the footer; adjust the comment to
-        # note that the footer hint line follows the data row directly.
         _, raw = _drive([b"\x03"])
         text = raw.decode("utf-8", errors="replace")
         # Strip ANSI, split on \n, remove the leading \r that Display.show()
@@ -389,87 +390,97 @@ class TestBuildTable(unittest.TestCase):
     def _rows(self) -> list[Row]:
         return make_rows(FIXTURE)
 
-    def test_line_count_current_design(self) -> None:
-        # TODO: update after #6 — SIMPLE_HEAD/no-edge design gives 2 + N lines
-        # (header row + underline rule + N data rows = 6 for N=4).
-        # Current box design: 1 top border + 1 header + 1 separator + N data
-        # + 1 bottom border = N + 4.  For N=4 → 8 lines.
+    def test_line_count_simple_head_design(self) -> None:
+        """SIMPLE_HEAD / no-edge design: 1 header + 1 rule + N data rows = N + 2."""
         rows = self._rows()
         collisions, _ = recompute(rows)
         lines = build_table(rows, "select", 0, len(rows), 0, "", collisions)
-        self.assertEqual(len(lines), len(rows) + 4)  # = 8
+        self.assertEqual(len(lines), len(rows) + 2)  # = 6 for N=4
 
-    def test_collision_row_uses_red_ansi(self) -> None:
-        # TODO: update after #6 — collision rows use amber (#FFAA00) + ≠ glyph
-        # + strikethrough on the CURRENCY cell; \033[31;1m is removed entirely.
+    def test_collision_row_uses_amber_and_ne_glyph(self) -> None:
+        """Collision rows show ≠ in the indicator column; no red \033[31;1m wrap."""
         rows = self._rows()
         collisions, _ = recompute(rows)  # rows 1 & 2 collide on AT-T
         lines = build_table(rows, "select", 0, len(rows), 0, "", collisions)
-        # Data rows start at index 3 (top-border + header + separator).
-        row1_line = lines[3]
-        self.assertIn("\033[31;1m", row1_line)
+        # In the #6 design: lines[0]=header, lines[1]=rule, lines[2]=row.num=1
+        row1_line = lines[2]
+        self.assertIn("\u2260", strip_ansi(row1_line))  # ≠ present
+        self.assertNotIn("\033[31;1m", row1_line)       # raw red wrap absent
 
     def test_collision_row_has_no_checkmark(self) -> None:
         rows = self._rows()
         collisions, _ = recompute(rows)
         lines = build_table(rows, "select", 0, len(rows), 0, "", collisions)
-        self.assertNotIn("\u2713", strip_ansi(lines[3]))  # ✓ absent
+        # lines[2] = data row for row.num=1 (AT&T, collision)
+        self.assertNotIn("\u2713", strip_ansi(lines[2]))  # ✓ absent
 
-    def test_confirmed_ok_row_uses_green_ansi(self) -> None:
-        # TODO: update after #6 — confirmed rows use #04B575 colour + ✓ glyph
-        # in the indicator column; \033[32;1m is replaced by a Rich colour tag.
+    def test_confirmed_row_uses_green_and_check_glyph(self) -> None:
+        """Confirmed-ok rows show ✓ in the indicator column; no \033[32;1m wrap."""
         rows = self._rows()
         rows[2].confirmed = True   # row 3 = VBMPX, no collision
         collisions, _ = recompute(rows)
         lines = build_table(rows, "select", 0, len(rows), 0, "", collisions)
-        row3_line = lines[5]  # index 3 (header block) + row-index 2
-        self.assertIn("\033[32;1m", row3_line)
+        # In the #6 design: lines[0]=header, lines[1]=rule, lines[4]=row.num=3
+        row3_line = lines[4]
+        self.assertIn("\u2713", strip_ansi(row3_line))   # ✓ present
+        self.assertNotIn("\033[32;1m", row3_line)        # raw green wrap absent
 
     def test_confirmed_ok_row_has_checkmark(self) -> None:
         rows = self._rows()
         rows[2].confirmed = True
         collisions, _ = recompute(rows)
         lines = build_table(rows, "select", 0, len(rows), 0, "", collisions)
-        self.assertIn("\u2713", strip_ansi(lines[5]))  # ✓ present
+        # lines[4] = data row for row.num=3 (VBMPX) in #6 design
+        self.assertIn("\u2713", strip_ansi(lines[4]))  # ✓ present
 
     def test_editing_row_shows_edit_buffer(self) -> None:
         rows = self._rows()
         collisions, _ = recompute(rows)
         lines = build_table(rows, "edit", 0, len(rows), 3, "NEWVAL", collisions)
-        self.assertIn("NEWVAL", strip_ansi(lines[5]))
+        # edit_row=3 means row.num=3 (VBMPX); in #6 design lines[4]=row.num=3
+        self.assertIn("NEWVAL", strip_ansi(lines[4]))
 
-    def test_editing_row_has_block_cursor_glyph(self) -> None:
+    def test_editing_row_has_right_arrow_glyph(self) -> None:
+        """Editing row shows ▸ (U+25B8) in the indicator column, not ▇."""
         rows = self._rows()
         collisions, _ = recompute(rows)
         lines = build_table(rows, "edit", 0, len(rows), 3, "NEWVAL", collisions)
-        # TODO: update after #6 — current design shows ▇ (U+2587) inline in
-        # the CURRENCY cell; post-#6 uses ▸ (U+25B8) in the indicator column.
-        self.assertIn("\u2587", lines[5])  # ▇ block cursor present (raw line)
+        # edit_row=3 → row.num=3 (VBMPX); in #6 design lines[4]=row.num=3
+        self.assertIn("\u25b8", strip_ansi(lines[4]))   # ▸ in indicator column
+        self.assertNotIn("\u2587", strip_ansi(lines[4]))  # ▇ block cursor gone
 
     def test_non_editing_row_no_block_cursor(self) -> None:
         rows = self._rows()
         collisions, _ = recompute(rows)
         lines = build_table(rows, "edit", 0, len(rows), 3, "NEWVAL", collisions)
-        self.assertNotIn("\u2587", strip_ansi(lines[3]))  # row 1 not editing
+        # lines[2] = data row for row.num=1 (AT&T) — not the editing row
+        self.assertNotIn("\u2587", strip_ansi(lines[2]))  # ▇ block cursor absent
+        self.assertNotIn("\u25b8", strip_ansi(lines[2]))  # ▸ edit indicator absent
 
     def test_viewport_slicing_limits_data_rows(self) -> None:
         """viewport_h=2 yields exactly 2 data rows in the output."""
         rows = self._rows()
         collisions, _ = recompute(rows)
         lines = build_table(rows, "select", 0, 2, 0, "", collisions)
-        # 1 top + 1 header + 1 sep + 2 data + 1 bottom = 6
-        self.assertEqual(len(lines), 6)
+        # #6 design: 1 header + 1 rule + 2 data = 4
+        self.assertEqual(len(lines), 4)
 
-    def test_no_indicator_glyph_column_in_current_design(self) -> None:
-        # TODO: update after #6 — post-#6 adds an indicator column with
-        # ·, ✓, ≠, ✗, ▸ glyphs; this test should be removed / replaced.
+    def test_indicator_glyphs_present_in_new_design(self) -> None:
+        """Every data row carries an indicator glyph in the leftmost column."""
         rows = self._rows()
         collisions, _ = recompute(rows)
         lines = build_table(rows, "select", 0, len(rows), 0, "", collisions)
-        for line in lines[3:3 + len(rows)]:  # data rows only
+        # In the #6 design: lines[0]=header, lines[1]=rule, lines[2..5]=data rows
+        data_lines = lines[2: 2 + len(rows)]
+        # Collision rows (row.num 1 & 2) must carry ≠
+        for line in data_lines[:2]:
+            self.assertIn("\u2260", strip_ansi(line),
+                          "Expected ≠ in collision row indicator column")
+        # Clean, unconfirmed rows (row.num 3 & 4) must carry · (dim dot)
+        for line in data_lines[2:]:
             clean = strip_ansi(line)
-            self.assertNotIn("\u2260", clean)  # ≠ absent in current design
-            self.assertNotIn("\u2717", clean)  # ✗ absent in current design
+            self.assertIn("\u00b7", clean,
+                          "Expected · in clean-unconfirmed row indicator column")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -483,68 +494,66 @@ class TestBuildFooter(unittest.TestCase):
 
     # ── test 18 ───────────────────────────────────────────────────────────────
 
-    def test_footer_is_str_in_current_design(self) -> None:
-        # TODO: update after #6 — footer becomes list[str] with exactly 2
-        # elements (hint line + prompt line).  Replace assertIsInstance(str)
-        # with assertIsInstance(list) and assertEqual(len(...), 2).
+    def test_footer_is_list_of_two_lines(self) -> None:
+        """build_footer() must return list[str] with exactly 2 elements."""
         collisions, invalid = self._collisions_invalid()
         footer = build_footer("select", "", 0, None, collisions, invalid, 4)
-        self.assertIsInstance(footer, str)
+        self.assertIsInstance(footer, list)
+        self.assertEqual(len(footer), 2)
 
     # ── test 19 ───────────────────────────────────────────────────────────────
 
     def test_select_unresolved_excludes_accept_all(self) -> None:
-        # TODO: update after #6 — check line 0 of the 2-element footer list.
+        """Hint line (index 0) must omit 'accept all' when collisions remain."""
         collisions, invalid = self._collisions_invalid()
         footer = build_footer("select", "", 0, None, collisions, invalid, 4)
-        self.assertNotIn("accept all", strip_ansi(footer))
+        self.assertNotIn("accept all", strip_ansi(footer[0]))
 
     def test_select_zero_unresolved_includes_accept_all(self) -> None:
-        # TODO: update after #6 — check line 0 of the 2-element footer list;
-        # also assert that the 'a' key is highlighted (bold/colour around it).
+        """Hint line (index 0) must include 'accept all' when nothing is unresolved."""
         footer = build_footer("select", "", 0, None, set(), set(), 4)
-        self.assertIn("accept all", strip_ansi(footer))
+        self.assertIn("accept all", strip_ansi(footer[0]))
 
     # ── test 20 ───────────────────────────────────────────────────────────────
 
     def test_select_footer_contains_sel_buf(self) -> None:
-        # TODO: update after #6 — sel_buf appears on line 1 (prompt line)
-        # which starts with › in the new design.
+        """Typed digits must appear on the prompt line (index 1), after the › glyph."""
         collisions, invalid = self._collisions_invalid()
         footer = build_footer("select", "42", 0, None, collisions, invalid, 4)
-        self.assertIn("42", strip_ansi(footer))
+        self.assertIn("42", strip_ansi(footer[1]))
+        self.assertIn("\u203a", footer[1])  # › prompt glyph on line 1
 
     # ── test 21 ───────────────────────────────────────────────────────────────
 
     def test_edit_error_text_appears_in_footer(self) -> None:
+        """Error message text must appear on the hint line (index 0)."""
         collisions, invalid = self._collisions_invalid()
         err = '"BAD!" \u2014 must start with A\u2013Z'
         footer = build_footer("edit", "", 1, err, collisions, invalid, 4)
-        self.assertIn("BAD!", strip_ansi(footer))
+        self.assertIn("BAD!", strip_ansi(footer[0]))
 
-    def test_edit_error_uses_red_ansi_current_design(self) -> None:
-        # TODO: update after #6 — error becomes an amber ⚠ badge on line 0;
-        # NOT a \033[31;1m full-line colour wrap.  After #6:
-        #   assertIn('⚠', strip_ansi(footer_lines[0]))
-        #   assertNotIn('\033[31;1m', raw_line_0)  (no full-line red wrap)
+    def test_edit_error_uses_amber_warning_badge(self) -> None:
+        """Error state: ⚠ badge on line 0; no full-line red \033[31;1m wrap."""
         collisions, invalid = self._collisions_invalid()
         footer = build_footer("edit", "", 1, "bad symbol", collisions, invalid, 4)
-        self.assertIn("\033[31;1m", footer)  # current: whole footer wrapped red
+        self.assertIn("\u26a0", strip_ansi(footer[0]))  # ⚠ present on hint line
+        self.assertNotIn("\033[31;1m", footer[0])       # no full-line red wrap
 
     # ── test 22 ───────────────────────────────────────────────────────────────
 
     def test_edit_clean_contains_confirm_and_cancel(self) -> None:
-        # TODO: update after #6 — these appear on line 0 of the 2-element list.
+        """Hint line (index 0) must contain confirm and cancel hints."""
         collisions, invalid = self._collisions_invalid()
         footer = build_footer("edit", "", 1, None, collisions, invalid, 4)
-        clean = strip_ansi(footer)
+        clean = strip_ansi(footer[0])
         self.assertIn("confirm", clean)
         self.assertIn("cancel", clean)
 
     def test_edit_clean_contains_unresolved_count(self) -> None:
+        """Hint line (index 0) must contain the unresolved count."""
         collisions, invalid = self._collisions_invalid()
         footer = build_footer("edit", "", 1, None, collisions, invalid, 4)
-        self.assertIn("unresolved", strip_ansi(footer))
+        self.assertIn("unresolved", strip_ansi(footer[0]))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -554,8 +563,12 @@ class TestBuildFooter(unittest.TestCase):
 class TestDisplay(unittest.TestCase):
     """Unit tests for Display.show() cursor-up rewrite behaviour."""
 
-    _TABLE = ["top-border", "header", "separator", "row1", "row2"]
-    _FOOTER = "[ row number to edit ]:"
+    _TABLE = ["header", "rule", "row1", "row2", "row3"]
+    # Two-line footer as specified by #6: hint line + prompt line.
+    _FOOTER = [
+        "  \u2191\u2193 scroll  \u00b7  type a row number",
+        "  \u203a  _",
+    ]
 
     # ── test 23 ───────────────────────────────────────────────────────────────
 
@@ -578,11 +591,11 @@ class TestDisplay(unittest.TestCase):
         self.assertRegex(buf.getvalue(), r"\033\[\d+A")
 
     def test_second_render_cursor_up_count(self) -> None:
-        """N in \\033[NA must equal len(table_lines) for the current 1-line footer.
+        """N in \\033[NA must equal len(table_lines) + len(footer_lines) - 1.
 
-        TODO: update after #6 — footer becomes 2 lines, so the formula changes
-        to len(table_lines) + len(footer_lines) - 1 = len(table_lines) + 1.
-        The Display._prev_n accounting will be updated in task #6.
+        The -1 accounts for the last footer line having no trailing \\n, so
+        the cursor ends on that line rather than one below it.
+        For _TABLE (5 lines) + _FOOTER (2 lines): expected N = 5 + 2 - 1 = 6.
         """
         buf = io.StringIO()
         d = Display(output=buf)
@@ -592,8 +605,8 @@ class TestDisplay(unittest.TestCase):
         m = re.search(r"\033\[(\d+)A", buf.getvalue())
         self.assertIsNotNone(m, "No cursor-up escape found on second render")
         n = int(m.group(1))  # type: ignore[union-attr]
-        # Current design: _prev_n = len(table_lines); footer has no trailing \n.
-        self.assertEqual(n, len(self._TABLE))
+        expected = len(self._TABLE) + len(self._FOOTER) - 1
+        self.assertEqual(n, expected)
 
     def test_second_render_starts_with_carriage_return(self) -> None:
         """Rewrite prefix must start with \\r to go to column 0."""
