@@ -78,7 +78,7 @@ FIXTURE: list[tuple[str, str]] = [
     ("1003057", ""),
 ]
 
-# Larger fixture (24 rows) for paging and resize tests.
+# Larger fixture (80 rows) for paging, scrolling, resize, and state-rendering tests.
 #
 # States encoded via the (cmdty_id, user_symbol) pairs:
 #   user_symbol = ""          → clean unconfirmed (·); currency = suggest_currency(cmdty_id)
@@ -86,12 +86,16 @@ FIXTURE: list[tuple[str, str]] = [
 #   user_symbol = invalid sym → invalid (✗); currency = user_symbol, confirmed=False,
 #                               recompute() surfaces row.num in the *invalid* set
 #
-# Row spread:
+# Row spread (first 24 rows are identical to the original LARGE_FIXTURE):
 #   rows  1-2  : collision pair 1 — "AT&T" and "AT[T]" both → "AT-T"       (≠)
 #   rows  3-4  : collision pair 2 — "APPLE INC"/"APPLE_INC" → "APPLE-INC"  (≠)
 #   row   5    : invalid user_symbol "NOT-VALID!" — flagged by recompute()  (✗)
 #   rows  6-12 : pre-confirmed (user_symbol == valid currency)               (✓)
 #   rows 13-24 : clean unconfirmed (empty user_symbol)                       (·)
+#   rows 25-26 : collision pair 3 — "BRK.B" and "BRK B" both → "BRK-B"    (≠)
+#   row  27    : invalid user_symbol "NOT-OK!" — flagged by recompute()     (✗)
+#   rows 28-43 : pre-confirmed (user_symbol == valid currency)               (✓)
+#   rows 44-80 : clean unconfirmed (empty user_symbol)                       (·)
 LARGE_FIXTURE: list[tuple[str, str]] = [
     ("AT&T",       ""),           # 1  → AT-T       ≠ collision pair 1
     ("AT[T]",      ""),           # 2  → AT-T       ≠ collision pair 1
@@ -117,6 +121,62 @@ LARGE_FIXTURE: list[tuple[str, str]] = [
     ("WMT",        ""),           # 22 · clean unconfirmed
     ("UNH",        ""),           # 23 · clean unconfirmed
     ("BAC",        ""),           # 24 · clean unconfirmed
+    ("BRK.B",      ""),           # 25 → BRK-B      ≠ collision pair 3
+    ("BRK B",      ""),           # 26 → BRK-B      ≠ collision pair 3
+    ("FXERR",      "NOT-OK!"),    # 27 currency="NOT-OK!" → invalid per recompute()  ✗
+    ("GS",         "GS"),         # 28 pre-confirmed  ✓
+    ("C",          "C"),          # 29 pre-confirmed  ✓
+    ("T",          "T"),          # 30 pre-confirmed  ✓
+    ("VZ",         "VZ"),         # 31 pre-confirmed  ✓
+    ("PFE",        "PFE"),        # 32 pre-confirmed  ✓
+    ("JNJ",        "JNJ"),        # 33 pre-confirmed  ✓
+    ("MRK",        "MRK"),        # 34 pre-confirmed  ✓
+    ("XOM",        "XOM"),        # 35 pre-confirmed  ✓
+    ("CVX",        "CVX"),        # 36 pre-confirmed  ✓
+    ("LLY",        "LLY"),        # 37 pre-confirmed  ✓
+    ("ABBV",       "ABBV"),       # 38 pre-confirmed  ✓
+    ("KO",         "KO"),         # 39 pre-confirmed  ✓
+    ("PEP",        "PEP"),        # 40 pre-confirmed  ✓
+    ("UPS",        "UPS"),        # 41 pre-confirmed  ✓
+    ("HD",         "HD"),         # 42 pre-confirmed  ✓
+    ("V",          "V"),          # 43 pre-confirmed  ✓
+    ("MA",         ""),           # 44 · clean unconfirmed
+    ("PYPL",       ""),           # 45 · clean unconfirmed
+    ("ADBE",       ""),           # 46 · clean unconfirmed
+    ("CRM",        ""),           # 47 · clean unconfirmed
+    ("NOW",        ""),           # 48 · clean unconfirmed
+    ("SNOW",       ""),           # 49 · clean unconfirmed
+    ("UBER",       ""),           # 50 · clean unconfirmed
+    ("LYFT",       ""),           # 51 · clean unconfirmed
+    ("ABNB",       ""),           # 52 · clean unconfirmed
+    ("DASH",       ""),           # 53 · clean unconfirmed
+    ("COIN",       ""),           # 54 · clean unconfirmed
+    ("HOOD",       ""),           # 55 · clean unconfirmed
+    ("RBLX",       ""),           # 56 · clean unconfirmed
+    ("PLTR",       ""),           # 57 · clean unconfirmed
+    ("ARM",        ""),           # 58 · clean unconfirmed
+    ("RIVN",       ""),           # 59 · clean unconfirmed
+    ("NIO",        ""),           # 60 · clean unconfirmed
+    ("GRAB",       ""),           # 61 · clean unconfirmed
+    ("SE",         ""),           # 62 · clean unconfirmed
+    ("MELI",       ""),           # 63 · clean unconfirmed
+    ("PDD",        ""),           # 64 · clean unconfirmed
+    ("GOLD",       ""),           # 65 · clean unconfirmed
+    ("GLD",        ""),           # 66 · clean unconfirmed
+    ("SLV",        ""),           # 67 · clean unconfirmed
+    ("USO",        ""),           # 68 · clean unconfirmed
+    ("5001234",    ""),           # 69 · clean unconfirmed (numeric-start; WARNING emitted)
+    ("TLT",        ""),           # 70 · clean unconfirmed
+    ("IEF",        ""),           # 71 · clean unconfirmed
+    ("HYG",        ""),           # 72 · clean unconfirmed
+    ("LQD",        ""),           # 73 · clean unconfirmed
+    ("AGG",        ""),           # 74 · clean unconfirmed
+    ("TIP",        ""),           # 75 · clean unconfirmed
+    ("BND",        ""),           # 76 · clean unconfirmed
+    ("SCHD",       ""),           # 77 · clean unconfirmed
+    ("JEPI",       ""),           # 78 · clean unconfirmed
+    ("JEPQ",       ""),           # 79 · clean unconfirmed
+    ("DIVO",       ""),           # 80 · clean unconfirmed
 ]
 
 
@@ -631,9 +691,18 @@ def run(rows: list[Row], *, stdin_fd: Optional[int] = None, output=None) -> str:
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
+#
+# Running locally
+# ───────────────
+# Requirements: Python 3.9+  and  rich  (pip install rich)
+# Command:      python tui_prototype.py
+#
+# The TUI renders inline — no full-screen takeover.  Your existing terminal
+# content scrolls up and the widget appears below it.  Press Enter to accept
+# or Escape to cancel; the result is printed to stdout afterwards.
 
 def main() -> None:
-    rows = make_rows(FIXTURE)
+    rows = make_rows(LARGE_FIXTURE)
     emit_warnings(rows)
     result = run(rows)
     if result == "accepted":
