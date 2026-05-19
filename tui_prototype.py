@@ -79,47 +79,66 @@ FIXTURE: list[tuple[str, str]] = [
 ]
 
 # Larger fixture (24 rows) for paging and resize tests.
-# Collision pair 1 (rows 1-2): "AT&T" and "AT[T]" both → "AT-T"
-# Collision pair 2 (rows 3-4): "APPLE INC" and "APPLE_INC" both → "APPLE-INC"
-# Numeric-start rows (rows 5-6): cmdty_id begins with a digit → suggestion
-#   gets a "C" prefix (e.g. "1003057" → "C1003057"); valid suggestion, emits WARNING.
-# Remaining rows (7-24): clean unconfirmed rows with unique valid suggestions.
-# Note: recompute() derives `invalid` from the *currency* field; since
-# suggest_currency() always returns a valid Beancount symbol, `invalid` is
-# empty on start — invalid-indicator rows only arise after user edits.
+#
+# States encoded via the (cmdty_id, user_symbol) pairs:
+#   user_symbol = ""          → clean unconfirmed (·); currency = suggest_currency(cmdty_id)
+#   user_symbol = valid sym   → pre-confirmed (✓); currency = user_symbol, confirmed=True
+#   user_symbol = invalid sym → invalid (✗); currency = user_symbol, confirmed=False,
+#                               recompute() surfaces row.num in the *invalid* set
+#
+# Row spread:
+#   rows  1-2  : collision pair 1 — "AT&T" and "AT[T]" both → "AT-T"       (≠)
+#   rows  3-4  : collision pair 2 — "APPLE INC"/"APPLE_INC" → "APPLE-INC"  (≠)
+#   row   5    : invalid user_symbol "NOT-VALID!" — flagged by recompute()  (✗)
+#   rows  6-12 : pre-confirmed (user_symbol == valid currency)               (✓)
+#   rows 13-24 : clean unconfirmed (empty user_symbol)                       (·)
 LARGE_FIXTURE: list[tuple[str, str]] = [
-    ("AT&T",       ""),   # 1  → AT-T     ≠ collision
-    ("AT[T]",      ""),   # 2  → AT-T     ≠ collision
-    ("APPLE INC",  ""),   # 3  → APPLE-INC ≠ collision
-    ("APPLE_INC",  ""),   # 4  → APPLE-INC ≠ collision
-    ("1003057",    ""),   # 5  → C1003057 (numeric-start; WARNING emitted)
-    ("42STREET",   ""),   # 6  → C42STREET (numeric-start; WARNING emitted)
-    ("VBMPX",      ""),   # 7  → VBMPX
-    ("GOOGL",      ""),   # 8  → GOOGL
-    ("AMZN",       ""),   # 9  → AMZN
-    ("NVDA",       ""),   # 10 → NVDA
-    ("TSLA",       ""),   # 11 → TSLA
-    ("MSFT",       ""),   # 12 → MSFT
-    ("META",       ""),   # 13 → META
-    ("NFLX",       ""),   # 14 → NFLX
-    ("INTC",       ""),   # 15 → INTC
-    ("AMD",        ""),   # 16 → AMD
-    ("QCOM",       ""),   # 17 → QCOM
-    ("AVGO",       ""),   # 18 → AVGO
-    ("AAPL",       ""),   # 19 → AAPL
-    ("BRKB",       ""),   # 20 → BRKB
-    ("JPM",        ""),   # 21 → JPM
-    ("BAC",        ""),   # 22 → BAC
-    ("WMT",        ""),   # 23 → WMT
-    ("UNH",        ""),   # 24 → UNH
+    ("AT&T",       ""),           # 1  → AT-T       ≠ collision pair 1
+    ("AT[T]",      ""),           # 2  → AT-T       ≠ collision pair 1
+    ("APPLE INC",  ""),           # 3  → APPLE-INC  ≠ collision pair 2
+    ("APPLE_INC",  ""),           # 4  → APPLE-INC  ≠ collision pair 2
+    ("BADCMDTY",   "NOT-VALID!"), # 5  currency="NOT-VALID!" → invalid per recompute()  ✗
+    ("GOOGL",      "GOOGL"),      # 6  pre-confirmed  ✓
+    ("AMZN",       "AMZN"),       # 7  pre-confirmed  ✓
+    ("NVDA",       "NVDA"),       # 8  pre-confirmed  ✓
+    ("TSLA",       "TSLA"),       # 9  pre-confirmed  ✓
+    ("MSFT",       "MSFT"),       # 10 pre-confirmed  ✓
+    ("META",       "META"),       # 11 pre-confirmed  ✓
+    ("NFLX",       "NFLX"),       # 12 pre-confirmed  ✓
+    ("VBMPX",      ""),           # 13 · clean unconfirmed
+    ("INTC",       ""),           # 14 · clean unconfirmed
+    ("AMD",        ""),           # 15 · clean unconfirmed
+    ("QCOM",       ""),           # 16 · clean unconfirmed
+    ("AVGO",       ""),           # 17 · clean unconfirmed
+    ("AAPL",       ""),           # 18 · clean unconfirmed
+    ("BRKB",       ""),           # 19 · clean unconfirmed
+    ("JPM",        ""),           # 20 · clean unconfirmed
+    ("1003057",    ""),           # 21 · clean unconfirmed (numeric-start; WARNING emitted)
+    ("WMT",        ""),           # 22 · clean unconfirmed
+    ("UNH",        ""),           # 23 · clean unconfirmed
+    ("BAC",        ""),           # 24 · clean unconfirmed
 ]
 
 
 def make_rows(pairs: list[tuple[str, str]]) -> list[Row]:
+    """Build a list of Row objects from (cmdty_id, user_symbol) pairs.
+
+    When *user_symbol* is non-empty it is used as the initial *currency*
+    value and the row is marked confirmed=True if the symbol is valid,
+    confirmed=False if it is invalid (so recompute() surfaces it in the
+    *invalid* set).  When *user_symbol* is empty, *currency* defaults to
+    suggest_currency(cmdty_id) and confirmed=False.
+    """
     rows = []
     for i, (cid, usym) in enumerate(pairs, 1):
         sug = suggest_currency(cid)
-        rows.append(Row(i, cid, usym or "(not set)", sug, sug))
+        if usym:
+            currency  = usym
+            confirmed = is_valid_currency(usym)
+        else:
+            currency  = sug
+            confirmed = False
+        rows.append(Row(i, cid, usym or "(not set)", sug, currency, confirmed=confirmed))
     return rows
 
 

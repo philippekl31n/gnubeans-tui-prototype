@@ -32,6 +32,7 @@ import pytest
 
 from tui_prototype import (
     FIXTURE,
+    LARGE_FIXTURE,
     Display,
     Row,
     build_footer,
@@ -670,6 +671,106 @@ class TestEmitWarnings(unittest.TestCase):
     def test_collision_warning_names_currency(self) -> None:
         lines = self._capture()
         self.assertIn('"AT-T"', lines[2])
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 8. LARGE_FIXTURE state-composition tests  (no PTY)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestLargeFixture(unittest.TestCase):
+    """Verify that LARGE_FIXTURE has the required spread of initial row states."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.rows = make_rows(LARGE_FIXTURE)
+        cls.collisions, cls.invalid = recompute(cls.rows)
+
+    def test_large_fixture_is_importable(self) -> None:
+        """LARGE_FIXTURE must be importable from tui_prototype."""
+        self.assertIsInstance(LARGE_FIXTURE, list)
+
+    def test_large_fixture_has_at_least_20_rows(self) -> None:
+        self.assertGreaterEqual(len(LARGE_FIXTURE), 20)
+
+    def test_large_fixture_has_at_least_two_collision_pairs(self) -> None:
+        """recompute() must surface at least 4 collision row-nums (2 pairs × 2 rows)."""
+        self.assertGreaterEqual(len(self.collisions), 4,
+            f"Expected ≥4 collision row nums; got {self.collisions}")
+
+    def test_large_fixture_has_invalid_rows(self) -> None:
+        """recompute() must surface at least one invalid row num."""
+        self.assertGreater(len(self.invalid), 0,
+            "Expected at least one invalid row (currency not matching Beancount pattern)")
+
+    def test_large_fixture_invalid_row_uses_cross_glyph_in_table(self) -> None:
+        """The invalid row must show ✗ in the indicator column of build_table()."""
+        lines = build_table(
+            self.rows, "select", 0, len(self.rows), 0, "", self.collisions, self.invalid
+        )
+        data_lines = lines[2:]
+        invalid_nums = self.invalid
+        found = False
+        for row in self.rows:
+            if row.num in invalid_nums:
+                line_idx = row.num - 1
+                if line_idx < len(data_lines):
+                    if "\u2717" in strip_ansi(data_lines[line_idx]):
+                        found = True
+                        break
+        self.assertTrue(found, "No ✗ glyph found in invalid row's rendered line")
+
+    def test_large_fixture_has_pre_confirmed_rows(self) -> None:
+        """make_rows(LARGE_FIXTURE) must produce at least one confirmed=True row."""
+        confirmed = [r for r in self.rows if r.confirmed]
+        self.assertGreater(len(confirmed), 0,
+            "Expected at least one pre-confirmed row; found none")
+
+    def test_large_fixture_confirmed_rows_show_check_glyph(self) -> None:
+        """Pre-confirmed, non-collision rows show ✓ in the indicator column."""
+        confirmed_ok = [
+            r for r in self.rows
+            if r.confirmed and r.num not in self.collisions and r.num not in self.invalid
+        ]
+        self.assertGreater(len(confirmed_ok), 0, "No confirmed-ok rows to check")
+        lines = build_table(
+            self.rows, "select", 0, len(self.rows), 0, "", self.collisions, self.invalid
+        )
+        data_lines = lines[2:]
+        for row in confirmed_ok:
+            line_idx = row.num - 1
+            if line_idx < len(data_lines):
+                self.assertIn("\u2713", strip_ansi(data_lines[line_idx]),
+                    f"Expected ✓ in confirmed row {row.num}")
+
+    def test_large_fixture_has_clean_unconfirmed_rows(self) -> None:
+        """make_rows(LARGE_FIXTURE) must include rows that are not confirmed, not in
+        collision, and not invalid."""
+        clean = [
+            r for r in self.rows
+            if not r.confirmed
+            and r.num not in self.collisions
+            and r.num not in self.invalid
+        ]
+        self.assertGreater(len(clean), 0,
+            "Expected at least one clean unconfirmed row")
+
+    def test_large_fixture_clean_rows_show_dot_glyph(self) -> None:
+        """Clean unconfirmed rows show · in the indicator column."""
+        clean = [
+            r for r in self.rows
+            if not r.confirmed
+            and r.num not in self.collisions
+            and r.num not in self.invalid
+        ]
+        lines = build_table(
+            self.rows, "select", 0, len(self.rows), 0, "", self.collisions, self.invalid
+        )
+        data_lines = lines[2:]
+        for row in clean:
+            line_idx = row.num - 1
+            if line_idx < len(data_lines):
+                self.assertIn("\u00b7", strip_ansi(data_lines[line_idx]),
+                    f"Expected · in clean unconfirmed row {row.num}")
 
 
 if __name__ == "__main__":
