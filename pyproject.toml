@@ -4,5 +4,16 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.11"
 dependencies = [
+    "rich>=13",
     "textual>=8.2.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7",
 ]
