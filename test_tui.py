@@ -17,12 +17,16 @@ Run with:  python3 -m pytest test_tui.py -v
 
 from __future__ import annotations
 
+import fcntl
 import io
 import os
 import pty
 import re
 import select
+import signal
+import struct
 import sys
+import termios
 import threading
 import time
 import unittest
@@ -771,6 +775,172 @@ class TestLargeFixture(unittest.TestCase):
             if line_idx < len(data_lines):
                 self.assertIn("\u00b7", strip_ansi(data_lines[line_idx]),
                     f"Expected · in clean unconfirmed row {row.num}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 9. Resize / SIGWINCH tests  (PTY-based, main-thread run())
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _set_winsize_fd(fd: int, h: int, w: int) -> None:
+    """Apply TIOCSWINSZ to *fd* (sets the reported window size)."""
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", h, w, 0, 0))
+
+
+def _visible_fixture_ids(raw: bytes) -> set[str]:
+    """Return the LARGE_FIXTURE cmdty_ids found in the last rendered frame.
+
+    Strips all ANSI codes from the raw pty byte stream, locates the last
+    occurrence of the table header ("cmdty:id"), and checks which LARGE_FIXTURE
+    cmdty_ids appear in the text that follows (i.e. the final frame).
+    """
+    text  = raw.decode("utf-8", errors="replace")
+    clean = _ANSI_RE.sub("", text).replace("\r", "")
+    idx   = clean.rfind("cmdty:id")
+    if idx == -1:
+        return set()
+    last = clean[idx:]
+    return {cid for cid, _ in LARGE_FIXTURE if cid in last}
+
+
+def _drive_resize(
+    rows: list[Row],
+    heights: list[int],
+    width: int = 100,
+    pause: float = 0.4,
+) -> bytes:
+    """Run the TUI on the MAIN thread with programmatic SIGWINCH-driven resizes.
+
+    ``heights[0]`` is applied (via TIOCSWINSZ) before ``run()`` starts so the
+    TUI picks up the right initial viewport height.  Each subsequent entry in
+    ``heights`` triggers a resize: TIOCSWINSZ on the master fd followed by
+    ``os.kill(os.getpid(), signal.SIGWINCH)`` from the controller thread.
+
+    The TUI MUST run on the main thread so that ``run()``'s internal
+    ``signal.signal(SIGWINCH, ...)`` call succeeds (Python only allows signal
+    handlers to be set from the main thread).  After all resize steps the
+    controller sends Ctrl+C so the TUI exits cleanly.
+
+    Returns all bytes drained from the pty master (raw ANSI output).
+    """
+    master, slave = pty.openpty()
+    slave_out = os.fdopen(os.dup(slave), "w", buffering=1, closefd=True)
+
+    # Set the initial window size *before* run() reads os.get_terminal_size().
+    _set_winsize_fd(master, heights[0], width)
+
+    chunks:    list[bytes]             = []
+    drain_stop = threading.Event()
+    exc_box:   list[Optional[BaseException]] = [None]
+
+    def _drainer() -> None:
+        while not drain_stop.is_set():
+            r, _, _ = select.select([master], [], [], 0.05)
+            if r:
+                try:
+                    chunks.append(os.read(master, 4096))
+                except OSError:
+                    break
+
+    def _controller() -> None:
+        try:
+            time.sleep(0.3)   # let run() draw the initial frame
+            for h in heights[1:]:
+                _set_winsize_fd(master, h, width)
+                # Deliver SIGWINCH to this process.  run() is blocked in
+                # os.read() on the main thread; EINTR fires the handler.
+                os.kill(os.getpid(), signal.SIGWINCH)
+                time.sleep(pause)
+            time.sleep(0.1)
+            os.write(master, b"\x03")   # Ctrl+C → "cancelled"
+        except Exception as e:  # noqa: BLE001
+            exc_box[0] = e
+
+    dt = threading.Thread(target=_drainer,    daemon=True)
+    ct = threading.Thread(target=_controller, daemon=True)
+    dt.start()
+    ct.start()
+
+    # run() on the main thread — SIGWINCH handler is installed here.
+    tui_prototype.run(rows, stdin_fd=slave, output=slave_out)
+
+    ct.join(timeout=5.0)
+    try:
+        slave_out.close()
+    except OSError:
+        pass
+    time.sleep(0.2)
+    drain_stop.set()
+    dt.join(timeout=1.0)
+    for fd in (master, slave):
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+    if exc_box[0] is not None:
+        raise exc_box[0]
+
+    return b"".join(chunks)
+
+
+class TestResize(unittest.TestCase):
+    """Verify the SIGWINCH → viewport-recompute → redraw cycle end-to-end.
+
+    All three tests call _drive_resize() which runs run() from the main
+    thread so the SIGWINCH handler is installed.  A background controller
+    thread applies TIOCSWINSZ + os.kill(SIGWINCH) for each step.
+
+    Viewport formula: viewport_h = min(max(3, terminal_lines - 6), n_rows)
+    LARGE_FIXTURE has n=24 rows.
+
+    Height → viewport_h mapping used in these tests:
+      height=10  → min(max(3,  4), 24) =  4  (rows 1-4 visible)
+      height=20  → min(max(3, 14), 24) = 14  (rows 1-14 visible)
+      height=100 → min(max(3, 94), 24) = 24  (all rows, clamped to n)
+    """
+
+    def test_shrink_reduces_visible_rows(self) -> None:
+        """Shrinking pty height causes fewer data rows to appear.
+
+        Start at height=20 (viewport_h=14, BADCMDTY row 5 IS visible).
+        Resize to height=10 (viewport_h=4, BADCMDTY row 5 NOT visible).
+        """
+        rows = make_rows(LARGE_FIXTURE)
+        raw  = _drive_resize(rows, heights=[20, 10], pause=0.5)
+        visible = _visible_fixture_ids(raw)
+        self.assertNotIn(
+            "BADCMDTY", visible,
+            "After shrink to height=10 (viewport_h=4), row-5 (BADCMDTY) must not appear",
+        )
+
+    def test_grow_increases_visible_rows(self) -> None:
+        """Growing pty height causes more data rows to appear.
+
+        Start at height=10 (viewport_h=4, GOOGL row 6 NOT visible).
+        Resize to height=20 (viewport_h=14, GOOGL row 6 IS visible).
+        """
+        rows = make_rows(LARGE_FIXTURE)
+        raw  = _drive_resize(rows, heights=[10, 20], pause=0.5)
+        visible = _visible_fixture_ids(raw)
+        self.assertIn(
+            "GOOGL", visible,
+            "After grow to height=20 (viewport_h=14), row-6 (GOOGL) must appear",
+        )
+
+    def test_clamp_viewport_does_not_exceed_dataset(self) -> None:
+        """Viewport height is clamped to the total number of rows in the dataset.
+
+        Resize to height=100: without the clamp viewport_h would be 94, but
+        the dataset only has 24 rows so viewport_h should equal 24.  All rows
+        are visible, including BAC (row 24, the last entry).
+        """
+        rows = make_rows(LARGE_FIXTURE)
+        raw  = _drive_resize(rows, heights=[40, 100], pause=0.5)
+        visible = _visible_fixture_ids(raw)
+        self.assertIn(
+            "BAC", visible,
+            "After clamp (height=100, viewport_h clamped to 24), last row (BAC) must appear",
+        )
 
 
 if __name__ == "__main__":

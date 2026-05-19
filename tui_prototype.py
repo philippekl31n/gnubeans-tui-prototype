@@ -462,10 +462,20 @@ def run(rows: list[Row], *, stdin_fd: Optional[int] = None, output=None) -> str:
     """
     n = len(rows)
     try:
-        term_h = os.get_terminal_size().lines
-        viewport_h = max(3, term_h - 6)   # leave headroom above for warnings
+        # Prefer the size of stdin_fd (the pty slave in tests / the real tty in
+        # production) so that programmatic TIOCSWINSZ resizes are seen correctly.
+        # A freshly-opened pty with no TIOCSWINSZ applied returns 0 rows;
+        # treat that as "unknown" and fall through to the process-level query.
+        _init_fd = stdin_fd if stdin_fd is not None else sys.stdout.fileno()
+        _h = os.get_terminal_size(_init_fd).lines
+        if _h <= 0:
+            raise OSError("terminal reports zero rows")
+        viewport_h = max(3, _h - 6)       # leave headroom above for warnings
     except OSError:
-        viewport_h = 10
+        try:
+            viewport_h = max(3, os.get_terminal_size().lines - 6)
+        except OSError:
+            viewport_h = 10
     viewport_h = min(viewport_h, n)       # no need to be taller than the data
 
     mode     = "select"
@@ -515,10 +525,16 @@ def run(rows: list[Row], *, stdin_fd: Optional[int] = None, output=None) -> str:
         def _handle_sigwinch(signum, frame):  # noqa: ANN001
             nonlocal viewport_h, vstart
             try:
-                new_lines = os.get_terminal_size().lines
-                viewport_h = min(max(3, new_lines - 6), n)
+                # Query the size of the actual fd being used (the pty slave in
+                # tests; the real tty in production).  Fall back to the process-
+                # wide terminal size if the fd query raises OSError.
+                new_lines = os.get_terminal_size(fd).lines
             except OSError:
-                pass
+                try:
+                    new_lines = os.get_terminal_size().lines
+                except OSError:
+                    return
+            viewport_h = min(max(3, new_lines - 6), n)
             vstart = min(vstart, max(0, n - viewport_h))
             refresh()
 
