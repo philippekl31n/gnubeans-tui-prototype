@@ -20,8 +20,10 @@ import io
 import os
 import re
 import select
+import signal
 import sys
 import termios
+import threading
 import tty
 from dataclasses import dataclass
 from typing import Optional
@@ -74,6 +76,42 @@ FIXTURE: list[tuple[str, str]] = [
     ("AT[T]",   ""),
     ("VBMPX",   ""),
     ("1003057", ""),
+]
+
+# Larger fixture (24 rows) for paging and resize tests.
+# Collision pair 1 (rows 1-2): "AT&T" and "AT[T]" both → "AT-T"
+# Collision pair 2 (rows 3-4): "APPLE INC" and "APPLE_INC" both → "APPLE-INC"
+# Numeric-start rows (rows 5-6): cmdty_id begins with a digit → suggestion
+#   gets a "C" prefix (e.g. "1003057" → "C1003057"); valid suggestion, emits WARNING.
+# Remaining rows (7-24): clean unconfirmed rows with unique valid suggestions.
+# Note: recompute() derives `invalid` from the *currency* field; since
+# suggest_currency() always returns a valid Beancount symbol, `invalid` is
+# empty on start — invalid-indicator rows only arise after user edits.
+LARGE_FIXTURE: list[tuple[str, str]] = [
+    ("AT&T",       ""),   # 1  → AT-T     ≠ collision
+    ("AT[T]",      ""),   # 2  → AT-T     ≠ collision
+    ("APPLE INC",  ""),   # 3  → APPLE-INC ≠ collision
+    ("APPLE_INC",  ""),   # 4  → APPLE-INC ≠ collision
+    ("1003057",    ""),   # 5  → C1003057 (numeric-start; WARNING emitted)
+    ("42STREET",   ""),   # 6  → C42STREET (numeric-start; WARNING emitted)
+    ("VBMPX",      ""),   # 7  → VBMPX
+    ("GOOGL",      ""),   # 8  → GOOGL
+    ("AMZN",       ""),   # 9  → AMZN
+    ("NVDA",       ""),   # 10 → NVDA
+    ("TSLA",       ""),   # 11 → TSLA
+    ("MSFT",       ""),   # 12 → MSFT
+    ("META",       ""),   # 13 → META
+    ("NFLX",       ""),   # 14 → NFLX
+    ("INTC",       ""),   # 15 → INTC
+    ("AMD",        ""),   # 16 → AMD
+    ("QCOM",       ""),   # 17 → QCOM
+    ("AVGO",       ""),   # 18 → AVGO
+    ("AAPL",       ""),   # 19 → AAPL
+    ("BRKB",       ""),   # 20 → BRKB
+    ("JPM",        ""),   # 21 → JPM
+    ("BAC",        ""),   # 22 → BAC
+    ("WMT",        ""),   # 23 → WMT
+    ("UNH",        ""),   # 24 → UNH
 ]
 
 
@@ -447,11 +485,34 @@ def run(rows: list[Row], *, stdin_fd: Optional[int] = None, output=None) -> str:
     old_settings = termios.tcgetattr(fd)
     result = "cancelled"
 
+    # SIGWINCH: recompute viewport_h when the terminal window is resized.
+    # signal.signal() may only be called from the main thread; skip silently
+    # when run() is invoked from a background thread (e.g. in PTY tests).
+    _SIGWINCH = getattr(signal, "SIGWINCH", None)
+    _old_sigwinch = None
+    _in_main_thread = threading.current_thread() is threading.main_thread()
+
+    if _SIGWINCH is not None and _in_main_thread:
+        def _handle_sigwinch(signum, frame):  # noqa: ANN001
+            nonlocal viewport_h, vstart
+            try:
+                new_lines = os.get_terminal_size().lines
+                viewport_h = min(max(3, new_lines - 6), n)
+            except OSError:
+                pass
+            vstart = min(vstart, max(0, n - viewport_h))
+            refresh()
+
+        _old_sigwinch = signal.signal(_SIGWINCH, _handle_sigwinch)
+
     try:
         tty.setraw(fd)
 
         while True:
-            key = read_key(fd)
+            try:
+                key = read_key(fd)
+            except InterruptedError:
+                continue
 
             if mode == "select":
                 page = max(1, viewport_h)
@@ -526,6 +587,8 @@ def run(rows: list[Row], *, stdin_fd: Optional[int] = None, output=None) -> str:
             refresh()
 
     finally:
+        if _SIGWINCH is not None and _in_main_thread and _old_sigwinch is not None:
+            signal.signal(_SIGWINCH, _old_sigwinch)
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
         print()   # leave cursor on a fresh line after the footer
 
