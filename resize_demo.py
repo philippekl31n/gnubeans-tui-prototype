@@ -31,7 +31,7 @@ from tui_prototype import LARGE_FIXTURE, make_rows
 
 HEIGHTS:   list[int] = [8, 14, 24, 35]   # terminal heights to step through
 WIDTH:     int       = 100               # fixed column width for all frames
-STEP_WAIT: float     = 0.8              # seconds to wait after each SIGWINCH
+STEP_WAIT: float     = 1.5              # seconds to wait after each SIGWINCH
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
