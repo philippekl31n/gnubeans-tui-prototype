@@ -235,7 +235,7 @@ Below are the exact visual states the TUI must accurately render across its life
    #   Beancount Token            GnuCash Source
 ▸  1   *A*__PPLE__                      ┃ cmdty_id: "AAPL"
                                   ┃ user_symbol: "APPLE"
-   __4   C100-F                     cmdty_id: "100-F" → "C100-F"__
+  __ 4   C100-F                     cmdty_id: "100-F" → "C100-F"__
   __10   VTSAX                      cmdty_id: "VTSAX"__
   __11   VWUSX                      cmdty_id: "VWUSX"__
 
@@ -247,7 +247,12 @@ Below are the exact visual states the TUI must accurately render across its life
 
 ```
 
-> TRANSITION: User types `4`, `4`, `P` , `L`
+> TRANSITION to 10: User types `4`, `4`, `P` , `L`
+> TRANSITION to 12a: User types `↓`, moving `▸` to first source and auto-filling token-input field with that source's Beancount-safe value
+> TRANSITION to 12b: User types either 
+ - `tab`, autocompleting from the ghost-text and moving `▸` to the source whose Beancount-safe value exactly matches the current token input
+ - `↑`, moving `▸` to last source and auto-filling token-input field with that source's Beancount-safe value
+
 
 10.
 ```bash
@@ -257,10 +262,11 @@ Below are the exact visual states the TUI must accurately render across its life
    #   Beancount Token            GnuCash Source
 ▸  1   44PL* * ✗                    ┃ cmdty_id: "AAPL"
                                   ┃ user_symbol: "APPLE"
+  __ 4   C100-F                     cmdty_id: "100-F" → "C100-F"__
   __10   VTSAX                      cmdty_id: "VTSAX"__
   __11   VWUSX                      cmdty_id: "VWUSX"__
 
-  Error: must start with A–Z  ·  ↑↓ select source ·  esc cancel
+  Error: must start with A–Z  ·  ↑↓ select source  ·  esc cancel
 
 
 
@@ -270,7 +276,9 @@ Below are the exact visual states the TUI must accurately render across its life
 - The Error message and Invalid-input icon (`✗`) appear immediately after the first `4` is typed
 - The icon appears two spaces to the right of the reverse-video cursor (represented by `* *`)
 
-> TRANSITION: User types 21 digits
+> TRANSITION to 11: User types 21 digits
+> TRANSITION to 12a: User types `↓`
+> TRANSITION to 12b: User types `↑`
 
 11.
 ```bash
@@ -280,6 +288,7 @@ Below are the exact visual states the TUI must accurately render across its life
    #   Beancount Token            GnuCash Source
 ▸  1   44PL56789012345678901234* *✗ ┃ cmdty_id: "AAPL"
                                   ┃ user_symbol: "APPLE"
+  __ 4   C100-F                     cmdty_id: "100-F" → "C100-F"__
   __10   VTSAX                      cmdty_id: "VTSAX"__
   __11   VWUSX                      cmdty_id: "VWUSX"__
 
@@ -293,11 +302,9 @@ Below are the exact visual states the TUI must accurately render across its life
 - When the user types the 24th character in a Beancount Token input buffer, the cursor advances to column 32 of the display, but the input status icon (`✗` above) stops at column 33, breaking the ‘two spaces to the right of the cursor’ rule
 - When the user types the 25th character in a Beancount Token input buffer, the character is discarded, the Invalid-input icon (`✗`) flashes in column 33, and the error message "Error: 24 chars max" appears briefly before fading out/fading to the last error message pushed to the stack
 
-> TRANSITION to 12a: User types `↓`, moving `▸` to first source and auto-filling token-input field with that source's Beancount-safe value
-> TRANSITION to 12b: User types either
-  - `↓` , `↓`
-  - `↑`
-  - or any combination of `backspace` and/or readline keybindings to erase the current Beancount Token value (e.g. `Ctrl`+`A` then `Ctrl`+`K`), then `Tab`
+> TRANSITION to 9: User types any combination of `backspace` and/or readline keybindings to erase the current Beancount Token value
+> TRANSITION to 12a: User types `↓`
+> TRANSITION to 12b: User types `↑`
 
 12a.
 ```bash
@@ -307,6 +314,7 @@ Below are the exact visual states the TUI must accurately render across its life
    #   Beancount Token            GnuCash Source
    1   AAPL* * ✓                  ▸ ┃ cmdty_id: "AAPL"
                                   ┃ user_symbol: "APPLE"
+  __ 4   C100-F                     cmdty_id: "100-F" → "C100-F"__
   __10   VTSAX                      cmdty_id: "VTSAX"__
   __11   VWUSX                      cmdty_id: "VWUSX"__
 
@@ -317,8 +325,10 @@ Below are the exact visual states the TUI must accurately render across its life
 
 
 ```
+- While `▸` cursor is in the source column, up/down arrow movement wraps around top/bottom of source list
 
-> TRANSITION: User types `↓`
+> TRANSITION to 9: User clears token input field
+> TRANSITION to 12b: User types either `↓` or `↑`
 
 12b.
 ```bash
@@ -328,6 +338,7 @@ Below are the exact visual states the TUI must accurately render across its life
    #   Beancount Token            GnuCash Source
    1   APPLE* * ✓                   ┃ cmdty_id: "AAPL"
                                 ▸ ┃ user_symbol: "APPLE"
+  __ 4   C100-F                     cmdty_id: "100-F" → "C100-F"__
   __10   VTSAX                      cmdty_id: "VTSAX"__
   __11   VWUSX                      cmdty_id: "VWUSX"__
 
@@ -338,8 +349,11 @@ Below are the exact visual states the TUI must accurately render across its life
 
 
 ```
+- Position of `▸` in the source column always reflects the source whose Beancount-safe value matches the current token input field. It updates live as the user edits — a 100% match moves ▸ to that source; no match leaves `▸` on whichever source was last explicitly selected.
 
-> TRANSITION: User types either `↵` or `esc`, then `2`
+> TRANSITION to 9: User clears token input field
+> TRANSITION to 12a: User types either `↓` or `↑`
+> TRANSITION to 13: User types either `↵` or `esc`, then `2`
 
 13.
 ```bash
