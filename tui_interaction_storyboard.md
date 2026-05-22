@@ -106,7 +106,7 @@ Below are the exact visual states the TUI must accurately render across its life
 ▸  3  !*A*__T-T__                       ┃ cmdty_id: "AT-T"
                                   ┃ user_symbol: (not set)
 
-  ↑↓ select source  ·  ↵ submit  ·  esc cancel
+  type to edit  ·  ↑↓ select source  ·  esc cancel
 
 
 
@@ -129,7 +129,7 @@ Below are the exact visual states the TUI must accurately render across its life
 ▸  3   ATT* * ✓                     ┃ cmdty_id: "AT-T"
                                   ┃ user_symbol: (not set)
 
-  ↑↓ select source  ·  ↵ submit  ·  esc cancel
+  type to edit  ·  ↑↓ select source  ·  ↵ submit  ·  esc cancel
 
 
 
@@ -239,7 +239,7 @@ Below are the exact visual states the TUI must accurately render across its life
   __10   VTSAX                      cmdty_id: "VTSAX"__
   __11   VWUSX                      cmdty_id: "VWUSX"__
 
-  ↑↓ select source  ·  ↵ submit  ·  esc cancel
+  type to edit  ·  ↑↓ select source  ·  ↵ submit  ·  esc cancel
 
 
 
@@ -256,11 +256,11 @@ Below are the exact visual states the TUI must accurately render across its life
 
    #   Beancount Token            GnuCash Source
 ▸  1   44PL* * ✗                    ┃ cmdty_id: "AAPL"
-       Error: must start with A–Z ┃ user_symbol: "APPLE"
+                                  ┃ user_symbol: "APPLE"
   __10   VTSAX                      cmdty_id: "VTSAX"__
   __11   VWUSX                      cmdty_id: "VWUSX"__
 
-  ↑↓ select source  ·  ↵ submit  ·  esc cancel
+  Error: must start with A–Z  ·  ↑↓ select source ·  esc cancel
 
 
 
@@ -279,11 +279,11 @@ Below are the exact visual states the TUI must accurately render across its life
 
    #   Beancount Token            GnuCash Source
 ▸  1   44PL56789012345678901234* *✗ ┃ cmdty_id: "AAPL"
-       Error: 24 chars max        ┃ user_symbol: "APPLE"
+                                  ┃ user_symbol: "APPLE"
   __10   VTSAX                      cmdty_id: "VTSAX"__
   __11   VWUSX                      cmdty_id: "VWUSX"__
 
-  ↑↓ select source  ·  ↵ submit  ·  esc cancel
+  Error: 24 chars max  ·  ↑↓ select source  ·  esc cancel
 
 
 
@@ -293,12 +293,34 @@ Below are the exact visual states the TUI must accurately render across its life
 - When the user types the 24th character in a Beancount Token input buffer, the cursor advances to column 32 of the display, but the input status icon (`✗` above) stops at column 33, breaking the ‘two spaces to the right of the cursor’ rule
 - When the user types the 25th character in a Beancount Token input buffer, the character is discarded, the Invalid-input icon (`✗`) flashes in column 33, and the error message "Error: 24 chars max" appears briefly before fading out/fading to the last error message pushed to the stack
 
-> TRANSITION: User types either
+> TRANSITION to 12a: User types `↓`, moving `▸` to first source and auto-filling token-input field with that source's Beancount-safe value
+> TRANSITION to 12b: User types either
   - `↓` , `↓`
   - `↑`
   - or any combination of `backspace` and/or readline keybindings to erase the current Beancount Token value (e.g. `Ctrl`+`A` then `Ctrl`+`K`), then `Tab`
 
-12.
+12a.
+```bash
+❯ Reviewing 11 commodity mappings. __ctrl+s submit  ·  ctrl+c cancel__
+  Editing mapping for "APPLE":
+
+   #   Beancount Token            GnuCash Source
+   1   AAPL* * ✓                  ▸ ┃ cmdty_id: "AAPL"
+                                  ┃ user_symbol: "APPLE"
+  __10   VTSAX                      cmdty_id: "VTSAX"__
+  __11   VWUSX                      cmdty_id: "VWUSX"__
+
+  type to edit  ·  ↑↓ select source  ·  ↵ submit  ·  esc cancel
+
+
+
+
+
+```
+
+> TRANSITION: User types `↓`
+
+12b.
 ```bash
 ❯ Reviewing 11 commodity mappings. __ctrl+s submit  ·  ctrl+c cancel__
   Editing mapping for "APPLE":
@@ -309,7 +331,7 @@ Below are the exact visual states the TUI must accurately render across its life
   __10   VTSAX                      cmdty_id: "VTSAX"__
   __11   VWUSX                      cmdty_id: "VWUSX"__
 
-  ↑↓ select source  ·  ↵ submit  ·  esc cancel
+  type to edit  ·  ↑↓ select source  ·  ↵ submit  ·  esc cancel
 
 
 
