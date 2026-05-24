@@ -27,16 +27,18 @@ Below are the exact visual states the TUI must accurately render across its life
 ```
 - Table rows are sorted first by sanitized version of gnucash source; then by ASCII order of original version (e.g. "AT&T" before "AT-T" in the case of the collision above); This prevents having to dynamically reorder the table when Beancount Token values change
 - The ordinal column is two digits wide (matching the width of the table size) and right-aligned
+- When collisions = 0, filter-prompt ghost-text is `*T*__ype to filter__`
 
-> TRANSITION: User types `ctrl`+`c`
+> TRANSITION to 1b: User types `ctrl`+`c`
+> TRANSITION to 2: User types either `tab` or `!`
 
-1b. Exit Signal Recieved (BROWSING, collisions > 0)
+1b. Exit Signal Recieved (CONFIRMING, collisions > 0)
 ```bash
 ❯ Reviewing 11 commodity mappings. 1 unresolved collision. __ctrl+c exit__
-  Filter: *T*__ab to view collisions__
+  Skip adding commodities? [y/*N*]
 
    #   Beancount Token            GnuCash Source
-▸  1   APPLE                      user_symbol: "APPLE"
+   1   APPLE                      user_symbol: "APPLE"
    2  !AT-T                       cmdty_id: "AT&T" → "AT-T"
    3  !AT-T                       cmdty_id: "AT-T"
    4   C100-F                     cmdty_id: "100-F" → "C100-F"
@@ -46,7 +48,7 @@ Below are the exact visual states the TUI must accurately render across its life
    8   SPY                        cmdty_id: "SPY"
    9   QQQ                        cmdty_id: "QQQ"
 
-   shift+↑↓ pageup/dn  ·  ↵ edit selected
+  ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ edit mappings
 ```
 - Pressing `ctrl`+`c` again sends SIGINT
 
@@ -157,11 +159,12 @@ Below are the exact visual states the TUI must accurately render across its life
    8   SPY                        cmdty_id: "SPY"
    9   QQQ                        cmdty_id: "QQQ"
 
-  ↑↓ pageup/dn  ·  ↵ confirm
+  ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ confirm
 ```
 - CONFIRMING mode is triggered upon submit of a Beancount Token that results in there being 0 unresolved collisions; the “Accept all” prompt is set to 'Y' 
 
-> TRANSITION: User types `n` or `→`, then `↓` (or vice-versa)
+> TRANSITION to 7a: User types `n` or `→`, then `↓` (or vice-versa)
+> TRANSITION to 7c: User types `shift`+`↓`, then `↵` (or vice-versa)
 
 7a. (CONFIRMING, collisions = 0)
 ```bash
@@ -169,10 +172,31 @@ Below are the exact visual states the TUI must accurately render across its life
   Accept all? [y/*N*]
 
    #   Beancount Token            GnuCash Source
+   2   AT-T                       cmdty_id: "AT&T" → "AT-T"
+   3   ATT                        cmdty_id: "AT-T"
+   4   C100-F                     cmdty_id: "100-F" → "C100-F"
+   5   GOOGL                      cmdty_id: "GOOGL"
+   6   MSFT                       cmdty_id: "MSFT"
+   7   NVDA                       cmdty_id: "NVDA"
+   8   SPY                        cmdty_id: "SPY"
+   9   QQQ                        cmdty_id: "QQQ"
   10   VTSAX                      cmdty_id: "VTSAX"
-  11   VWUSX                      cmdty_id: "VWUSX"
 
-  ↑↓ pageup/dn  ·  ↵ edit mappings
+  ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ edit mappings
+```
+
+> TRANSITION: User types `shift`+`↓`, then `↵` (or vice-versa)
+
+7b. (BROWSING, collisions = 0)
+```bash
+❯ Reviewing 11 commodity mappings. __ctrl+s submit  · ctrl+c cancel__
+  Filter: *T*__ype to filter__
+
+   #   Beancount Token            GnuCash Source
+▸ 11   VWUSX                      cmdty_id: "VWUSX"
+
+  shift+↑↓ pageup/dn  ·  ↵ edit selected
+
 
 
 
@@ -182,9 +206,9 @@ Below are the exact visual states the TUI must accurately render across its life
 
 ```
 
-> TRANSITION: User types `↵`
+> TRANSITION: User types `↑`
 
-7b. (BROWSING, collisions = 0)
+7c. (BROWSING, collisions = 0)
 ```bash
 ❯ Reviewing 11 commodity mappings. __ctrl+s submit  · ctrl+c cancel__
   Filter: *T*__ype to filter__
@@ -194,6 +218,7 @@ Below are the exact visual states the TUI must accurately render across its life
   11   VWUSX                      cmdty_id: "VWUSX"
 
   shift+↑↓ pageup/dn  ·  ↵ edit selected
+
 
 
 
@@ -363,7 +388,7 @@ Below are the exact visual states the TUI must accurately render across its life
    #   Beancount Token            GnuCash Source
 
 
-  Error: no matching rows  ·  esc back
+  Error: no matching rows  ·  esc clear filter
 
 
 
@@ -374,10 +399,8 @@ Below are the exact visual states the TUI must accurately render across its life
 
 ```
 - An empty row is displayed under the table headers when no results match the current filter
-- The "esc back" shortcut is always visible in BROWSING mode when collisions = 0, replacing the conditional "esc clear filter" shortcut
 
-
-> TRANSITION: User types `esc`:
+> TRANSITION: User types `ctrl`+`s`:
 
 14. Back to Accept All (CONFIRMING, collisions = 0)
 ```bash
@@ -395,6 +418,6 @@ Below are the exact visual states the TUI must accurately render across its life
    8   SPY                        cmdty_id: "SPY"
    9   QQQ                        cmdty_id: "QQQ"
 
-  ↑↓ prev/next page  ·  ↵ edit mappings
+  ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ edit mappings
 ```
 - Boolean retains previous 'no' selection
