@@ -146,7 +146,7 @@ Below are the exact visual states the TUI must accurately render across its life
 6. (CONFIRMING, collisions = 0)
 ```bash
 ❯ Reviewing 11 commodity mappings. __ctrl+c cancel__
-  Accept all? [*Y*/n]
+  Accept all? [y/*N*]
 
    #   Beancount Token            GnuCash Source
    1   APPLE                      user_symbol: "APPLE"
@@ -161,9 +161,9 @@ Below are the exact visual states the TUI must accurately render across its life
 
   ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ confirm
 ```
-- CONFIRMING mode is triggered upon submit of a Beancount Token that results in there being 0 unresolved collisions; the “Accept all” prompt is set to 'Y' 
+- CONFIRMING mode is triggered upon submit of a Beancount Token that results in there being 0 unresolved collisions; the “Accept all” prompt is set to 'N' 
 
-> TRANSITION to 7a: User types `n` or `→`, then `↓` (or vice-versa)
+> TRANSITION to 7a: User types `↓` (or vice-versa)
 > TRANSITION to 7c: User types `shift`+`↓`, then `↵` (or vice-versa)
 
 7a. (CONFIRMING, collisions = 0)
@@ -400,7 +400,7 @@ Below are the exact visual states the TUI must accurately render across its life
 ```
 - An empty row is displayed under the table headers when no results match the current filter
 
-> TRANSITION: User types `ctrl`+`s`:
+> TRANSITION: User types `ctrl`+`s`
 
 14. Back to Accept All (CONFIRMING, collisions = 0)
 ```bash
@@ -420,4 +420,24 @@ Below are the exact visual states the TUI must accurately render across its life
 
   ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ edit mappings
 ```
-- Boolean retains previous 'no' selection
+
+> TRANSITION: User types `y` or left arrow, then `↵`
+
+15. 
+```bash
+11 commodities created.
+❯
+
+
+
+
+
+
+
+
+
+
+
+
+
+```

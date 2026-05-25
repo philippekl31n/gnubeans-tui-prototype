@@ -18,15 +18,15 @@ Normative keywords:
 | Terminal frame | The TUI redraw area. The canonical storyboard frame is 15 rows by 75 columns. |
 | Display row | 1-based terminal row within the frame. |
 | Display column | 1-based terminal column within the frame. |
-| Mapping | One Beancount target token plus one or more GnuCash source values. |
-| Source | A value that can justify or supply a target token, such as `cmdty_id` or `user_symbol`. |
+| Mapping | One target token plus one or more source values. |
+| Source | A value that can justify or supply a target token. Source labels are data/configuration values, not a fixed enum. |
 | Default source | The source used to initialize the row's target value before user edits. |
 | Source effective value | The value used by the TUI for matching and autofill: `sanitizedValue ?? originalValue`. |
 | Target value | The literal override stored on a mapping, or null when the row uses the default source value. |
 | Original target value | The target value computed at initialization; it MUST NOT change after initialization. |
 | Collision group | Mappings whose derived `currentTargetValue` values are equal and whose group size is greater than 1. |
 | Unresolved collision | A mapping that belongs to a collision group. |
-| Prompt line | Display row 2. It contains the filter, editing label, accept-all prompt, or exit prompt. |
+| Prompt line | Display row 2. It contains the filter, editing label, accept prompt, or exit prompt. |
 | Footer line | The command hint or error line drawn two rows after the final table body line. |
 
 Display-width rules:
@@ -47,11 +47,12 @@ components MUST be pure projections of root state plus derived selectors.
 
 ```typescript
 type Mode = "BROWSING" | "EDITING" | "CONFIRMING";
-type ConfirmationKind = "NONE" | "NORMAL_SUBMIT" | "ACCEPT_ALL" | "EXIT";
+type ConfirmationKind = "NONE" | "ACCEPT" | "EXIT";
 type ConfirmationChoice = "YES" | "NO";
 type FocusRegion = "TOKEN_INPUT" | "SOURCE_LIST";
 
 interface AppState {
+  config: AppConfig;
   mode: Mode;
   mappings: Mapping[];
 
@@ -64,7 +65,20 @@ interface AppState {
   result: ResultState;
 }
 
-type SourceLabel = "cmdty_id" | "user_symbol";
+type SourceLabel = string;
+
+interface AppConfig {
+  entityNameSingular: string;
+  entityNamePlural: string;
+  mappingNounSingular: string;
+  mappingNounPlural: string;
+  targetColumnLabel: string;
+  sourceColumnLabel: string;
+  acceptPrompt: string;
+  exitPrompt: string;
+  createdMessage: (count: number) => string;
+  sourceLabels: SourceLabel[];
+}
 
 interface Mapping {
   ordinal: number;
@@ -109,8 +123,6 @@ interface ValidationState {
 interface ConfirmationState {
   kind: ConfirmationKind;
   choice: ConfirmationChoice;
-  acceptAllLastChoice: ConfirmationChoice;
-  exitChoice: ConfirmationChoice;
   secondCtrlCArmed: boolean;
 }
 
@@ -128,12 +140,14 @@ interface ResultState {
 
 Ownership rules:
 
-- `confirmation.acceptAllLastChoice` MUST be owned by root state and MUST persist after leaving
-  `CONFIRMING`.
-- `confirmation.exitChoice` MUST be owned by root state. Its default MUST be `NO`.
+- `confirmation.choice` MUST be owned by root state and MUST be reset to `NO` every time the app enters
+  `CONFIRMING`, regardless of confirmation kind.
 - `edit` MUST be `null` outside `EDITING`.
 - `visibleRows`, `collisionGroups`, `unresolvedCollisions`, validation display positions, prompt text,
   footer text, and render lines MUST be derived selectors, not mutable component state.
+- `config` MUST be root-owned immutable input for a TUI session. Renderers MUST NOT hard-code entity
+  nouns, mapping nouns, column labels, source labels, accept prompt text, exit prompt text, or created
+  output text.
 - `selectedOrdinal` MUST identify the selected mapping by stable ordinal, not by visible-row index.
 - `scrollOffset` MUST be the zero-based offset into the current derived visible row list.
 - `defaultSourceValue`, `currentTargetValue`, and source `effectiveValue` MUST be derived selectors,
@@ -167,14 +181,38 @@ edit.concreteValue =
 Entity invariants:
 
 - A mapping MUST contain at most one source for each `SourceLabel`.
+- `config.sourceLabels` MUST define the allowed labels and display order for sources.
+- Every `Source.label` and `Mapping.defaultSourceLabel` MUST be present in `config.sourceLabels`.
 - `defaultSourceLabel` MUST refer to an existing source whose `effectiveValue` is not null.
 - `targetValue = null` means the mapping has no explicit override and uses `defaultSourceValue`.
 - Committing an edit whose submitted value equals `defaultSourceValue` MUST still store the literal
   string in `targetValue`; implementations MUST NOT canonicalize it back to null.
 
-### 2.2 Source and Sanitization Contract
+### 2.2 Storyboard Fixture Configuration
 
-For the commodity mapping dataset in the storyboard:
+The storyboard uses this concrete configuration:
+
+```typescript
+const storyboardConfig: AppConfig = {
+  entityNameSingular: "commodity",
+  entityNamePlural: "commodities",
+  mappingNounSingular: "mapping",
+  mappingNounPlural: "mappings",
+  targetColumnLabel: "Beancount Token",
+  sourceColumnLabel: "GnuCash Source",
+  acceptPrompt: "Accept all?",
+  exitPrompt: "Skip adding commodities?",
+  createdMessage: (count) => `${count} commodities created.`,
+  sourceLabels: ["cmdty_id", "user_symbol"],
+};
+```
+
+Implementations MUST support equivalent configurations for other entity types and source labels without
+changing the state machine, render pipeline, or key handling.
+
+### 2.3 Source and Sanitization Contract
+
+For the storyboard fixture dataset:
 
 | Ordinal | Sources | Default source value | Initial current target |
 |---:|---|---|---|
@@ -273,8 +311,9 @@ Key semantics:
 Matching semantics:
 
 - If `collisionOnly` is true, candidate rows MUST first be limited to unresolved collision rows.
-- `text` MUST match only the ordinal column and the current Beancount target token.
-- `text` MUST NOT match the GnuCash Source column.
+- `text` MUST match only the ordinal column and the current target token (`config.targetColumnLabel`).
+- The filter matcher MUST NOT compare `text` with `config.sourceColumnLabel`, any `Source.label`, or
+  any source display/effective/original/sanitized value.
 - Matching MUST be case-insensitive for ASCII letters.
 - Ordinal matching MUST use the decimal ordinal string without left padding. Query `1` matches rows
   `1`, `10`, and `11`.
@@ -284,7 +323,7 @@ Matching semantics:
   MUST be bold.
 - Empty results MUST render one blank table body line below the header, clear `selectedOrdinal`, and
   show `Error: no matching rows  ·  esc clear filter`.
-- `ctrl+s` in `BROWSING` with empty results MUST still open normal confirmation when collisions are
+- `ctrl+s` in `BROWSING` with empty results MUST still open accept confirmation when collisions are
   zero.
 
 ### 3.4 Visible Rows and Selection
@@ -299,8 +338,6 @@ if visibleRows is empty:
 else if selectedOrdinal is null or not in visibleRows:
   selectedOrdinal = first visible row ordinal
 scrollOffset = clamp(scrollOffset, 0, max(0, visibleRows.length - bodyCapacity))
-if selectedOrdinal is not visible in BROWSING or EDITING:
-  scrollOffset = nearest offset that includes selectedOrdinal
 ```
 
 When a filter change removes the previously selected row, selection MUST clamp to the first visible row.
@@ -310,18 +347,17 @@ Frame 2 selects row 2 after applying the collision metafilter. Frame 3 selects r
 
 ### 4.1 Confirmation Variants
 
-There are three distinct confirmation situations:
+There are two distinct confirmation situations:
 
 | Variant | Mode | `confirmation.kind` | Prompt | Default | YES action | NO/Enter action |
 |---|---|---|---|---|---|---|
-| Normal confirmation | `CONFIRMING` | `NORMAL_SUBMIT` | `Accept all?` | Last accept-all choice | Accept mappings | Return to `BROWSING` |
-| Accept-all confirmation on collision resolution | `CONFIRMING` | `ACCEPT_ALL` | `Accept all?` | `YES` on first entry caused by resolving last collision | Accept mappings | Return to `BROWSING` |
-| Ctrl+c exit confirmation | `CONFIRMING` | `EXIT` | `Skip adding commodities?` | `NO` | Skip and exit | Return to previous mapping review |
+| Accept confirmation | `CONFIRMING` | `ACCEPT` | `config.acceptPrompt` | `NO` | Accept mappings and render completion output | Return to `BROWSING` |
+| Ctrl+c exit confirmation | `CONFIRMING` | `EXIT` | `config.exitPrompt` | `NO` | Skip and exit | Return to previous mapping review |
 
-`NORMAL_SUBMIT`, `ACCEPT_ALL`, and `EXIT` MUST be distinguishable in state even when two variants share
-the `Accept all?` prompt. `NORMAL_SUBMIT` and `ACCEPT_ALL` share `acceptAllLastChoice`; `EXIT` MUST NOT
-share choice state with either. The accept-all choice MUST persist across later normal confirmation
-visits. Frame 14 MUST preserve `NO` from frame 7a.
+The storyboard no longer distinguishes a normal submit confirmation from an automatic last-collision
+accept confirmation. Both entry paths MUST use `confirmation.kind = ACCEPT`. Every y/n confirmation
+prompt MUST default to `NO` when shown; the app MUST NOT remember a previous boolean choice between
+confirmation visits.
 
 ### 4.2 Transition Table
 
@@ -335,41 +371,41 @@ visits. Frame 14 MUST preserve `NO` from frame 7a.
 | `BROWSING` | `Shift+↑` / `PgUp` | `visibleRows` non-empty | Page up; selected row becomes first visible row after paging | `BROWSING` |
 | `BROWSING` | `Shift+↓` / `PgDn` | `visibleRows` non-empty | Page down; selected row becomes first visible row after paging | `BROWSING` |
 | `BROWSING` | `Enter` | `selectedOrdinal != null` | Initialize `edit` for selected row | `EDITING` |
-| `BROWSING` | `ctrl+s` | `unresolvedCollisionCount == 0` | Enter normal confirmation; set choice to `acceptAllLastChoice` | `CONFIRMING` with `NORMAL_SUBMIT` |
+| `BROWSING` | `ctrl+s` | `unresolvedCollisionCount == 0` | Enter accept confirmation; set `choice = NO` | `CONFIRMING` with `ACCEPT` |
 | `BROWSING` | `ctrl+s` | `unresolvedCollisionCount > 0` | No state change | `BROWSING` |
-| `BROWSING` | `ctrl+c` | Any | Enter exit confirmation; `exitChoice = NO`; `secondCtrlCArmed = true` | `CONFIRMING` with `EXIT` |
+| `BROWSING` | `ctrl+c` | Any | Enter exit confirmation; set `choice = NO`; `secondCtrlCArmed = true` | `CONFIRMING` with `EXIT` |
 | `EDITING` | Printable char | Any | Apply streaming overwrite algorithm; validate; recompute collisions live | `EDITING` |
 | `EDITING` | `Backspace` or `ctrl+h` | Any | Return to token input if needed; delete one buffer char; validate; recompute collisions live | `EDITING` |
 | `EDITING` | `Tab` | Ghost suffix available | Complete buffer to displayed value; clear source navigation; validate | `EDITING` |
 | `EDITING` | `↑` / `↓` | Source list non-empty | Enter, move within, or exit reversible source navigation | `EDITING` |
-| `EDITING` | `Enter` | Validation `VALID` | Commit displayed edit value to mapping target; clear edit; recompute collisions | `CONFIRMING` with `ACCEPT_ALL` if collisions now zero, else `BROWSING` |
+| `EDITING` | `Enter` | Validation `VALID` | Commit displayed edit value to mapping target; clear edit; recompute collisions | `CONFIRMING` with `ACCEPT` if collisions now zero, else `BROWSING` |
 | `EDITING` | `Enter` | Validation not `VALID` | No commit; keep validation error | `EDITING` |
 | `EDITING` | `Esc` | Any | Discard buffer; clear edit; restore selection on edited row | `BROWSING` |
 | `EDITING` | `ctrl+c` | Any | Discard buffer; clear edit; restore selection on edited row | `BROWSING` |
-| `CONFIRMING NORMAL_SUBMIT` or `ACCEPT_ALL` | `y` | Any | `choice = YES`; `acceptAllLastChoice = YES` | Same confirmation kind |
-| `CONFIRMING NORMAL_SUBMIT` or `ACCEPT_ALL` | `n` | Any | `choice = NO`; `acceptAllLastChoice = NO` | Same confirmation kind |
-| `CONFIRMING NORMAL_SUBMIT` or `ACCEPT_ALL` | `←` / `→` | Any | Toggle choice; persist to `acceptAllLastChoice` | Same confirmation kind |
-| `CONFIRMING NORMAL_SUBMIT` or `ACCEPT_ALL` | `↑` / `↓` | Any | Scroll only; no selected row movement | Same confirmation kind |
-| `CONFIRMING NORMAL_SUBMIT` or `ACCEPT_ALL` | `Shift+↑` / `PgUp` | Any | Page scroll up only | Same confirmation kind |
-| `CONFIRMING NORMAL_SUBMIT` or `ACCEPT_ALL` | `Shift+↓` / `PgDn` | Any | Page scroll down only | Same confirmation kind |
-| `CONFIRMING NORMAL_SUBMIT` or `ACCEPT_ALL` | `Enter` | `choice == YES` | Set `result.status = ACCEPTED` | Terminal final state |
-| `CONFIRMING NORMAL_SUBMIT` or `ACCEPT_ALL` | `Enter` | `choice == NO` | Leave confirmation; preserve choice; selection becomes first visible row at current scroll | `BROWSING` |
-| `CONFIRMING NORMAL_SUBMIT` or `ACCEPT_ALL` | `Esc` | Any | Leave confirmation; preserve choice | `BROWSING` |
-| `CONFIRMING NORMAL_SUBMIT` or `ACCEPT_ALL` | `ctrl+c` | Any | Cancel batch, set `result.status = CANCELLED` | Terminal final state |
-| `CONFIRMING EXIT` | `y` | Any | `exitChoice = YES` | `CONFIRMING EXIT` |
-| `CONFIRMING EXIT` | `n` | Any | `exitChoice = NO` | `CONFIRMING EXIT` |
-| `CONFIRMING EXIT` | `←` / `→` | Any | Toggle `exitChoice` | `CONFIRMING EXIT` |
+| `CONFIRMING ACCEPT` | `y` | Any | `choice = YES` | Same confirmation kind |
+| `CONFIRMING ACCEPT` | `n` | Any | `choice = NO` | Same confirmation kind |
+| `CONFIRMING ACCEPT` | `←` / `→` | Any | Toggle choice | Same confirmation kind |
+| `CONFIRMING ACCEPT` | `↑` / `↓` | Any | Scroll only; no selected row movement | Same confirmation kind |
+| `CONFIRMING ACCEPT` | `Shift+↑` / `PgUp` | Any | Page scroll up only | Same confirmation kind |
+| `CONFIRMING ACCEPT` | `Shift+↓` / `PgDn` | Any | Page scroll down only | Same confirmation kind |
+| `CONFIRMING ACCEPT` | `Enter` | `choice == YES` | Set `result.status = ACCEPTED` | Terminal final state |
+| `CONFIRMING ACCEPT` | `Enter` | `choice == NO` | Leave confirmation; selection becomes first visible row at current scroll | `BROWSING` |
+| `CONFIRMING ACCEPT` | `Esc` | Any | Leave confirmation | `BROWSING` |
+| `CONFIRMING ACCEPT` | `ctrl+c` | Any | Cancel batch, set `result.status = CANCELLED` | Terminal final state |
+| `CONFIRMING EXIT` | `y` | Any | `choice = YES` | `CONFIRMING EXIT` |
+| `CONFIRMING EXIT` | `n` | Any | `choice = NO` | `CONFIRMING EXIT` |
+| `CONFIRMING EXIT` | `←` / `→` | Any | Toggle choice | `CONFIRMING EXIT` |
 | `CONFIRMING EXIT` | `↑` / `↓` | Any | Scroll only; no selected row movement | `CONFIRMING EXIT` |
 | `CONFIRMING EXIT` | `Shift+↑` / `PgUp` | Any | Page scroll up only | `CONFIRMING EXIT` |
 | `CONFIRMING EXIT` | `Shift+↓` / `PgDn` | Any | Page scroll down only | `CONFIRMING EXIT` |
-| `CONFIRMING EXIT` | `Enter` | `exitChoice == YES` | Set `result.status = SKIPPED` | Terminal final state |
-| `CONFIRMING EXIT` | `Enter` | `exitChoice == NO` | Leave exit confirmation | `BROWSING` |
+| `CONFIRMING EXIT` | `Enter` | `choice == YES` | Set `result.status = SKIPPED` | Terminal final state |
+| `CONFIRMING EXIT` | `Enter` | `choice == NO` | Leave exit confirmation | `BROWSING` |
 | `CONFIRMING EXIT` | `Esc` | Any | Leave exit confirmation | `BROWSING` |
 | `CONFIRMING EXIT` | `ctrl+c` | `secondCtrlCArmed` | Send SIGINT; set `result.status = SIGINT` | Terminal final state |
 
 ## 5. Key Handling Matrix
 
-| Key | `BROWSING` | `EDITING` | `CONFIRMING NORMAL_SUBMIT` / `ACCEPT_ALL` | `CONFIRMING EXIT` |
+| Key | `BROWSING` | `EDITING` | `CONFIRMING ACCEPT` | `CONFIRMING EXIT` |
 |---|---|---|---|---|
 | `↑` | Move selection up | Move source pointer up with wrap | Scroll up | Scroll up |
 | `↓` | Move selection down | Move source pointer down with wrap | Scroll down | Scroll down |
@@ -383,7 +419,7 @@ visits. Frame 14 MUST preserve `NO` from frame 7a.
 | `!` | Toggle collision metafilter | Type literal `!` only if validation grammar later permits; currently invalid printable char | No-op | No-op |
 | `Backspace` | Delete filter char or metafilter | Return to token input if needed, then delete edit char | No-op | No-op |
 | `ctrl+h` | Same as Backspace | Same as Backspace | No-op | No-op |
-| `ctrl+s` | Open normal confirmation if zero collisions | No-op | No-op | No-op |
+| `ctrl+s` | Open accept confirmation if zero collisions | No-op | No-op | No-op |
 | `ctrl+c` | Enter exit confirmation | Cancel edit to browsing | Cancel batch | Send SIGINT |
 | `y` / `n` | Append to filter | Type into buffer | Set choice | Set choice |
 | Other printable | Append to filter | Type into buffer | No-op | No-op |
@@ -405,8 +441,10 @@ For the canonical 15x75 frame:
 | N+2 | Footer |
 | Remaining rows through 15 | Blank filler lines cleared on each redraw |
 
-The footer MUST be exactly two rows below the last table body row. When the table body reaches row 13,
-the footer is row 15.
+When the footer separator is visible, the footer MUST be exactly two rows below the last rendered table
+body row. When the footer separator is collapsed, the footer MUST be exactly one row below the last
+rendered table body row. When the table body reaches row 13 in the canonical 15-row frame, the footer
+is row 15.
 
 ### 6.2 Inline Redraw and Clear
 
@@ -425,7 +463,7 @@ Columns are 1-based.
 |---|---:|---|
 | Header start | 1 | Header begins with `❯`. |
 | Prompt indent | 1..2 | Two leading spaces before prompt text. |
-| Table header | 1..75 | Exactly `   #   Beancount Token            GnuCash Source`. |
+| Table header | 1..75 | `   #   {targetColumnLabel}{padding}{sourceColumnLabel}`. For the storyboard config this is exactly `   #   Beancount Token            GnuCash Source`. |
 | Row cursor | 1 | `▸` only in `BROWSING` selected row or `EDITING` token input focus. |
 | Ordinal | 4..5 | Right-aligned to width 2 for the 11-row storyboard dataset. |
 | Collision marker | 8 | `!` when unresolved, otherwise space. |
@@ -446,10 +484,10 @@ columns 33 and 34 here.
 
 | Condition | Header |
 |---|---|
-| `unresolvedCollisionCount > 0`, not exit confirmation | `❯ Reviewing {total} commodity mappings. {count} unresolved collision{plural}. ctrl+c cancel` |
-| Exit confirmation | `❯ Reviewing {total} commodity mappings. {count} unresolved collision{plural}. ctrl+c exit` |
-| `unresolvedCollisionCount == 0`, `BROWSING` or `EDITING` | `❯ Reviewing {total} commodity mappings. ctrl+s submit  ·  ctrl+c cancel` |
-| `unresolvedCollisionCount == 0`, normal or accept-all confirmation | `❯ Reviewing {total} commodity mappings. ctrl+c cancel` |
+| `unresolvedCollisionCount > 0`, not exit confirmation | `❯ Reviewing {total} {entityNameSingular} {mappingNounPlural}. {count} unresolved collision{plural}. ctrl+c cancel` |
+| Exit confirmation | `❯ Reviewing {total} {entityNameSingular} {mappingNounPlural}. {count} unresolved collision{plural}. ctrl+c exit` |
+| `unresolvedCollisionCount == 0`, `BROWSING` or `EDITING` | `❯ Reviewing {total} {entityNameSingular} {mappingNounPlural}. ctrl+s submit  ·  ctrl+c cancel` |
+| `unresolvedCollisionCount == 0`, accept confirmation | `❯ Reviewing {total} {entityNameSingular} {mappingNounPlural}. ctrl+c cancel` |
 
 Shortcut portions in the header MUST be dim. The `❯` glyph SHOULD be bold.
 
@@ -462,8 +500,8 @@ Shortcut portions in the header MUST be dim. The `❯` glyph SHOULD be bold.
 | Browsing, metafilter only | `  Filter: !Type to filter`, with only `T` reverse-video and remainder dim |
 | Browsing, text filter | `  Filter: {visibleQuery}{cursor}` |
 | Editing | `  Editing mapping for "{defaultSourceValue}":` |
-| Accept-all confirming | `  Accept all? [Y/n]` or `  Accept all? [y/N]`, active choice reverse-video and bold |
-| Exit confirming | `  Skip adding commodities? [Y/n]` or `  Skip adding commodities? [y/N]`, active choice reverse-video and bold |
+| Accept confirming | `  {acceptPrompt} [Y/n]` or `  {acceptPrompt} [y/N]`, active choice reverse-video and bold |
+| Exit confirming | `  {exitPrompt} [Y/n]` or `  {exitPrompt} [y/N]`, active choice reverse-video and bold |
 
 ### 6.6 Footer Templates
 
@@ -477,8 +515,23 @@ Shortcut portions in the header MUST be dim. The `❯` glyph SHOULD be bold.
 | Confirming, choice YES | `  ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ confirm` |
 | Confirming, choice NO | `  ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ edit mappings` |
 
+Frame 6 is a storyboard-specific render case: it enters `CONFIRMING ACCEPT` with `NO` selected but
+still renders the footer text `↵ confirm`. This footer text MUST be preserved for frame-accurate
+rendering; the `Enter` key behavior MUST still follow `choice == NO` and return to `BROWSING`.
+
 Frame 4 shows no submit affordance while the buffer is still ghost-only/uncommitted. Frames 5, 9, 12a,
 and 12b show submit once validation is valid.
+
+### 6.7 Terminal Result Frame
+
+When `result.status = ACCEPTED`, the TUI MUST render the final inline frame shown in storyboard frame
+15:
+
+- Row 1 MUST be `config.createdMessage(total)`. For the storyboard config and 11-row dataset this is
+  `11 commodities created.`
+- Row 2 MUST be `❯`.
+- Rows 3 through 15 MUST be blank/cleared.
+- The alternate screen buffer MUST NOT be used.
 
 ## 7. Edit Buffer, Ghost Text, Source Pointer, and Validation
 
@@ -647,29 +700,113 @@ Display and gating:
 
 ### 8.1 Body Capacity
 
-For a 15-row terminal:
+`bodyCapacity` MUST be a derived selector from the current terminal height and the current mode's
+minimum body requirement:
 
-- Rows 1 to 4 are fixed header/prompt/blank/table-header.
-- The footer must be row `lastBodyRow + 2`.
-- Therefore max body rows in a non-editing full page is 9 rows, occupying rows 5 through 13.
-- Expanded edit rows consume one body row per rendered mapping/source line.
+```text
+fixedRowsBeforeBody = 4  // header, prompt, blank separator, table header
+footerRows = 1
+preferredFooterSeparatorRows = 1
+
+if mode == EDITING:
+  minimumBodyRows = activeSources.length
+else if mode == BROWSING and selectedOrdinal != null:
+  minimumBodyRows = 1
+else:
+  minimumBodyRows = 0
+
+bodyCapacityWithFooterSeparator =
+  max(0, terminal.height - fixedRowsBeforeBody - preferredFooterSeparatorRows - footerRows)
+bodyCapacityWithoutFooterSeparator =
+  max(0, terminal.height - fixedRowsBeforeBody - footerRows)
+
+footerSeparatorVisible =
+  terminal.height >= fixedRowsBeforeBody + preferredFooterSeparatorRows + footerRows
+  and bodyCapacityWithFooterSeparator >= minimumBodyRows
+
+bodyCapacity =
+  bodyCapacityWithFooterSeparator if footerSeparatorVisible
+  else bodyCapacityWithoutFooterSeparator
+```
+
+For a 15-row terminal, `bodyCapacity = 15 - 4 - 1 - 1 = 9`; the table body occupies rows 5
+through 13. Expanded edit rows consume one body row per rendered mapping/source line.
+
+The blank separator above the footer is optional. It MUST render when the preferred layout leaves
+enough body capacity for the current mode's minimum body requirement. It MUST collapse when collapsing
+it is necessary to fit the minimum body rows. If even the collapsed layout cannot fit the minimum body
+rows, the table body renders only `bodyCapacity` rows and the mode-specific too-small behavior applies.
 
 On terminal resize:
 
 - `frameHeight = max(terminal.height, 1)`.
-- The same row allocation algorithm MUST be used with the new height.
-- If height is too small to fit all fixed rows and footer, renderer MUST prioritize header, prompt,
-  table header, active row, and footer in that order.
+- `bodyCapacity` and `footerSeparatorVisible` MUST be recomputed from the new `terminal.height`.
+- The same row allocation algorithm MUST be used with the new height and recomputed `bodyCapacity`.
+- If height is too small to fit the fixed prefix rows and footer, renderer MUST truncate from the
+  bottom after preserving as much as possible of this order: header, prompt, blank separator, table
+  header, footer. Body rows render only when `bodyCapacity > 0`.
 - Width changes MUST NOT wrap lines.
 
-### 8.2 Browsing Scrolling
+### 8.2 Anchored Table Body Allocation
+
+`BROWSING` and `EDITING` MUST render the table body around a non-optional anchor block. Context rows
+before and after the anchor are optional and MUST be allocated deterministically.
+
+Anchor definitions:
+
+```text
+if mode == BROWSING:
+  anchorBlock = [selected mapping row]
+if mode == EDITING:
+  anchorBlock = expanded edit display rows for selectedOrdinal
+  anchorBlock.length = max(1, activeSources.length)
+```
+
+In `EDITING`, the active mapping/input row and the first source row share one display row. Each
+remaining source consumes one additional display row. The edit anchor therefore contains all
+non-optional edit display rows, not `1 + activeSources.length` rows.
+
+`CONFIRMING` has no selected anchor; it uses `scrollOffset` as a normal list window.
+
+When `bodyCapacity >= anchorBlock.length`, allocate table body rows using an anchor-high, fill-below-first
+policy:
+
+```text
+anchorIndex = index of selectedOrdinal within visibleRows
+contextAfter = visibleRows after anchorIndex
+contextCapacity = bodyCapacity - anchorBlock.length
+
+afterCount = min(contextAfter.length, contextCapacity)
+
+visibleBody =
+  anchorBlock
+  + head(contextAfter, afterCount)
+```
+
+This keeps the anchor block as high as possible while preserving nearby following context first. It also
+means a page may render fewer than `bodyCapacity` rows when the selected or edited row is near the end
+of `visibleRows`; implementations MUST NOT backfill preceding rows above the anchor in this policy.
+
+When anchored allocation renders fewer than `bodyCapacity` rows, the footer separator and footer MUST
+follow the last rendered body row. The renderer MUST NOT insert filler body rows to push the footer to
+the terminal bottom. Remaining terminal rows after the footer MUST be cleared as blank filler lines.
+
+When `bodyCapacity < anchorBlock.length`, the anchor cannot fully fit:
+
+- In `EDITING`, render `LAYOUT_BLOCKED`.
+- In `BROWSING`, render `LAYOUT_BLOCKED` only when `bodyCapacity < 1`; otherwise the selected row fits.
+
+`scrollOffset` remains the persisted scroll position for unanchored `CONFIRMING` mode and for page
+commands. The anchored body selector may derive visible rows that do not start exactly at
+`scrollOffset`; implementations MUST treat the selector output as authoritative for rendering.
+
+### 8.3 Browsing Scrolling
 
 - `↑` and `↓` move selection by one visible row.
-- If selection moves above the visible body, decrement `scrollOffset`.
-- If selection moves below the visible body, increment `scrollOffset`.
 - Movement MUST clamp at first and last visible row.
+- Rendering MUST use the anchored body allocation rules so the selected row remains visible.
 
-### 8.3 Confirming Scrolling
+### 8.4 Confirming Scrolling
 
 - In `CONFIRMING`, no row cursor is shown and no selected row movement occurs.
 - `↑` and `↓` adjust `scrollOffset` only.
@@ -680,7 +817,7 @@ On terminal resize:
 This explains frame 7b: after frame 7a scrolls to rows 2..10 and a later page-down/enter exits
 confirmation, browsing is at the last page with row 11 selected.
 
-### 8.4 Page Movement
+### 8.5 Page Movement
 
 - Page size MUST equal current non-editing body capacity.
 - `PgDn`/`Shift+↓` MUST set `scrollOffset = min(scrollOffset + pageSize, maxOffset)`.
@@ -688,17 +825,112 @@ confirmation, browsing is at the last page with row 11 selected.
 - In `BROWSING`, selected row MUST become the first visible row after paging.
 - In `CONFIRMING`, selection MUST NOT change.
 
-### 8.5 Keeping Edited Row Visible
+### 8.6 Keeping Edited Row Visible
 
-- Entering `EDITING` MUST set `scrollOffset` so the edited row and its expanded source lines fit when
-  possible.
-- If the expanded edit block cannot fit with all currently visible rows, non-selected rows MUST be
-  clipped after preserving the edited row, its source lines, separator, and footer.
+- Entering `EDITING` MUST render with anchored body allocation, using the edit block as the anchor.
+- If the expanded edit block cannot fit in `bodyCapacity`, `LAYOUT_BLOCKED` MUST render.
 - The edited row MUST never be scrolled out of view while `EDITING`.
+
+This places the expanded edit block as high as possible while keeping the full block visible. Example:
+from frame 1a, navigating to row 9 and pressing `Enter` in a 15x75 terminal has
+`bodyCapacity = 9`, `anchorIndex = 8`, `anchorBlock.length = 2`, and `contextCapacity = 7`.
+The body selector MUST render the expanded row 9 block followed by rows 10 and 11. Rows 1 through 8
+are omitted because preceding context is never backfilled above the anchor.
+
+### 8.7 `LAYOUT_BLOCKED`
+
+`LAYOUT_BLOCKED` is a render-only blocked layout over the current `EDITING` state. It MUST preserve the
+edit buffer, selected mapping, source navigation state, and mapping state. It MUST NOT reuse
+`confirmation.kind = EXIT`, because resize is not an exit signal and MUST NOT arm second-`ctrl+c`
+SIGINT behavior.
+
+Trigger:
+
+```text
+requiredEditBodyRows = activeSources.length
+layoutBlocked = mode == EDITING and bodyCapacity < requiredEditBodyRows
+```
+
+The storyboard fixture has two active sources per mapping. Therefore:
+
+- At terminal height 8, `bodyCapacity = 8 - 4 - 1 - 1 = 2`; the full two-source edit block fits.
+- At terminal height 7, the preferred layout would have `bodyCapacity = 7 - 4 - 1 - 1 = 1`, so the
+  separator above the footer MUST collapse and the effective `bodyCapacity = 7 - 4 - 1 = 2`; the full
+  two-source edit block still fits.
+- At terminal height 6, the separator above the footer MUST collapse and
+  `bodyCapacity = 6 - 4 - 1 = 1`; `LAYOUT_BLOCKED` MUST render because the full two-source edit block
+  does not fit.
+
+If mappings can vary by source count, `requiredEditBodyRows` MUST be computed from the currently edited
+mapping instead of from a session-wide constant.
+
+Behavior:
+
+- Resizing large enough to make `bodyCapacity >= requiredEditBodyRows` MUST return to the normal
+  `EDITING` render.
+- `Esc` or `ctrl+c` MUST cancel the edit using normal `EDITING` behavior.
+- Printable input, Backspace, source navigation, and submit SHOULD be ignored while blocked; the user
+  must resize or cancel. This prevents hidden edits while the source list cannot be inspected.
+- `LAYOUT_BLOCKED` MUST render at most `bodyCapacity` body rows from the active edit block.
+- `LAYOUT_BLOCKED` MUST use the same header, prompt, table header, token rendering, validation icon,
+  and footer semantics as `EDITING`, except for the blocked footer text below.
+
+Mockup for a 7-row terminal where the separator above the footer has collapsed and effective
+`bodyCapacity = 2`; the full two-source edit block fits:
+
+```bash
+❯ Reviewing 11 commodity mappings. __ctrl+s submit  ·  ctrl+c cancel__
+  Editing mapping for "QQQ":
+
+   #   Beancount Token            GnuCash Source
+▸  9   QQQ* * ✓                     ┃ cmdty_id: "QQQ"
+                                  ┃ user_symbol: (not set)
+  type to edit  ·  ↑↓ select source  ·  ↵ submit  ·  esc cancel
+```
+
+Mockup for a 6-row terminal where the separator above the footer has collapsed and effective
+`bodyCapacity = 1`; blocked footer text is rendered:
+
+```bash
+❯ Reviewing 11 commodity mappings. __ctrl+s submit  ·  ctrl+c cancel__
+  Editing mapping for "QQQ":
+
+   #   Beancount Token            GnuCash Source
+▸  9   QQQ* * ✓                     ┃ cmdty_id: "QQQ"
+  Enlarge terminal to edit sources  ·  esc cancel
+```
+
+Mockup for a 5-row terminal where the separator above the footer has collapsed and effective
+`bodyCapacity = 0`; footer truncates rendering of the table body:
+
+```bash
+❯ Reviewing 11 commodity mappings. __ctrl+s submit  ·  ctrl+c cancel__
+  Editing mapping for "QQQ":
+
+   #   Beancount Token            GnuCash Source
+  Enlarge terminal to edit sources  ·  esc cancel
+```
+
+Mockup for an 11-row terminal where `bodyCapacity = 5` and 11 total mappings; optional context rows
+fill below the anchored edit block according to the anchor-high, fill-below-first rule:
+
+```bash
+❯ Reviewing 11 commodity mappings. __ctrl+s submit  ·  ctrl+c cancel__
+  Editing mapping for "QQQ":
+
+   #   Beancount Token            GnuCash Source
+▸  9   QQQ* * ✓                     ┃ cmdty_id: "QQQ"
+                                  ┃ user_symbol: (not set)
+  __10   VTSAX                      cmdty_id: "VTSAX"__
+  __11   VWUSX                      cmdty_id: "VWUSX"__
+
+  type to edit  ·  ↑↓ select source  ·  ↵ submit  ·  esc cancel
+
+```
 
 ## 9. Collision Resolution Semantics
 
-Collision icons and accept-all transition are derived from live `currentTargetValue` values:
+Collision icons and accept transition are derived from live `currentTargetValue` values:
 
 1. Compute collision groups from `currentTargetValue`, using `edit.concreteValue` for the edited
    mapping.
@@ -707,15 +939,15 @@ Collision icons and accept-all transition are derived from live `currentTargetVa
    `mapping.targetValue`, even when it equals `defaultSourceValue`.
 4. If `unresolvedCollisionCount` becomes zero because of the commit:
    - Enter `CONFIRMING`.
-   - Set `confirmation.kind = ACCEPT_ALL`.
-   - Set `confirmation.choice = YES`.
-   - Set `confirmation.acceptAllLastChoice = YES` only for this first automatic zero-collision entry.
-5. Later manual `ctrl+s` entries MUST use `confirmation.kind = NORMAL_SUBMIT` and
-   `confirmation.acceptAllLastChoice`.
-6. If the user changes accept-all to `NO`, that `NO` MUST persist across later accept-all visits.
+   - Set `confirmation.kind = ACCEPT`.
+   - Set `confirmation.choice = NO`.
+5. Later manual `ctrl+s` entries MUST also use `confirmation.kind = ACCEPT` and set
+   `confirmation.choice = NO`.
+6. The user changing the accept choice MUST NOT affect the default for later confirmation visits.
 
-Frame 6 is the automatic zero-collision accept-all entry with `Y` selected. Frame 14 is a later normal
-confirmation visit with `N` retained from frame 7a.
+Frame 6 is the automatic zero-collision accept entry with `N` selected. Frame 14 is a later accept
+confirmation visit that also defaults to `N`. Frame 15 is the terminal accepted-output state after the
+user changes frame 14 to `Y` and presses `Enter`.
 
 ## 10. Golden-State Acceptance Tests
 
@@ -727,14 +959,14 @@ strip ANSI for geometry and inspect style spans separately for bold, dim, and re
 | Frame | Initial state | Input sequence | Expected app state | Expected visible rows | Expected prompt/footer | Render assertions |
 |---|---|---|---|---|---|---|
 | 1a | Fresh dataset, rows 2 and 3 collide | None | `BROWSING`, `filter=""`, selected row 1, `scrollOffset=0`, 1 collision group | 1..9 | Prompt ghost `Tab to view collisions`; footer edit selected | Header includes `1 unresolved collision`; row 1 has `▸`; rows 2/3 have `!`; footer row 15 |
-| 1b | Frame 1a | `ctrl+c` | `CONFIRMING EXIT`, `exitChoice=NO`, `secondCtrlCArmed=true` | 1..9 | `Skip adding commodities? [y/N]`; footer edit mappings | Header shortcut says `ctrl+c exit`; no row cursor; second `ctrl+c` sends SIGINT |
+| 1b | Frame 1a | `ctrl+c` | `CONFIRMING EXIT`, choice `NO`, `secondCtrlCArmed=true` | 1..9 | `Skip adding commodities? [y/N]`; footer edit mappings | Header shortcut says `ctrl+c exit`; no row cursor; second `ctrl+c` sends SIGINT |
 | 2 | Frame 1a or after exiting 1b | `Tab` or `!` | `BROWSING`, `collisionOnly=true`, selected row 2 | 2,3 | Prompt `!Type to filter`; footer clear filter | Footer row 8; rows 2/3 only; filler clears rows 9..15 |
 | 3 | Frame 2 | `3` | `BROWSING`, `collisionOnly=true`, `text="3"`, selected row 3 | 3 | Prompt `!3{cursor}`; footer clear filter | Ordinal `3` bold; no source matching; footer row 7 |
 | 4 | Frame 3 | `Backspace`, `↓`, `Enter` | `EDITING` row 3, empty buffer, ghost `AT-T`, token focus | 2 dim, expanded 3 | Editing prompt for `AT-T`; footer no submit | Row 2 super dim; active row shows `▸`, `!`, reverse `A`, dim `T-T`; source rows include `(not set)` |
 | 5 | Frame 4 | `A`, `T`, `T` | `EDITING` row 3, buffer `ATT`, valid, collisions zero live | 2 dim, expanded 3 | Footer includes submit | Rows 2/3 have no `!`; active row shows `ATT`, cursor, `✓` |
-| 6 | Frame 5 | `Enter` | `CONFIRMING ACCEPT_ALL`, choice `YES`, `scrollOffset=0`, collisions zero | 1..9 | `Accept all? [Y/n]`; footer confirm | Header omits collision count; no cursor; row 3 target `ATT` |
-| 7a | Frame 6 | `n`, `↓` or `↓`, `n` | `CONFIRMING ACCEPT_ALL`, choice `NO`, `acceptAllLastChoice=NO`, `scrollOffset=1` | 2..10 | `Accept all? [y/N]`; footer edit mappings | No cursor; first visible row is 2; row 10 visible |
-| 7b | Frame 7a | `Shift+↓`, `Enter` | `BROWSING`, collisions zero, selected row 11, last choice `NO` | 11 | Filter ghost `Type to filter`; footer edit selected | Header includes `ctrl+s submit`; row 11 has `▸`; footer row 7 |
+| 6 | Frame 5 | `Enter` | `CONFIRMING ACCEPT`, choice `NO`, `scrollOffset=0`, collisions zero | 1..9 | `Accept all? [y/N]`; footer confirm per storyboard frame | Header omits collision count; no cursor; row 3 target `ATT` |
+| 7a | Frame 6 | `↓` | `CONFIRMING ACCEPT`, choice `NO`, `scrollOffset=1` | 2..10 | `Accept all? [y/N]`; footer edit mappings | No cursor; first visible row is 2; row 10 visible |
+| 7b | Frame 7a | `Shift+↓`, `Enter` | `BROWSING`, collisions zero, selected row 11 | 11 | Filter ghost `Type to filter`; footer edit selected | Header includes `ctrl+s submit`; row 11 has `▸`; footer row 7 |
 | 7c | Frame 7b | `↑` | `BROWSING`, selected row 10, last page visible | 10,11 | Filter ghost `Type to filter`; footer edit selected | Row 10 has `▸`; row 11 follows; footer row 8 |
 | 8 | Frame 7c | `1` | `BROWSING`, `text="1"`, selected row 1 | 1,4,10,11 | Prompt `1{cursor}`; footer clear filter | Bold matches on ordinals 1/10/11 and token `C100-F`; source `100-F` is not matched |
 | 9 | Frame 8 | `Enter` | `EDITING` row 1, empty buffer, ghost `APPLE`, token focus | Expanded 1, dim 4/10/11 | Editing prompt for `APPLE`; footer submit | Active row shows reverse `A` and dim `PPLE`; source rows `AAPL`, `APPLE`; dim inactive rows |
@@ -743,16 +975,17 @@ strip ANSI for geometry and inspect style spans separately for bold, dim, and re
 | 12a | Frame 9 or 10/11 | `↓` | `EDITING`, buffer `AAPL`, valid, source focus first source | Expanded 1, dim 4/10/11 | Footer submit | Row-level cursor absent; source pointer at first source; `✓` shown |
 | 12b | Frame 9 or 10/11 | `↑` | `EDITING`, buffer `APPLE`, valid, `sourcePointerIndex=1` | Expanded 1, dim 4/10/11 | Footer submit | Source pointer line 2; pointer came from source navigation, not exact-match tracking |
 | 13 | Frame 12b | `Enter` or `Esc`, then `2` after existing filter `1` | `BROWSING`, `text="12"`, selected null | Empty result | Error no matching rows | Blank body row under header; no cursor; footer row 7 |
-| 14 | Frame 13 | `ctrl+s` | `CONFIRMING NORMAL_SUBMIT`, choice `NO`, collisions zero | 1..9 | `Accept all? [y/N]`; footer edit mappings | Accept-all `NO` retained; filter does not constrain confirming table |
+| 14 | Frame 13 | `ctrl+s` | `CONFIRMING ACCEPT`, choice `NO`, collisions zero | 1..9 | `Accept all? [y/N]`; footer edit mappings | Accept prompt defaults to `NO`; filter does not constrain confirming table |
+| 15 | Frame 14 | `y` or `←`, then `Enter` | Terminal accepted state, `result.status=ACCEPTED` | None | None | Frame line 1 is `11 commodities created.`; frame line 2 is `❯`; remaining frame lines are blank/cleared |
 
 ### 10.2 Defect-Prevention Tests
 
 | Issue from checklist | Required test |
 |---|---|
-| Distinct confirmation intents missing | Assert frame 1b uses `kind=EXIT`, prompt `Skip adding commodities?`, default `NO`, and `YES` result `SKIPPED`; frame 6 uses `kind=ACCEPT_ALL`; frame 14 uses `kind=NORMAL_SUBMIT`; both accept prompts use `YES` result `ACCEPTED`. |
-| `acceptAllConfirm` contradictory ownership | Mutate accept-all choice to `NO`, leave confirmation, re-enter via `ctrl+s`, and assert root `confirmation.acceptAllLastChoice=NO` drives prompt. No renderer/component local state may override it. |
-| `ctrl+c` dispatcher absent | Assert `ctrl+c` in `BROWSING` enters exit confirmation, in `EDITING` cancels edit, in `NORMAL_SUBMIT`/`ACCEPT_ALL` cancels batch, and second `ctrl+c` in `EXIT` emits SIGINT. |
-| Filtering underspecified | Assert Tab and `!` both toggle collision metafilter; query text matches ordinal/token only; source text does not match; empty results clear selection; `ctrl+s` still opens normal confirmation with zero collisions. |
+| Distinct confirmation intents missing | Assert frame 1b uses `kind=EXIT`, prompt `Skip adding commodities?`, default `NO`, and `YES` result `SKIPPED`; frames 6 and 14 both use `kind=ACCEPT`, default `NO`, and `YES` result `ACCEPTED`. |
+| Confirmation default regression | Change an accept or exit prompt to `YES`, leave confirmation, re-enter any y/n confirmation, and assert `confirmation.choice=NO`. No renderer/component local state may remember the previous boolean. |
+| `ctrl+c` dispatcher absent | Assert `ctrl+c` in `BROWSING` enters exit confirmation, in `EDITING` cancels edit, in `ACCEPT` cancels batch, and second `ctrl+c` in `EXIT` emits SIGINT. |
+| Filtering underspecified | Assert Tab and `!` both toggle collision metafilter; query text matches ordinal/token only; source text does not match; empty results clear selection; `ctrl+s` still opens accept confirmation with zero collisions. |
 | Edit input append contradiction | Assert frame 4 to 5 streaming overwrite produces `ATT`, not `AT-TATT` or `ATTT`; ghost disappears when buffer no longer prefixes `defaultSourceValue`. |
 | Lossy domain model | Unit-test collision groups, source effective values, literal `targetValue`, derived `currentTargetValue`, default source, and live edited target as separate fields. |
 | Missing sorting rules | Change row 3 target to `ATT`; assert order remains row 2 then row 3 and does not resort by new target. |
@@ -777,9 +1010,9 @@ strip ANSI for geometry and inspect style spans separately for bold, dim, and re
 - ASCII case-insensitive filtering is required, although the storyboard does not demonstrate lowercase input.
 - `ctrl+c` in `EDITING` is treated as edit cancel because the storyboard header says `ctrl+c cancel`; the
   storyboard does not show an edit-mode `ctrl+c` frame.
-- `ctrl+c` in normal/accept-all confirmation cancels the batch because the header says `ctrl+c cancel`;
+- `ctrl+c` in accept confirmation cancels the batch because the header says `ctrl+c cancel`;
   the storyboard only explicitly defines second `ctrl+c` SIGINT for exit confirmation.
-- Leaving accept-all confirmation with `NO` selects the first visible row at the current scroll offset.
+- Leaving accept confirmation with `NO` selects the first visible row at the current scroll offset.
   This is inferred from frames 7a to 7b.
 - Frame 13 keeps the prior text filter `1` and appends `2`, yielding `12`; the storyboard does not show
   the full intermediate path from frame 12b to frame 13.
