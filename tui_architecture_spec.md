@@ -21,10 +21,10 @@ Normative keywords:
 | Mapping | One Beancount target token plus one or more GnuCash source values. |
 | Source | A value that can justify or supply a target token, such as `cmdty_id` or `user_symbol`. |
 | Default source | The source used to initialize the row's target value before user edits. |
-| Source safe value | The Beancount-safe value derived from a source value. |
-| Target value | The current Beancount token stored for a mapping. |
+| Source effective value | The value used by the TUI for matching and autofill: `sanitizedValue ?? originalValue`. |
+| Target value | The literal override stored on a mapping, or null when the row uses the default source value. |
 | Original target value | The target value computed at initialization; it MUST NOT change after initialization. |
-| Collision group | Mappings whose current target values are equal and whose group size is greater than 1. |
+| Collision group | Mappings whose derived `currentTargetValue` values are equal and whose group size is greater than 1. |
 | Unresolved collision | A mapping that belongs to a collision group. |
 | Prompt line | Display row 2. It contains the filter, editing label, accept-all prompt, or exit prompt. |
 | Footer line | The command hint or error line drawn two rows after the final table body line. |
@@ -64,22 +64,19 @@ interface AppState {
   result: ResultState;
 }
 
+type SourceLabel = "cmdty_id" | "user_symbol";
+
 interface Mapping {
-  id: string;
   ordinal: number;
   sources: Source[];
-  defaultSourceId: string;
-  originalTargetValue: string;
-  targetValue: string;
+  defaultSourceLabel: SourceLabel;
+  targetValue: string | null;
 }
 
 interface Source {
-  id: string;
-  kind: "cmdty_id" | "user_symbol";
+  label: SourceLabel;
   originalValue: string | null;
-  displayValue: string;
-  safeValue: string | null;
-  isDefault: boolean;
+  sanitizedValue: string | null;
 }
 
 interface FilterState {
@@ -94,15 +91,11 @@ interface SelectionState {
 }
 
 interface EditState {
-  mappingId: string;
+  mappingOrdinal: number;
   buffer: string;
-  ghostSourceId: string | null;
-  ghostValue: string;
-  ghostCursor: number;
-  deviatedFromGhost: boolean;
   focusRegion: FocusRegion;
-  sourcePointerId: string | null;
-  lastExplicitSourcePointerId: string | null;
+  sourcePointerIndex: number | null;
+  sourceEntryBuffer: string | null;
   validation: ValidationState;
   maxLengthFlashUntil: number | null;
 }
@@ -143,12 +136,47 @@ Ownership rules:
   footer text, and render lines MUST be derived selectors, not mutable component state.
 - `selectedOrdinal` MUST identify the selected mapping by stable ordinal, not by visible-row index.
 - `scrollOffset` MUST be the zero-based offset into the current derived visible row list.
+- `defaultSourceValue`, `currentTargetValue`, and source `effectiveValue` MUST be derived selectors,
+  not stored fields.
+- Edit ghost text MUST be derived from `targetValue`, `defaultSourceValue`, and `edit.buffer`, not
+  stored in `EditState`.
+
+Derived entity selectors:
+
+```text
+source.effectiveValue = source.sanitizedValue ?? source.originalValue
+mapping.defaultSource = the only source where source.label == mapping.defaultSourceLabel
+mapping.defaultSourceValue = mapping.defaultSource.effectiveValue
+mapping.currentTargetValue = mapping.targetValue ?? mapping.defaultSourceValue
+mapping.activeSources = sources where source.effectiveValue is not null, in source display order
+edit.ghostSuffix =
+  if mapping.targetValue == null and edit.buffer is a prefix of mapping.defaultSourceValue:
+    mapping.defaultSourceValue without the edit.buffer prefix
+  else:
+    ""
+edit.renderedValue = edit.buffer + edit.ghostSuffix
+edit.concreteValue =
+  if edit.buffer is non-empty:
+    edit.buffer
+  else if mapping.targetValue == null:
+    mapping.defaultSourceValue
+  else:
+    mapping.targetValue
+```
+
+Entity invariants:
+
+- A mapping MUST contain at most one source for each `SourceLabel`.
+- `defaultSourceLabel` MUST refer to an existing source whose `effectiveValue` is not null.
+- `targetValue = null` means the mapping has no explicit override and uses `defaultSourceValue`.
+- Committing an edit whose submitted value equals `defaultSourceValue` MUST still store the literal
+  string in `targetValue`; implementations MUST NOT canonicalize it back to null.
 
 ### 2.2 Source and Sanitization Contract
 
 For the commodity mapping dataset in the storyboard:
 
-| Ordinal | Sources | Original target | Initial target |
+| Ordinal | Sources | Default source value | Initial current target |
 |---:|---|---|---|
 | 1 | `cmdty_id: "AAPL"`, `user_symbol: "APPLE"` | `APPLE` | `APPLE` |
 | 2 | `cmdty_id: "AT&T"` | `AT-T` | `AT-T` |
@@ -165,10 +193,11 @@ For the commodity mapping dataset in the storyboard:
 Source display rules:
 
 - A source with `originalValue = null` MUST display as `(not set)`.
-- A source whose `safeValue` differs from `originalValue` MUST display as
-  `{kind}: "{originalValue}" → "{safeValue}"`.
-- A source whose `safeValue` equals `originalValue` MUST display as `{kind}: "{originalValue}"`.
-- For source selection and ghost text, `(not set)` MUST have `safeValue = null` and MUST NOT match
+- A source whose `sanitizedValue` is non-null and differs from `originalValue` MUST display as
+  `{label}: "{originalValue}" → "{sanitizedValue}"`.
+- A source whose `sanitizedValue` is null or equals `originalValue` MUST display as
+  `{label}: "{originalValue}"`.
+- For source selection and ghost text, `(not set)` MUST have `effectiveValue = null` and MUST NOT match
   the edit buffer.
 
 Sanitization rules used by this contract:
@@ -186,19 +215,19 @@ Sanitization rules used by this contract:
 
 The base display order MUST be stable after initialization:
 
-1. Sort mappings by the safe value of their default source.
+1. Sort mappings by `defaultSourceValue`.
 2. Break ties by ASCII order of the default source's original value.
 3. Break any remaining ties by original ordinal.
 
-The table MUST NOT dynamically reorder when `targetValue` changes during editing. Frame 5 keeps rows
-2 and 3 adjacent after row 3 changes to `ATT`.
+The table MUST NOT dynamically reorder when `targetValue` or `currentTargetValue` changes during
+editing. Frame 5 keeps rows 2 and 3 adjacent after row 3 changes to `ATT`.
 
 ### 3.2 Collision Groups
 
 Algorithm:
 
 ```text
-groupByTarget = map targetValue -> mappings whose targetValue is equal
+groupByTarget = map currentTargetValue -> mappings whose currentTargetValue is equal
 collisionGroups = all groups where size > 1
 unresolvedCollisionOrdinals = ordinals from collisionGroups
 unresolvedCollisionCount = collisionGroups.length
@@ -207,7 +236,7 @@ unresolvedCollisionCount = collisionGroups.length
 Rendering rules:
 
 - The header count is the number of unresolved collision groups, not the number of rows in those groups.
-- A row MUST render `!` when its current `targetValue` belongs to an unresolved collision group.
+- A row MUST render `!` when its `currentTargetValue` belongs to an unresolved collision group.
 - During `EDITING`, collision groups MUST be recomputed from the live edit buffer for the edited row.
 - Frame 5 requirement: when row 3's live buffer becomes `ATT`, row 2 and row 3 MUST both stop
   rendering `!` immediately because `AT-T` and `ATT` are no longer equal.
@@ -249,7 +278,7 @@ Matching semantics:
 - Matching MUST be case-insensitive for ASCII letters.
 - Ordinal matching MUST use the decimal ordinal string without left padding. Query `1` matches rows
   `1`, `10`, and `11`.
-- Token matching MUST search the full current `targetValue`.
+- Token matching MUST search the full `currentTargetValue`.
 - If `text` is empty, no bold highlight spans are emitted.
 - If `text` is non-empty, every non-overlapping matched span in the ordinal and target token display
   MUST be bold.
@@ -310,10 +339,10 @@ visits. Frame 14 MUST preserve `NO` from frame 7a.
 | `BROWSING` | `ctrl+s` | `unresolvedCollisionCount > 0` | No state change | `BROWSING` |
 | `BROWSING` | `ctrl+c` | Any | Enter exit confirmation; `exitChoice = NO`; `secondCtrlCArmed = true` | `CONFIRMING` with `EXIT` |
 | `EDITING` | Printable char | Any | Apply streaming overwrite algorithm; validate; recompute collisions live | `EDITING` |
-| `EDITING` | `Backspace` or `ctrl+h` | Any | Delete one buffer char or rewind ghost cursor; validate; recompute collisions live | `EDITING` |
-| `EDITING` | `Tab` | Ghost text available | Complete buffer to ghost/source safe value; update pointer; validate | `EDITING` |
-| `EDITING` | `↑` / `↓` | Source list non-empty | Move source pointer with wraparound; autofill buffer from pointed source safe value | `EDITING` |
-| `EDITING` | `Enter` | Validation `VALID` | Commit buffer to mapping target; clear edit; recompute collisions | `CONFIRMING` with `ACCEPT_ALL` if collisions now zero, else `BROWSING` |
+| `EDITING` | `Backspace` or `ctrl+h` | Any | Return to token input if needed; delete one buffer char; validate; recompute collisions live | `EDITING` |
+| `EDITING` | `Tab` | Ghost suffix available | Complete buffer to displayed value; clear source navigation; validate | `EDITING` |
+| `EDITING` | `↑` / `↓` | Source list non-empty | Enter, move within, or exit reversible source navigation | `EDITING` |
+| `EDITING` | `Enter` | Validation `VALID` | Commit displayed edit value to mapping target; clear edit; recompute collisions | `CONFIRMING` with `ACCEPT_ALL` if collisions now zero, else `BROWSING` |
 | `EDITING` | `Enter` | Validation not `VALID` | No commit; keep validation error | `EDITING` |
 | `EDITING` | `Esc` | Any | Discard buffer; clear edit; restore selection on edited row | `BROWSING` |
 | `EDITING` | `ctrl+c` | Any | Discard buffer; clear edit; restore selection on edited row | `BROWSING` |
@@ -350,9 +379,9 @@ visits. Frame 14 MUST preserve `NO` from frame 7a.
 | `→` | No-op | No-op | Toggle choice | Toggle choice |
 | `Enter` | Edit selected row | Submit only if valid | Confirm if YES, otherwise edit mappings | Skip if YES, otherwise edit mappings |
 | `Esc` | Clear active filter, otherwise no-op | Cancel edit | Edit mappings | Edit mappings |
-| `Tab` | Toggle collision metafilter | Autocomplete from ghost/source | No-op | No-op |
+| `Tab` | Toggle collision metafilter | Complete ghost text in token input | No-op | No-op |
 | `!` | Toggle collision metafilter | Type literal `!` only if validation grammar later permits; currently invalid printable char | No-op | No-op |
-| `Backspace` | Delete filter char or metafilter | Delete edit char/rewind ghost | No-op | No-op |
+| `Backspace` | Delete filter char or metafilter | Return to token input if needed, then delete edit char | No-op | No-op |
 | `ctrl+h` | Same as Backspace | Same as Backspace | No-op | No-op |
 | `ctrl+s` | Open normal confirmation if zero collisions | No-op | No-op | No-op |
 | `ctrl+c` | Enter exit confirmation | Cancel edit to browsing | Cancel batch | Send SIGINT |
@@ -432,7 +461,7 @@ Shortcut portions in the header MUST be dim. The `❯` glyph SHOULD be bold.
 | Browsing, no filter, collisions = 0 | `  Filter: Type to filter`, with `T` reverse-video and remainder dim |
 | Browsing, metafilter only | `  Filter: !Type to filter`, with only `T` reverse-video and remainder dim |
 | Browsing, text filter | `  Filter: {visibleQuery}{cursor}` |
-| Editing | `  Editing mapping for "{originalTargetValue}":` |
+| Editing | `  Editing mapping for "{defaultSourceValue}":` |
 | Accept-all confirming | `  Accept all? [Y/n]` or `  Accept all? [y/N]`, active choice reverse-video and bold |
 | Exit confirming | `  Skip adding commodities? [Y/n]` or `  Skip adding commodities? [y/N]`, active choice reverse-video and bold |
 
@@ -457,25 +486,39 @@ and 12b show submit once validation is valid.
 
 On `BROWSING Enter`:
 
-1. `edit.mappingId` MUST be the selected mapping.
-2. `edit.buffer` MUST be empty.
-3. `ghostSourceId` MUST be the source whose `safeValue` equals the mapping's current `targetValue`.
-   If multiple sources match, choose the first source in source display order.
-4. `ghostValue` MUST be that source's safe value, or the current target value if no source matches.
-5. `ghostCursor = 0`, `deviatedFromGhost = false`.
-6. `focusRegion = TOKEN_INPUT`.
-7. `sourcePointerId` MUST be the exact-match source id if any; otherwise `null`.
-8. `lastExplicitSourcePointerId` MUST be the exact-match source id if any; otherwise the first source
-   with non-null `safeValue`.
+1. `edit.mappingOrdinal` MUST be the selected mapping ordinal.
+2. If `mapping.targetValue === null`:
+   - `edit.buffer` MUST be empty.
+3. If `mapping.targetValue !== null`:
+   - `edit.buffer` MUST be the literal `mapping.targetValue`.
+4. `focusRegion = TOKEN_INPUT`.
+5. `sourcePointerIndex = null`.
+6. `sourceEntryBuffer = null`.
 
-The displayed token input is `buffer + remainingGhost` until deviation. The reverse-video cursor is at
-the next ghost character. Frame 4 displays `A` as the cursor and `T-T` as dim ghost text for row 3.
+Ghost text is derived, not stored. When `mapping.targetValue === null` and `edit.buffer` is a prefix of
+`mapping.defaultSourceValue`, the input line MUST display the remaining suffix of `defaultSourceValue`
+as ghost text. When `mapping.targetValue !== null`, no ghost text MUST render even if the literal
+`targetValue` is a prefix of `defaultSourceValue`.
+
+The reverse-video cursor MUST cover the next ghost character when ghost text is active, or a space after
+the buffer when no ghost text is active. Frame 4 displays `A` as the cursor and `T-T` as dim ghost text
+for row 3 because its `targetValue` is null. Frame 9 displays `APPLE` as ghost text when row 1's
+`targetValue` is null. If row 1 later has literal `targetValue = "APPL"`, re-entering edit mode MUST
+display `APPL` with the cursor after `L` and no ghost `E`.
+
+`ghostValue`, `ghostCursor`, and `ghostSourceLabel` MUST NOT be stored in `EditState`; all three are
+derivable from the selected mapping and `edit.buffer`.
 
 ### 7.2 Streaming Overwrite Algorithm
 
 On printable character `ch` in `EDITING`:
 
 ```text
+if focusRegion == SOURCE_LIST:
+  focusRegion = TOKEN_INPUT
+  sourcePointerIndex = null
+  sourceEntryBuffer = null
+
 if displayWidth(buffer) >= 24:
   discard ch
   set maxLengthFlashUntil
@@ -483,44 +526,45 @@ if displayWidth(buffer) >= 24:
   render capped invalid icon
   return
 
-if not deviatedFromGhost and ghostCursor < len(ghostValue) and ch == ghostValue[ghostCursor]:
-  buffer += ch
-  ghostCursor += 1
-else:
-  if not deviatedFromGhost:
-    deviatedFromGhost = true
-    ghostValue = ""
-  buffer += ch
-
-updateExactMatchPointer()
+buffer += ch
 validate()
 recompute collisions using buffer for edited mapping
 ```
 
-Deviation behavior:
+Ghost behavior:
 
-- The first character that does not equal the next ghost character MUST discard all remaining ghost
-  text and append normally.
-- After deviation, subsequent printable characters MUST append normally.
-- Backspace after deviation MUST remove the last buffer character.
-- Backspace before deviation MUST remove the last accepted buffer character and move `ghostCursor`
-  back by one. If `buffer` is empty, Backspace MUST do nothing.
+- Typing a character that keeps `buffer` as a prefix of `defaultSourceValue` MUST continue rendering
+  the remaining suffix as ghost text when `targetValue` is null.
+- Typing a character that makes `buffer` no longer a prefix of `defaultSourceValue` MUST make
+  `edit.ghostSuffix` derive to empty; no separate deviation flag is stored.
+- If later Backspace returns `buffer` to a prefix of `defaultSourceValue` while `targetValue` is null,
+  ghost text MUST reappear.
+- Backspace MUST delete the last buffer character when `buffer` is non-empty.
+- If Backspace is pressed while `focusRegion = SOURCE_LIST`, the pointer MUST first return to
+  `TOKEN_INPUT`, clear `sourcePointerIndex`, clear `sourceEntryBuffer`, and then delete one buffer
+  character from the current autofilled buffer.
+- If `buffer` is empty, Backspace MUST do nothing.
 
-Frame 5 requirement: typing `A`, `T`, `T` over ghost `AT-T` produces buffer `ATT`, deviation at the
-third character, cursor after `ATT`, validation `✓`, and no collision icons on rows 2 or 3.
+Frame 5 requirement: typing `A`, `T`, `T` over ghost `AT-T` produces buffer `ATT`; the third character
+makes `buffer` no longer a prefix of `defaultSourceValue`, so ghost text disappears, the cursor appears
+after `ATT`, validation is `✓`, and rows 2 and 3 have no collision icons.
+
+Frame 12b backspace requirement: from source-list focus with buffer `APPLE`, Backspace MUST return focus
+to `TOKEN_INPUT`, clear `sourcePointerIndex`, clear `sourceEntryBuffer`, delete the final `E`, and
+render `APPL` plus ghost `E` as `APPL*E*` because the mapping's `targetValue` is still null.
 
 ### 7.3 Tab Autocomplete
 
 In `EDITING`, `Tab` MUST:
 
-1. If `ghostSourceId` has a non-null safe value, set `buffer` to that full safe value.
-2. Set `deviatedFromGhost = true`.
-3. Move `sourcePointerId` to the source whose safe value exactly equals `buffer`.
-4. Set `lastExplicitSourcePointerId = sourcePointerId` when the pointer is non-null.
-5. Set `focusRegion = SOURCE_LIST` when an exact source match exists.
-6. Validate.
+1. If `edit.ghostSuffix` is non-empty, set `buffer` to `edit.renderedValue`.
+2. Clear `sourcePointerIndex`.
+3. Clear `sourceEntryBuffer`.
+4. Set `focusRegion = TOKEN_INPUT`.
+5. Validate.
 
-Frame 12b: from frame 9, `Tab` completes `APPLE` and points at `user_symbol: "APPLE"`.
+Frame 12b remains reachable by `↑` from frame 9. `Tab` from frame 9 completes `APPLE` in the token
+input but MUST NOT place the source pointer beside `user_symbol: "APPLE"`.
 
 ### 7.4 Source Pointer Movement
 
@@ -531,15 +575,35 @@ The source list order MUST be the order supplied by the mapping. For frame 9, ro
 
 Rules:
 
-- `↑` and `↓` in `EDITING` MUST move the source pointer through sources with non-null safe values.
-- Movement MUST wrap at the top and bottom.
+- `sourcePointerIndex` indexes `mapping.activeSources`, not the raw source array.
+- `sourceEntryBuffer` stores the buffer value from immediately before focus switched from
+  `TOKEN_INPUT` to `SOURCE_LIST`.
+- `sourceEntryBuffer` MUST be null while `focusRegion = TOKEN_INPUT`.
+- When `focusRegion = TOKEN_INPUT`, `↓` MUST:
+  - Set `sourceEntryBuffer = buffer`.
+  - Set `sourcePointerIndex = 0`.
+  - Set `buffer = activeSources[0].effectiveValue`.
+  - Set `focusRegion = SOURCE_LIST`.
+- When `focusRegion = TOKEN_INPUT`, `↑` MUST:
+  - Set `sourceEntryBuffer = buffer`.
+  - Set `sourcePointerIndex = activeSources.length - 1`.
+  - Set `buffer = activeSources[sourcePointerIndex].effectiveValue`.
+  - Set `focusRegion = SOURCE_LIST`.
+- When `focusRegion = SOURCE_LIST` and `↑` is pressed while `sourcePointerIndex == 0`, the cursor has
+  moved above the first source. The implementation MUST restore `buffer = sourceEntryBuffer`, clear
+  `sourcePointerIndex`, clear `sourceEntryBuffer`, and set `focusRegion = TOKEN_INPUT`.
+- When `focusRegion = SOURCE_LIST` and `↓` is pressed while
+  `sourcePointerIndex == activeSources.length - 1`, the cursor has moved below the last source. The
+  implementation MUST restore `buffer = sourceEntryBuffer`, clear `sourcePointerIndex`, clear
+  `sourceEntryBuffer`, and set `focusRegion = TOKEN_INPUT`.
+- When `focusRegion = SOURCE_LIST` and movement remains within the list, `↑` and `↓` MUST move
+  `sourcePointerIndex` by -1 or +1.
 - Movement MUST set `focusRegion = SOURCE_LIST`.
-- Movement MUST autofill `buffer` with the pointed source's safe value.
-- Movement MUST set `lastExplicitSourcePointerId` to the pointed source.
-- If typed edits produce an exact match with a source safe value, `sourcePointerId` MUST move live to
-  that source even when focus remains `TOKEN_INPUT`.
-- If typed edits do not exactly match any source safe value, `sourcePointerId` MUST remain on
-  `lastExplicitSourcePointerId`.
+- Movement MUST autofill `buffer` with the pointed source's `effectiveValue`.
+- Printable typing, Backspace, and `ctrl+h` while `focusRegion = SOURCE_LIST` MUST exit source-list
+  navigation, clear `sourcePointerIndex`, and clear `sourceEntryBuffer` before applying the edit.
+- Exact matches between `buffer` and a source `effectiveValue` MUST NOT create or move
+  `sourcePointerIndex` while `focusRegion = TOKEN_INPUT`.
 
 Frame 12a: `↓` from frame 9 points at `cmdty_id: "AAPL"` and fills `AAPL`.
 Frame 12b: `↑` from frame 9 wraps to `user_symbol: "APPLE"` and fills `APPLE`.
@@ -634,11 +698,13 @@ confirmation, browsing is at the last page with row 11 selected.
 
 ## 9. Collision Resolution Semantics
 
-Collision icons and accept-all transition are derived from live target values:
+Collision icons and accept-all transition are derived from live `currentTargetValue` values:
 
-1. Compute collision groups from current target values, using edit buffer for the edited mapping.
+1. Compute collision groups from `currentTargetValue`, using `edit.concreteValue` for the edited
+   mapping.
 2. Render `!` for each unresolved collision row.
-3. On valid edit submit, commit the edit buffer to `mapping.targetValue`.
+3. On valid edit submit, commit `edit.concreteValue` as the literal string
+   `mapping.targetValue`, even when it equals `defaultSourceValue`.
 4. If `unresolvedCollisionCount` becomes zero because of the commit:
    - Enter `CONFIRMING`.
    - Set `confirmation.kind = ACCEPT_ALL`.
@@ -672,10 +738,10 @@ strip ANSI for geometry and inspect style spans separately for bold, dim, and re
 | 7c | Frame 7b | `↑` | `BROWSING`, selected row 10, last page visible | 10,11 | Filter ghost `Type to filter`; footer edit selected | Row 10 has `▸`; row 11 follows; footer row 8 |
 | 8 | Frame 7c | `1` | `BROWSING`, `text="1"`, selected row 1 | 1,4,10,11 | Prompt `1{cursor}`; footer clear filter | Bold matches on ordinals 1/10/11 and token `C100-F`; source `100-F` is not matched |
 | 9 | Frame 8 | `Enter` | `EDITING` row 1, empty buffer, ghost `APPLE`, token focus | Expanded 1, dim 4/10/11 | Editing prompt for `APPLE`; footer submit | Active row shows reverse `A` and dim `PPLE`; source rows `AAPL`, `APPLE`; dim inactive rows |
-| 10 | Frame 9 | `4`, `4`, `P`, `L` | `EDITING` row 1, buffer `44PL`, invalid | Expanded 1, dim 4/10/11 | Error `must start with A–Z`; no submit | `✗` two spaces after cursor; footer row 11; source pointer retained |
+| 10 | Frame 9 | `4`, `4`, `P`, `L` | `EDITING` row 1, buffer `44PL`, invalid, token focus | Expanded 1, dim 4/10/11 | Error `must start with A–Z`; no submit | `✗` two spaces after cursor; footer row 11; no source pointer |
 | 11 | Frame 10 | Type `56789012345678901234` | `EDITING` row 1, 24-char buffer, invalid, max error active | Expanded 1, dim 4/10/11 | Error `24 chars max`; no submit | Cursor at max boundary; `✗` at capped icon column; 25th char discarded in separate assertion |
 | 12a | Frame 9 or 10/11 | `↓` | `EDITING`, buffer `AAPL`, valid, source focus first source | Expanded 1, dim 4/10/11 | Footer submit | Row-level cursor absent; source pointer at first source; `✓` shown |
-| 12b | Frame 9 or 10/11 | `Tab` or `↑` | `EDITING`, buffer `APPLE`, valid, pointer second source | Expanded 1, dim 4/10/11 | Footer submit | Source pointer line 2; exact-match live pointer tracks `APPLE` |
+| 12b | Frame 9 or 10/11 | `↑` | `EDITING`, buffer `APPLE`, valid, `sourcePointerIndex=1` | Expanded 1, dim 4/10/11 | Footer submit | Source pointer line 2; pointer came from source navigation, not exact-match tracking |
 | 13 | Frame 12b | `Enter` or `Esc`, then `2` after existing filter `1` | `BROWSING`, `text="12"`, selected null | Empty result | Error no matching rows | Blank body row under header; no cursor; footer row 7 |
 | 14 | Frame 13 | `ctrl+s` | `CONFIRMING NORMAL_SUBMIT`, choice `NO`, collisions zero | 1..9 | `Accept all? [y/N]`; footer edit mappings | Accept-all `NO` retained; filter does not constrain confirming table |
 
@@ -687,12 +753,14 @@ strip ANSI for geometry and inspect style spans separately for bold, dim, and re
 | `acceptAllConfirm` contradictory ownership | Mutate accept-all choice to `NO`, leave confirmation, re-enter via `ctrl+s`, and assert root `confirmation.acceptAllLastChoice=NO` drives prompt. No renderer/component local state may override it. |
 | `ctrl+c` dispatcher absent | Assert `ctrl+c` in `BROWSING` enters exit confirmation, in `EDITING` cancels edit, in `NORMAL_SUBMIT`/`ACCEPT_ALL` cancels batch, and second `ctrl+c` in `EXIT` emits SIGINT. |
 | Filtering underspecified | Assert Tab and `!` both toggle collision metafilter; query text matches ordinal/token only; source text does not match; empty results clear selection; `ctrl+s` still opens normal confirmation with zero collisions. |
-| Edit input append contradiction | Assert frame 4 to 5 streaming overwrite produces `ATT`, not `AT-TATT` or `ATTT`; deviation discards remaining ghost. |
-| Lossy domain model | Unit-test collision groups, source safe values, original target, current target, default source, and live edited target as separate fields. |
+| Edit input append contradiction | Assert frame 4 to 5 streaming overwrite produces `ATT`, not `AT-TATT` or `ATTT`; ghost disappears when buffer no longer prefixes `defaultSourceValue`. |
+| Lossy domain model | Unit-test collision groups, source effective values, literal `targetValue`, derived `currentTargetValue`, default source, and live edited target as separate fields. |
 | Missing sorting rules | Change row 3 target to `ATT`; assert order remains row 2 then row 3 and does not resort by new target. |
 | Layout not deterministic | Golden-render all frames at 15x75; assert row numbers for header, prompt, table header, footer, blank filler, and no alternate screen sequences. |
 | Validation incomplete | Assert grammar cases, `✓`/`✗`, submit gating, 24th-character cap, and 25th-character discard/flash. |
-| Source selection incomplete | Assert up/down wrap, autofill, Tab autocomplete, exact-match live pointer, and last explicit pointer retention when no exact match exists. |
+| Source selection incomplete | Assert `↑`/`↓` enter source navigation at last/first active source, autofill by `sourcePointerIndex`, moving above the first source or below the last source restores `sourceEntryBuffer`, and typing/backspace exits source navigation. |
+| Refactored mapping semantics | Assert `targetValue = null` enters edit mode with empty buffer plus `defaultSourceValue` ghost text; assert literal `targetValue = defaultSourceValue` enters edit mode with that value pre-filled and commits back as a literal string. |
+| Derived ghost semantics | Assert frame 12b Backspace changes `APPLE` to `APPL`, returns focus to token input, clears source navigation, and renders ghost `E`; assert submitting stores literal `APPL` and re-entering edit mode shows no ghost. |
 
 ## 11. Non-Goals, Assumptions, and Unresolved Questions
 

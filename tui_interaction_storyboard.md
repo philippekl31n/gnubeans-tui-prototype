@@ -117,7 +117,7 @@ Below are the exact visual states the TUI must accurately render across its life
 
 ```
 - All characters in row 2 appear super dim while row 3 is expanded (as will be true for all rows surrounding the selected mapping while in edit mode)
-- When the value of the Beancount Token field matches the sanitized value (or original value if not sanitized) of one of its source values, the input follows a model of streaming overwrite with ghost-text deviation detection: Characters that match the ghost prefix advance the cursor through it (A→A, T→T); A character that **doesn't match** discards the remaining ghost text and appends normally
+- When the mapping has no literal Beancount Token override, the input follows a model of streaming overwrite against derived ghost text: characters that keep the buffer as a prefix of the default source value advance through it (A→A, T→T); a character that makes the buffer stop matching the default-source prefix hides the remaining ghost text and appends normally
 
 > TRANSITION: User types `A` , `T` , `T`
 
@@ -274,9 +274,8 @@ Below are the exact visual states the TUI must accurately render across its life
 
 > TRANSITION to 10: User types `4`, `4`, `P` , `L`
 > TRANSITION to 12a: User types `↓`, moving `▸` to first source and auto-filling token-input field with that source's Beancount-safe value
-> TRANSITION to 12b: User types either 
- - `tab`, autocompleting from the ghost-text and moving `▸` to the source whose Beancount-safe value exactly matches the current token input
- - `↑`, moving `▸` to last source and auto-filling token-input field with that source's Beancount-safe value
+> TRANSITION to 12b: User types `↑`, moving `▸` to last source and auto-filling token-input field with that source's Beancount-safe value
+> TRANSITION: User types `tab`, autocompleting from the ghost-text without moving `▸` into the source list
 
 
 10.
@@ -350,10 +349,10 @@ Below are the exact visual states the TUI must accurately render across its life
 
 
 ```
-- While `▸` cursor is in the source column, up/down arrow movement wraps around top/bottom of source list
+- While `▸` cursor is in the source column, up/down arrow movement traverses the source list. Moving above the first source or below the last source returns the cursor to the token input and restores the buffer value from before source-list navigation.
 
 > TRANSITION to 9: User clears token input field
-> TRANSITION to 12b: User types either `↓` or `↑`
+> TRANSITION to 12b: User types `↓`
 
 12b.
 ```bash
@@ -374,10 +373,11 @@ Below are the exact visual states the TUI must accurately render across its life
 
 
 ```
-- Position of `▸` in the source column always reflects the source whose Beancount-safe value matches the current token input field. It updates live as the user edits — a 100% match moves ▸ to that source; no match leaves `▸` on whichever source was last explicitly selected.
+- Position of `▸` in the source column reflects temporary source-list navigation, not exact-match tracking. If the user types `backspace` in this frame, focus returns to the token input, the source pointer disappears, and the buffer changes from `APPLE` to `APPL`; because the mapping still has no literal target override, the default-source ghost suffix reappears as `APPL*E*`.
+- If the user submits `APPL`, that literal value is written to the mapping. Re-entering edit mode for the mapping later displays `APPL` as a pre-filled input value with no ghost suffix.
 
 > TRANSITION to 9: User clears token input field
-> TRANSITION to 12a: User types either `↓` or `↑`
+> TRANSITION to 12a: User types `↑`
 > TRANSITION to 13: User types either `↵` or `esc`, then `2`
 
 13.
