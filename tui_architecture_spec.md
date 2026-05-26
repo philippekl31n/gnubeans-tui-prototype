@@ -156,8 +156,11 @@ interface ResultState {
 
 Ownership rules:
 
-- `confirmation.choice` MUST be owned by root state and MUST be reset to `NO` every time the app enters
-  `CONFIRMING`, regardless of confirmation kind.
+- `confirmation.choice` MUST be owned by root state because `y`/`n`, arrow toggles, `Enter`, and `Esc`
+  require deterministic choice state between key events. The renderer MUST project the current choice
+  only; it MUST NOT initialize, reset, or store confirmation choice.
+- Entering `CONFIRMING` MUST set `confirmation.choice = NO`, regardless of confirmation kind. Leaving
+  confirmation does not require choice cleanup because the next confirmation entry overwrites it.
 - `edit` MUST be `null` outside `EDITING`.
 - `visibleRows`, `collisionGroups`, `unresolvedCollisions`, validation display positions, prompt text,
   footer text, and render lines MUST be derived selectors, not mutable component state.
@@ -397,8 +400,9 @@ There are two distinct confirmation situations:
 
 The storyboard no longer distinguishes a normal submit confirmation from an automatic last-collision
 accept confirmation. Both entry paths MUST use `confirmation.kind = ACCEPT`. Every y/n confirmation
-prompt MUST default to `NO` when shown; the app MUST NOT remember a previous boolean choice between
-confirmation visits.
+prompt MUST default to `NO` on entry by setting root confirmation state before the first render. The
+renderer MUST NOT reset the prompt to `NO` on every render because the selected choice must persist
+between key events until the user confirms, changes choice, cancels, or leaves confirmation.
 
 ### 4.2 Transition Table
 
@@ -1082,7 +1086,9 @@ Collision icons and accept transition are derived from live `currentTargetValue`
    - Set `confirmation.choice = NO`.
 5. Later manual `ctrl+s` entries MUST also use `confirmation.kind = ACCEPT` and set
    `confirmation.choice = NO`.
-6. The user changing the accept choice MUST NOT affect the default for later confirmation visits.
+6. The user changing the accept choice MUST persist within the current confirmation visit until another
+   confirmation key changes it or the visit ends, but MUST NOT affect the `NO` default applied when a
+   later confirmation visit starts.
 
 Frame 6 is the automatic zero-collision accept entry with `N` selected. Frame 14 is a later accept
 confirmation visit that also defaults to `N`. Frame 15 is the terminal accepted-output state after the
@@ -1122,7 +1128,7 @@ strip ANSI for geometry and inspect style spans separately for bold, dim, and re
 | Issue from checklist | Required test |
 |---|---|
 | Distinct confirmation intents missing | Assert frame 1b uses `kind=EXIT`, prompt `Skip adding commodities?`, default `NO`, and `YES` result `SKIPPED`; frames 6 and 14 both use `kind=ACCEPT`, default `NO`, and `YES` result `ACCEPTED`. |
-| Confirmation default regression | Change an accept or exit prompt to `YES`, leave confirmation, re-enter any y/n confirmation, and assert `confirmation.choice=NO`. No renderer/component local state may remember the previous boolean. |
+| Confirmation default regression | Change an accept or exit prompt to `YES`, leave confirmation, re-enter any y/n confirmation, and assert `confirmation.choice=NO` immediately on entry. Also assert the renderer does not reset choice during redraw inside the same confirmation visit. |
 | `ctrl+c` dispatcher absent | Assert `ctrl+c` in `BROWSING` enters exit confirmation, in `EDITING` cancels edit, in `ACCEPT` cancels batch, and second `ctrl+c` in `EXIT` emits SIGINT. |
 | Filtering underspecified | Assert Tab and `!` both toggle collision metafilter; query text matches ordinal/token only; source text does not match; empty results clear selection; `ctrl+s` still opens accept confirmation with zero collisions. |
 | Edit input insertion contradiction | Assert frame 4 to 5 end-cursor insertion produces `ATT`, not `AT-TATT` or `ATTT`; ghost disappears when buffer no longer prefixes `defaultSourceValue`. |

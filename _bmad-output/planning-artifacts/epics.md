@@ -63,7 +63,7 @@ FR23: A valid edit commit that resolves the final collision MUST enter accept co
 
 FR24: Confirmation mode MUST distinguish accept confirmation from exit confirmation with separate prompts, result semantics, and `ctrl+c` behavior.
 
-FR25: Every y/n confirmation MUST default to `NO` on entry and MUST NOT remember previous confirmation choices.
+FR25: Every y/n confirmation MUST default to `NO` on entry through root state initialization, while preserving the selected choice between key events during the active confirmation visit.
 
 FR26: Accept confirmation MUST support y/n choice changes, left/right toggling, scroll-only row movement, page scrolling, returning to browsing on `NO`, accepting on `YES`, cancelling on `ctrl+c`, and storyboard-compatible frame 6 footer rendering.
 
@@ -147,7 +147,7 @@ NFR17: Stories MUST be sliced by testable behavior rather than by UI component a
 - Source normalization remains outside the TUI component; callers supply `originalValue` and optional `sanitizedValue`.
 - Golden tests MUST assert app state, visible rows, prompt/footer, render geometry, and style spans.
 - Golden tests MUST include frame-specific requirements for frames 1a, 1b, 2, 3, 4, 5, 6, 7a, 7b, 7c, 8, 9, 10, 11, 12a, 12b, 13, 14, and 15.
-- Defect-prevention tests MUST cover distinct confirmation intents, confirmation default resets, `ctrl+c` dispatching, filtering scope, edit insertion with ghost text, domain model semantics, stable sorting, deterministic layout, injected validation, source sanitization boundaries, source selection, literal target semantics, derived ghost behavior, page-key portability, unsupported keys, readline aliases, filter preservation, and invalid printable edit characters.
+- Defect-prevention tests MUST cover distinct confirmation intents, confirmation default-on-entry behavior, confirmation choice persistence within a visit, `ctrl+c` dispatching, filtering scope, edit insertion with ghost text, domain model semantics, stable sorting, deterministic layout, injected validation, source sanitization boundaries, source selection, literal target semantics, derived ghost behavior, page-key portability, unsupported keys, readline aliases, filter preservation, and invalid printable edit characters.
 - The implementation MUST not require background asynchronous data loading for the current prototype.
 
 ### UX Design Requirements
@@ -208,7 +208,7 @@ FR21: Epic 3 - Source-list navigation
 FR22: Epic 3 - Literal target commit
 FR23: Epic 3 - Auto accept confirmation on final collision resolution
 FR24: Epic 4 - Distinct confirmation kinds
-FR25: Epic 4 - Confirmation default reset
+FR25: Epic 4 - Confirmation default-on-entry and in-visit choice persistence
 FR26: Epic 4 - Accept confirmation behavior
 FR27: Epic 4 - Exit confirmation behavior
 FR28: Epic 2 - Key matrix dispatch
@@ -313,14 +313,22 @@ So that the TUI can start from a complete, testable review state without hidden 
 **Then** it includes config, mode, mappings, filter, selection, edit, confirmation, terminal, and result state
 **And** `edit` is `None` outside editing mode.
 
+**Given** confirmation state is part of the root app state
+**When** tests inspect the confirmation model
+**Then** it includes confirmation kind, selected choice, and second-`ctrl+c` arming state
+**And** the model supports reducer-owned choice between key events without requiring the renderer to initialize, reset, or store confirmation choice.
+
 **Given** the storyboard commodity fixture is loaded
 **When** tests inspect the fixture config
 **Then** it contains the commodity entity labels, mapping labels, target/source column labels, accept/exit prompts, created message, source labels `cmdty_id` and `user_symbol`, and the commodity target policy hook.
 
 **Given** the storyboard fixture dataset is loaded
 **When** tests inspect mappings 1 through 11
-**Then** each mapping has the required ordinal, sources, default source label, and initial `targetValue = None` unless explicitly overridden
-**And** row 1 includes `cmdty_id: "AAPL"` and `user_symbol: "APPLE"`.
+**Then** all 11 mappings from `tui_architecture_spec.md` are present with their required ordinals, source labels, original values, sanitized values, default source labels, and initial `targetValue = None`
+**And** row 1 includes both `cmdty_id: "AAPL"` and `user_symbol: "APPLE"`
+**And** rows 2 and 3 initialize to the same current target candidate `AT-T` for collision testing
+**And** row 4 includes the caller-supplied sanitized value that produces `C100-F`
+**And** rows 5 through 11 are present for filtering, scrolling, and golden-render coverage.
 
 **Given** the architecture requires caller-owned source normalization
 **When** tests inspect source records
