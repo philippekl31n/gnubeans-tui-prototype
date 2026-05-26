@@ -50,7 +50,7 @@ Ctrl+C to cancel.
 ### Test suite — `test_tui.py`
 
 ```
-uv run python3 -m pytest test_tui.py -v
+uv run pytest
 ```
 
 Runs 55 behavioural and layout tests covering rendering, key-handling,

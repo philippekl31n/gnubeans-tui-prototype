@@ -1,21 +1,23 @@
 # Gnubeans TUI Implementation Contract
 
-This document is normative for implementing the TUI component described by
-`tui_interaction_storyboard.md`. The storyboard is the source of truth. This
-contract exists so independent implementation agents can produce the same state,
-rendering, and key behavior without rereading the storyboard.
+This document is the normative implementation contract for the TUI component
+illustrated by `tui_interaction_storyboard.md`. The storyboard is a visual
+acceptance companion only; implementers MUST be able to reproduce the
+storyboarded state transitions, rendering geometry, and key behavior from this
+contract alone.
 
 Normative keywords:
 
 - MUST and MUST NOT define required behavior.
-- SHOULD defines preferred behavior only where the storyboard leaves room.
-- "Frame" refers to the numbered storyboard frame.
+- SHOULD defines preferred behavior where an implementation choice remains.
+- "Frame" refers to a numbered storyboard frame when a requirement is traced to
+  that visual acceptance example.
 
 ## 1. Terms and Coordinate System
 
 | Term | Definition |
 |---|---|
-| Terminal frame | The TUI redraw area. The canonical storyboard frame is 15 rows by 75 columns. |
+| Terminal frame | The TUI redraw area. The canonical fixture frame is 15 rows by 75 columns. |
 | Display row | 1-based terminal row within the frame. |
 | Display column | 1-based terminal column within the frame. |
 | Mapping | One target token plus one or more source values. |
@@ -78,6 +80,18 @@ interface AppConfig {
   exitPrompt: string;
   createdMessage: (count: number) => string;
   sourceLabels: SourceLabel[];
+  targetPolicy: TargetPolicy;
+}
+
+interface TargetPolicy {
+  maxDisplayWidth: number;
+  validate(value: string, context: TargetValidationContext): ValidationState;
+}
+
+interface TargetValidationContext {
+  isConcreteBuffer: boolean;
+  isGhostOnlyDefault: boolean;
+  mapping: Mapping;
 }
 
 interface Mapping {
@@ -97,6 +111,7 @@ interface FilterState {
   raw: string;
   collisionOnly: boolean;
   text: string;
+  cursor: number;
 }
 
 interface SelectionState {
@@ -107,6 +122,7 @@ interface SelectionState {
 interface EditState {
   mappingOrdinal: number;
   buffer: string;
+  cursor: number;
   focusRegion: FocusRegion;
   sourcePointerIndex: number | null;
   sourceEntryBuffer: string | null;
@@ -146,14 +162,20 @@ Ownership rules:
 - `visibleRows`, `collisionGroups`, `unresolvedCollisions`, validation display positions, prompt text,
   footer text, and render lines MUST be derived selectors, not mutable component state.
 - `config` MUST be root-owned immutable input for a TUI session. Renderers MUST NOT hard-code entity
-  nouns, mapping nouns, column labels, source labels, accept prompt text, exit prompt text, or created
-  output text.
+  nouns, mapping nouns, column labels, source labels, accept prompt text, exit prompt text, created
+  output text, target validation rules, target maximum display width, or validation error text.
 - `selectedOrdinal` MUST identify the selected mapping by stable ordinal, not by visible-row index.
 - `scrollOffset` MUST be the zero-based offset into the current derived visible row list.
+- `filter.cursor` MUST be the zero-based insertion offset into `filter.text`.
+- `edit.cursor` MUST be the zero-based insertion offset into `edit.buffer`.
+- Input cursors MUST be clamped to valid string boundaries after every mutation. The storyboard fixture
+  uses ASCII values, but implementations MUST NOT split a Unicode scalar value when moving or deleting.
 - `defaultSourceValue`, `currentTargetValue`, and source `effectiveValue` MUST be derived selectors,
   not stored fields.
-- Edit ghost text MUST be derived from `targetValue`, `defaultSourceValue`, and `edit.buffer`, not
-  stored in `EditState`.
+- `Source.originalValue` and optional `Source.sanitizedValue` MUST be supplied as input data before the
+  TUI component starts. The component MUST NOT compute, infer, or mutate `sanitizedValue`.
+- Edit ghost text MUST be derived from `targetValue`, `defaultSourceValue`, `edit.buffer`, and
+  `edit.cursor`, not stored in `EditState`.
 
 Derived entity selectors:
 
@@ -164,7 +186,9 @@ mapping.defaultSourceValue = mapping.defaultSource.effectiveValue
 mapping.currentTargetValue = mapping.targetValue ?? mapping.defaultSourceValue
 mapping.activeSources = sources where source.effectiveValue is not null, in source display order
 edit.ghostSuffix =
-  if mapping.targetValue == null and edit.buffer is a prefix of mapping.defaultSourceValue:
+  if mapping.targetValue == null
+     and edit.cursor == edit.buffer.length
+     and edit.buffer is a prefix of mapping.defaultSourceValue:
     mapping.defaultSourceValue without the edit.buffer prefix
   else:
     ""
@@ -184,6 +208,8 @@ Entity invariants:
 - `config.sourceLabels` MUST define the allowed labels and display order for sources.
 - Every `Source.label` and `Mapping.defaultSourceLabel` MUST be present in `config.sourceLabels`.
 - `defaultSourceLabel` MUST refer to an existing source whose `effectiveValue` is not null.
+- A source with `originalValue = null` MUST also have `sanitizedValue = null`; callers MUST NOT create
+  an effective value from a missing source.
 - `targetValue = null` means the mapping has no explicit override and uses `defaultSourceValue`.
 - Committing an edit whose submitted value equals `defaultSourceValue` MUST still store the literal
   string in `targetValue`; implementations MUST NOT canonicalize it back to null.
@@ -204,13 +230,26 @@ const storyboardConfig: AppConfig = {
   exitPrompt: "Skip adding commodities?",
   createdMessage: (count) => `${count} commodities created.`,
   sourceLabels: ["cmdty_id", "user_symbol"],
+  targetPolicy: commodityTargetPolicy,
 };
 ```
 
-Implementations MUST support equivalent configurations for other entity types and source labels without
-changing the state machine, render pipeline, or key handling.
+The storyboard fixture's `commodityTargetPolicy` has these entity-specific rules:
 
-### 2.3 Source and Sanitization Contract
+1. Maximum target display width is 24 columns.
+2. A concrete target MUST be at least 1 character.
+3. A concrete target MUST start with `A-Z`.
+4. A concrete target MUST contain only `A-Z`, `0-9`, and `-` after the first character.
+5. A concrete target MUST end with `A-Z` or `0-9`.
+6. Error precedence is `24 chars max`, then `must start with A-Z`, then
+   `only A-Z, 0-9, and - allowed`, then `must end with A-Z or 0-9`.
+
+Implementations MUST support equivalent configurations for other entity types and source labels without
+changing the state machine, render pipeline, key handling, or component internals. Entity-specific
+target validation MUST be supplied by `targetPolicy`. Entity-specific source normalization is outside
+the TUI component; callers MUST provide each source's `originalValue` and optional `sanitizedValue`.
+
+### 2.3 Source Value Input and Display Contract
 
 For the storyboard fixture dataset:
 
@@ -238,14 +277,9 @@ Source display rules:
 - For source selection and ghost text, `(not set)` MUST have `effectiveValue = null` and MUST NOT match
   the edit buffer.
 
-Sanitization rules used by this contract:
-
-1. Uppercase the source value.
-2. Replace each non-`A-Z`, non-`0-9`, non-`-` character with `-`.
-3. Collapse consecutive hyphens to one hyphen.
-4. Trim leading and trailing hyphens.
-5. If the first character is not `A-Z`, prefix `C`.
-6. Truncate to 24 display columns.
+The source display rules above use `originalValue` and `sanitizedValue` only. They MUST NOT infer,
+compute, or recompute sanitization. This allows callers to prepare source values for other mapped
+entities without changing the TUI component.
 
 ## 3. Derived Selectors
 
@@ -300,13 +334,17 @@ text           ::= any printable characters except control keys
 
 Key semantics:
 
+- Printable characters in `BROWSING` MUST insert into `filter.text` at `filter.cursor`, then advance
+  `filter.cursor` by the inserted character length.
 - In `BROWSING`, `Tab` MUST toggle `filter.collisionOnly`.
 - In `BROWSING`, `!` MUST toggle `filter.collisionOnly`; it MUST NOT append a literal `!` to
   `filter.text`.
 - The prompt MUST render the active metafilter as a leading `!`.
-- Backspace and `ctrl+h` MUST delete the last character of `filter.text` when `filter.text` is not
-  empty. If `filter.text` is empty and `collisionOnly` is true, they MUST clear `collisionOnly`.
+- Backspace, `ctrl+h`, and readline `backward-delete-char` aliases MUST delete the character before
+  `filter.cursor` when `filter.cursor > 0`, then decrement `filter.cursor`. If `filter.cursor == 0`
+  and `filter.text` is empty and `collisionOnly` is true, they MUST clear `collisionOnly`.
 - `Esc` MUST clear both `collisionOnly` and `text` when either is active.
+  Clearing `text` MUST set `filter.cursor = 0`.
 
 Matching semantics:
 
@@ -315,6 +353,9 @@ Matching semantics:
 - The filter matcher MUST NOT compare `text` with `config.sourceColumnLabel`, any `Source.label`, or
   any source display/effective/original/sanitized value.
 - Matching MUST be case-insensitive for ASCII letters.
+- Lowercase ASCII query letters MUST match uppercase target letters and ordinal matching MUST be
+  unaffected by letter case. Golden tests MUST include at least one lowercase query that matches an
+  uppercase target token.
 - Ordinal matching MUST use the decimal ordinal string without left padding. Query `1` matches rows
   `1`, `10`, and `11`.
 - Token matching MUST search the full `currentTargetValue`.
@@ -363,9 +404,9 @@ confirmation visits.
 
 | Current state | Event | Guard | Side effects | Next state |
 |---|---|---|---|---|
-| `BROWSING` | Printable char | Any | Append char to `filter.text`; parse/filter; clamp selection | `BROWSING` |
+| `BROWSING` | Printable char | Any | Insert char into `filter.text` at `filter.cursor`; advance cursor; parse/filter; clamp selection | `BROWSING` |
 | `BROWSING` | `Tab` or `!` | Any | Toggle `filter.collisionOnly`; clamp selection | `BROWSING` |
-| `BROWSING` | `Backspace` or `ctrl+h` | Filter active | Delete filter text or clear metafilter; clamp selection | `BROWSING` |
+| `BROWSING` | `Backspace` or `ctrl+h` | Filter active | Delete filter char before cursor or clear metafilter; clamp cursor and selection | `BROWSING` |
 | `BROWSING` | `Esc` | Filter active | Clear filter and metafilter; clamp selection | `BROWSING` |
 | `BROWSING` | `↑` / `↓` | `visibleRows` non-empty | Move `selectedOrdinal` by -1/+1 and adjust scroll to keep selected visible | `BROWSING` |
 | `BROWSING` | `Shift+↑` / `PgUp` | `visibleRows` non-empty | Page up; selected row becomes first visible row after paging | `BROWSING` |
@@ -374,14 +415,14 @@ confirmation visits.
 | `BROWSING` | `ctrl+s` | `unresolvedCollisionCount == 0` | Enter accept confirmation; set `choice = NO` | `CONFIRMING` with `ACCEPT` |
 | `BROWSING` | `ctrl+s` | `unresolvedCollisionCount > 0` | No state change | `BROWSING` |
 | `BROWSING` | `ctrl+c` | Any | Enter exit confirmation; set `choice = NO`; `secondCtrlCArmed = true` | `CONFIRMING` with `EXIT` |
-| `EDITING` | Printable char | Any | Apply streaming overwrite algorithm; validate; recompute collisions live | `EDITING` |
-| `EDITING` | `Backspace` or `ctrl+h` | Any | Return to token input if needed; delete one buffer char; validate; recompute collisions live | `EDITING` |
+| `EDITING` | Printable char | Any | Apply edit insertion algorithm; validate; recompute collisions live | `EDITING` |
+| `EDITING` | `Backspace` or `ctrl+h` | Any | Return to token input if needed; delete char before cursor; validate; recompute collisions live | `EDITING` |
 | `EDITING` | `Tab` | Ghost suffix available | Complete buffer to displayed value; clear source navigation; validate | `EDITING` |
 | `EDITING` | `↑` / `↓` | Source list non-empty | Enter, move within, or exit reversible source navigation | `EDITING` |
 | `EDITING` | `Enter` | Validation `VALID` | Commit displayed edit value to mapping target; clear edit; recompute collisions | `CONFIRMING` with `ACCEPT` if collisions now zero, else `BROWSING` |
 | `EDITING` | `Enter` | Validation not `VALID` | No commit; keep validation error | `EDITING` |
-| `EDITING` | `Esc` | Any | Discard buffer; clear edit; restore selection on edited row | `BROWSING` |
-| `EDITING` | `ctrl+c` | Any | Discard buffer; clear edit; restore selection on edited row | `BROWSING` |
+| `EDITING` | `Esc` | Any | Discard buffer; clear edit; preserve filter; restore selection on edited row | `BROWSING` |
+| `EDITING` | `ctrl+c` | Any | Discard buffer; clear edit; preserve filter; restore selection on edited row | `BROWSING` |
 | `CONFIRMING ACCEPT` | `y` | Any | `choice = YES` | Same confirmation kind |
 | `CONFIRMING ACCEPT` | `n` | Any | `choice = NO` | Same confirmation kind |
 | `CONFIRMING ACCEPT` | `←` / `→` | Any | Toggle choice | Same confirmation kind |
@@ -411,18 +452,109 @@ confirmation visits.
 | `↓` | Move selection down | Move source pointer down with wrap | Scroll down | Scroll down |
 | `Shift+↑` / `PgUp` | Page up and select first visible row | No-op | Page scroll up | Page scroll up |
 | `Shift+↓` / `PgDn` | Page down and select first visible row | No-op | Page scroll down | Page scroll down |
-| `←` | No-op | No-op | Toggle choice | Toggle choice |
-| `→` | No-op | No-op | Toggle choice | Toggle choice |
+| `←` | Move filter cursor left | Move edit cursor left in token input; no-op in source list | Toggle choice | Toggle choice |
+| `→` | Move filter cursor right | Move edit cursor right in token input; no-op in source list | Toggle choice | Toggle choice |
 | `Enter` | Edit selected row | Submit only if valid | Confirm if YES, otherwise edit mappings | Skip if YES, otherwise edit mappings |
 | `Esc` | Clear active filter, otherwise no-op | Cancel edit | Edit mappings | Edit mappings |
 | `Tab` | Toggle collision metafilter | Complete ghost text in token input | No-op | No-op |
-| `!` | Toggle collision metafilter | Type literal `!` only if validation grammar later permits; currently invalid printable char | No-op | No-op |
-| `Backspace` | Delete filter char or metafilter | Return to token input if needed, then delete edit char | No-op | No-op |
+| `!` | Toggle collision metafilter | Insert literal `!`; validation becomes invalid | No-op | No-op |
+| `Backspace` | Delete filter char before cursor or metafilter | Return to token input if needed, then delete edit char before cursor | No-op | No-op |
 | `ctrl+h` | Same as Backspace | Same as Backspace | No-op | No-op |
 | `ctrl+s` | Open accept confirmation if zero collisions | No-op | No-op | No-op |
 | `ctrl+c` | Enter exit confirmation | Cancel edit to browsing | Cancel batch | Send SIGINT |
-| `y` / `n` | Append to filter | Type into buffer | Set choice | Set choice |
-| Other printable | Append to filter | Type into buffer | No-op | No-op |
+| `y` / `n` | Insert into filter at cursor | Insert into buffer at cursor | Set choice | Set choice |
+| Other printable | Insert into filter at cursor | Insert into buffer at cursor | No-op | No-op |
+
+Unlisted keys and control sequences:
+
+- Any key not listed in this matrix MUST be ignored and MUST NOT mutate root state.
+- If the terminal environment cannot distinguish `Shift+↑` or `Shift+↓` from normal arrow keys, the
+  implementation MUST still support `PgUp` and `PgDn` as reliable page-movement equivalents. It MUST
+  NOT reinterpret indistinguishable normal arrow events as page movement. Portability tests MUST drive
+  page movement with `PgUp`/`PgDn`.
+
+### 5.1 Readline-Style Input Bindings
+
+The filter input line in `BROWSING` and token input line in `EDITING` MUST support the readline-style
+bindings below. Implementations MUST normalize common `bind -P` function names, byte sequences, or
+semantic key events into these actions before dispatching.
+
+App-specific bindings in the main key matrix MUST take precedence over readline names where the same
+key is reserved by the TUI:
+
+- `Tab` / `ctrl+i` in `BROWSING` MUST toggle the collision metafilter, not autocomplete.
+- `Tab` / `ctrl+i` in `EDITING` MUST complete ghost text, not generic readline completion.
+- `ctrl+s` in `BROWSING` MUST submit when collisions are zero, not start readline forward search.
+- `ctrl+c` MUST follow the TUI cancellation/exit contract, not readline signal defaults.
+- `↑` and `↓` MUST follow the TUI row/source/confirmation navigation contract, not readline history.
+
+Text-editing actions:
+
+| Readline function family | Typical keys/sequences | Filter input behavior | Edit input behavior |
+|---|---|---|---|
+| `accept-line` | `Enter`, `ctrl+j`, `ctrl+m` | Dispatch as `Enter` and edit selected row if possible. | Dispatch as `Enter` and submit only when validation is `VALID`. |
+| `complete` | `Tab`, `ctrl+i` | Toggle `filter.collisionOnly`. | Complete ghost text when available; otherwise no-op. |
+| `backward-char` | `ctrl+b`, left-arrow escape sequences | Move `filter.cursor` left by one character; clamp at 0. | Move `edit.cursor` left by one character when `focusRegion = TOKEN_INPUT`; no-op in `SOURCE_LIST`. |
+| `forward-char` | `ctrl+f`, right-arrow escape sequences | Move `filter.cursor` right by one character; clamp at `filter.text.length`. | Move `edit.cursor` right by one character when `focusRegion = TOKEN_INPUT`; clamp at `edit.buffer.length`; no-op in `SOURCE_LIST`. |
+| `beginning-of-line` | `ctrl+a`, Home escape sequences | Set `filter.cursor = 0`. | Set `edit.cursor = 0` when `focusRegion = TOKEN_INPUT`; no-op in `SOURCE_LIST`. |
+| `end-of-line` | `ctrl+e`, End escape sequences | Set `filter.cursor = filter.text.length`. | Set `edit.cursor = edit.buffer.length` when `focusRegion = TOKEN_INPUT`; no-op in `SOURCE_LIST`. |
+| `backward-delete-char` | `Backspace`, `ctrl+h`, `ctrl+?` / DEL | Delete character before `filter.cursor`; if empty at cursor 0, clear active metafilter. | Return to token input if needed, then delete character before `edit.cursor`. |
+| `delete-char` | `ctrl+d`, Delete escape sequences | Delete character at `filter.cursor`; no-op at end. | Delete character at `edit.cursor`; no-op at end. |
+| `kill-line` | `ctrl+k` | Delete from `filter.cursor` through end of `filter.text`. | Delete from `edit.cursor` through end of `edit.buffer`. |
+| `unix-line-discard` | `ctrl+u` | Delete from start of `filter.text` through `filter.cursor`; set cursor to 0. | Delete from start of `edit.buffer` through `edit.cursor`; set cursor to 0. |
+| `backward-kill-line` | `ctrl+x ctrl+?` | Same as `unix-line-discard`. | Same as `unix-line-discard`. |
+| `kill-word` | `meta+d` | Delete from cursor through the end of the next token. | Delete from cursor through the end of the next token. |
+| `backward-kill-word`, `unix-word-rubout` | `meta+backspace`, `ctrl+w` | Delete from the start of the previous token through cursor. | Delete from the start of the previous token through cursor. |
+| `clear-screen`, `redraw-current-line` | `ctrl+l`, terminal redraw events | Re-render current state only; MUST NOT mutate root state. | Re-render current state only; MUST NOT mutate root state. |
+| `abort` | `ctrl+g` | No-op. It MUST NOT act like `Esc` or `ctrl+c`. | No-op. It MUST NOT act like `Esc` or `ctrl+c`. |
+| `quoted-insert` | `ctrl+q`, `ctrl+v` | No-op. Quoted insertion is not supported. | No-op. Quoted insertion is not supported. |
+| `undo` / `revert-line` | `ctrl+_`, `ctrl+x ctrl+u`, `meta+r` | No-op. Undo is not part of the storyboard contract. | No-op. Undo is not part of the storyboard contract. |
+| `transpose-chars`, `transpose-words`, case transforms | `ctrl+t`, `meta+t`, `meta+c`, `meta+l`, `meta+u` | No-op. Text transformation is not supported. | No-op. Text transformation is not supported. |
+| Completion variants | `meta+?`, `meta+=`, `meta+!`, `meta+/`, `meta+~`, `meta+$`, `meta+@` | No-op. | No-op. |
+| Search/history variants | `ctrl+r`, readline `forward-search-history`, `meta+n`, `meta+p`, `meta+<`, `meta+>` | No-op, except `ctrl+s` where the main matrix defines TUI submit behavior. | No-op. |
+| Yank/kill-ring variants | `ctrl+y`, `meta+y`, `meta+.`, `meta+_`, `meta+ctrl+y` | No-op. Paste is handled by the terminal as ordinary printable input if it arrives as characters. | No-op. Paste is handled by the terminal as ordinary printable input if it arrives as characters. |
+| Keyboard macro, shell expansion, glob, alias, dump, and vi-mode functions | `ctrl+x...`, `meta+...`, vi readline names | No-op unless another row in this table maps the exact input to a TUI event. | No-op unless another row in this table maps the exact input to a TUI event. |
+
+Word-boundary actions MUST use ASCII token boundaries:
+
+```text
+wordChar = [A-Za-z0-9_-]
+```
+
+`kill-word` MUST first skip non-word characters at or after the cursor, then delete through the next
+contiguous run of word characters. `backward-kill-word` and `unix-word-rubout` MUST first skip non-word
+characters before the cursor, then delete the previous contiguous run of word characters.
+
+After any filter-input readline mutation:
+
+```text
+filter.cursor = clamp(filter.cursor, 0, filter.text.length)
+filter.raw = (filter.collisionOnly ? "!" : "") + filter.text
+parse/filter visible rows
+clamp selection
+```
+
+After any edit-input readline mutation:
+
+```text
+if focusRegion == SOURCE_LIST:
+  focusRegion = TOKEN_INPUT
+  sourcePointerIndex = null
+  sourceEntryBuffer = null
+
+edit.cursor = clamp(edit.cursor, 0, edit.buffer.length)
+validate via config.targetPolicy.validate(edit.concreteValue, context)
+recompute collisions using edit.buffer for edited mapping
+```
+
+Every edit-input readline mutation MUST exit `SOURCE_LIST` first, clear `sourcePointerIndex`, clear
+`sourceEntryBuffer`, apply the mutation to `edit.buffer`, clamp `edit.cursor`, validate, and recompute
+collisions. Every filter-input readline mutation MUST parse/filter, clamp selection, and clamp
+`filter.cursor`.
+
+Tests MUST cover the supported aliases (`ctrl+j`, `ctrl+m`, `ctrl+i`, `ctrl+?`, `ctrl+p`, `ctrl+n`,
+`ctrl+b`, `ctrl+f`, `ctrl+a`, `ctrl+e`, `ctrl+d`, `ctrl+k`, `ctrl+u`, `ctrl+w`) and at least one no-op
+from each no-op family above. No-op tests MUST assert that root state and rendered output are unchanged.
 
 ## 6. Render Layout Contract
 
@@ -468,10 +600,10 @@ Columns are 1-based.
 | Ordinal | 4..5 | Right-aligned to width 2 for the 11-row storyboard dataset. |
 | Collision marker | 8 | `!` when unresolved, otherwise space. |
 | Token start | 9 | Current target or edit buffer starts here. |
-| Token max display | 9..32 | 24 display columns. |
-| Edit cursor at length L | `9 + L` | Reverse-video space. At length 24 this is column 33. |
+| Token max display | `9..(8 + config.targetPolicy.maxDisplayWidth)` | Storyboard commodity fixture: 24 display columns, columns 9..32. |
+| Edit cursor at offset L | `9 + L` | Reverse-video character at offset L, or reverse-video space when L is at end. In the storyboard commodity fixture, offset 24 is column 33. |
 | Validation icon normal | Cursor column + 2 | `✓` or `✗`, except max-length cap below. |
-| Validation icon max cap | 34 | At 24 chars the icon MUST remain at column 34. |
+| Validation icon max cap | `10 + config.targetPolicy.maxDisplayWidth` | In the storyboard commodity fixture, at 24 chars the icon MUST remain at column 34. |
 | Source divider | 36 | `┃` in expanded edit rows. |
 | Source text | 38 | Source display text begins after divider and one space. |
 | Source pointer | 34 | `▸` before the divider when source list has focus or exact match points at that source. |
@@ -519,6 +651,11 @@ Frame 6 is a storyboard-specific render case: it enters `CONFIRMING ACCEPT` with
 still renders the footer text `↵ confirm`. This footer text MUST be preserved for frame-accurate
 rendering; the `Enter` key behavior MUST still follow `choice == NO` and return to `BROWSING`.
 
+For browsing text filters, `{cursor}` MUST render at `filter.cursor` within `filter.text`. If
+`filter.cursor == filter.text.length`, the cursor MUST be a reverse-video space after the visible query.
+If `filter.cursor < filter.text.length`, the cursor MUST cover the character at `filter.cursor`. The
+metafilter `!` prefix is not part of `filter.text` and MUST NOT be counted by `filter.cursor`.
+
 Frame 4 shows no submit affordance while the buffer is still ghost-only/uncommitted. Frames 5, 9, 12a,
 and 12b show submit once validation is valid.
 
@@ -544,25 +681,36 @@ On `BROWSING Enter`:
    - `edit.buffer` MUST be empty.
 3. If `mapping.targetValue !== null`:
    - `edit.buffer` MUST be the literal `mapping.targetValue`.
-4. `focusRegion = TOKEN_INPUT`.
-5. `sourcePointerIndex = null`.
-6. `sourceEntryBuffer = null`.
+4. `edit.cursor = edit.buffer.length`.
+5. `focusRegion = TOKEN_INPUT`.
+6. `sourcePointerIndex = null`.
+7. `sourceEntryBuffer = null`.
 
-Ghost text is derived, not stored. When `mapping.targetValue === null` and `edit.buffer` is a prefix of
-`mapping.defaultSourceValue`, the input line MUST display the remaining suffix of `defaultSourceValue`
-as ghost text. When `mapping.targetValue !== null`, no ghost text MUST render even if the literal
-`targetValue` is a prefix of `defaultSourceValue`.
+Entering, submitting, or cancelling `EDITING` MUST NOT clear or mutate `filter.raw`,
+`filter.collisionOnly`, `filter.text`, or `filter.cursor`. Returning to `BROWSING` from edit mode MUST
+preserve the pre-edit filter so the next printable browsing key inserts at the preserved cursor. Frame
+13 depends on this: after editing from filter `1` with the cursor at the end, returning to browsing and
+typing `2` yields filter text `12`.
 
-The reverse-video cursor MUST cover the next ghost character when ghost text is active, or a space after
-the buffer when no ghost text is active. Frame 4 displays `A` as the cursor and `T-T` as dim ghost text
-for row 3 because its `targetValue` is null. Frame 9 displays `APPLE` as ghost text when row 1's
-`targetValue` is null. If row 1 later has literal `targetValue = "APPL"`, re-entering edit mode MUST
-display `APPL` with the cursor after `L` and no ghost `E`.
+Ghost text is derived, not stored. When `mapping.targetValue === null`, `edit.cursor == edit.buffer.length`,
+and `edit.buffer` is a prefix of `mapping.defaultSourceValue`, the input line MUST display the remaining
+suffix of `defaultSourceValue` as ghost text. When `edit.cursor` is not at the end of the buffer, no
+ghost text MUST render. When `mapping.targetValue !== null`, no ghost text MUST render even if the
+literal `targetValue` is a prefix of `defaultSourceValue`.
+
+The reverse-video cursor MUST render at `edit.cursor`. If ghost text is active and `edit.cursor` is at
+the end of the buffer, the cursor MUST cover the next ghost character. If no ghost text is active and
+`edit.cursor == edit.buffer.length`, the cursor MUST be a reverse-video space after the buffer. If
+`edit.cursor < edit.buffer.length`, the cursor MUST cover the character at `edit.cursor`. Frame 4
+displays `A` as the cursor and `T-T` as dim ghost text for row 3 because its `targetValue` is null.
+Frame 9 displays `APPLE` as ghost text when row 1's `targetValue` is null. If row 1 later has literal
+`targetValue = "APPL"`, re-entering edit mode MUST display `APPL` with the cursor after `L` and no
+ghost `E`.
 
 `ghostValue`, `ghostCursor`, and `ghostSourceLabel` MUST NOT be stored in `EditState`; all three are
 derivable from the selected mapping and `edit.buffer`.
 
-### 7.2 Streaming Overwrite Algorithm
+### 7.2 Streaming Insert Algorithm
 
 On printable character `ch` in `EDITING`:
 
@@ -572,45 +720,59 @@ if focusRegion == SOURCE_LIST:
   sourcePointerIndex = null
   sourceEntryBuffer = null
 
-if displayWidth(buffer) >= 24:
+candidateBuffer = buffer with ch inserted at edit.cursor
+
+if displayWidth(candidateBuffer) > config.targetPolicy.maxDisplayWidth:
   discard ch
   set maxLengthFlashUntil
-  set error "24 chars max"
+  set error to config.targetPolicy.validate(candidateBuffer, context).errorMessage
   render capped invalid icon
   return
 
-buffer += ch
-validate()
+buffer = candidateBuffer
+edit.cursor += length(ch)
+validate via config.targetPolicy.validate(edit.concreteValue, context)
 recompute collisions using buffer for edited mapping
 ```
+
+Printable characters that are invalid under `config.targetPolicy.validate`, including `!` in the
+storyboard commodity fixture, MUST still be inserted into `edit.buffer` at `edit.cursor` when
+`config.targetPolicy.maxDisplayWidth` has not been reached. They MUST produce validation `INVALID`,
+render `✗`, show the policy-provided validation error, and keep `Enter` submit gated. Implementations
+MUST NOT silently discard, sanitize, or transform invalid printable characters except for characters
+rejected by the configured maximum display width.
 
 Ghost behavior:
 
 - Typing a character that keeps `buffer` as a prefix of `defaultSourceValue` MUST continue rendering
-  the remaining suffix as ghost text when `targetValue` is null.
+  the remaining suffix as ghost text when `targetValue` is null and `edit.cursor` is at the end of the
+  buffer.
 - Typing a character that makes `buffer` no longer a prefix of `defaultSourceValue` MUST make
   `edit.ghostSuffix` derive to empty; no separate deviation flag is stored.
-- If later Backspace returns `buffer` to a prefix of `defaultSourceValue` while `targetValue` is null,
-  ghost text MUST reappear.
-- Backspace MUST delete the last buffer character when `buffer` is non-empty.
+- If later Backspace returns `buffer` to a prefix of `defaultSourceValue` while `targetValue` is null and
+  `edit.cursor` is at the end of the buffer, ghost text MUST reappear.
+- Backspace MUST delete the character before `edit.cursor` when `edit.cursor > 0` and then decrement
+  `edit.cursor`.
 - If Backspace is pressed while `focusRegion = SOURCE_LIST`, the pointer MUST first return to
   `TOKEN_INPUT`, clear `sourcePointerIndex`, clear `sourceEntryBuffer`, and then delete one buffer
-  character from the current autofilled buffer.
-- If `buffer` is empty, Backspace MUST do nothing.
+  character before `edit.cursor` from the current autofilled buffer.
+- If `edit.cursor == 0`, Backspace MUST do nothing.
 
 Frame 5 requirement: typing `A`, `T`, `T` over ghost `AT-T` produces buffer `ATT`; the third character
-makes `buffer` no longer a prefix of `defaultSourceValue`, so ghost text disappears, the cursor appears
-after `ATT`, validation is `✓`, and rows 2 and 3 have no collision icons.
+makes `buffer` no longer a prefix of `defaultSourceValue`, so ghost text disappears,
+`edit.cursor == 3`, validation is `✓`, and rows 2 and 3 have no collision icons.
 
 Frame 12b backspace requirement: from source-list focus with buffer `APPLE`, Backspace MUST return focus
-to `TOKEN_INPUT`, clear `sourcePointerIndex`, clear `sourceEntryBuffer`, delete the final `E`, and
-render `APPL` plus ghost `E` as `APPL*E*` because the mapping's `targetValue` is still null.
+to `TOKEN_INPUT`, clear `sourcePointerIndex`, clear `sourceEntryBuffer`, delete the final `E`, set
+`edit.cursor = 4`, and render `APPL` plus ghost `E` as `APPL*E*` because the mapping's `targetValue`
+is still null.
 
 ### 7.3 Tab Autocomplete
 
 In `EDITING`, `Tab` MUST:
 
-1. If `edit.ghostSuffix` is non-empty, set `buffer` to `edit.renderedValue`.
+1. If `edit.ghostSuffix` is non-empty, set `buffer` to `edit.renderedValue` and set
+   `edit.cursor = buffer.length`.
 2. Clear `sourcePointerIndex`.
 3. Clear `sourceEntryBuffer`.
 4. Set `focusRegion = TOKEN_INPUT`.
@@ -644,15 +806,17 @@ Rules:
   - Set `focusRegion = SOURCE_LIST`.
 - When `focusRegion = SOURCE_LIST` and `↑` is pressed while `sourcePointerIndex == 0`, the cursor has
   moved above the first source. The implementation MUST restore `buffer = sourceEntryBuffer`, clear
-  `sourcePointerIndex`, clear `sourceEntryBuffer`, and set `focusRegion = TOKEN_INPUT`.
+  `sourcePointerIndex`, clear `sourceEntryBuffer`, set `edit.cursor = buffer.length`, and set
+  `focusRegion = TOKEN_INPUT`.
 - When `focusRegion = SOURCE_LIST` and `↓` is pressed while
   `sourcePointerIndex == activeSources.length - 1`, the cursor has moved below the last source. The
   implementation MUST restore `buffer = sourceEntryBuffer`, clear `sourcePointerIndex`, clear
-  `sourceEntryBuffer`, and set `focusRegion = TOKEN_INPUT`.
+  `sourceEntryBuffer`, set `edit.cursor = buffer.length`, and set `focusRegion = TOKEN_INPUT`.
 - When `focusRegion = SOURCE_LIST` and movement remains within the list, `↑` and `↓` MUST move
   `sourcePointerIndex` by -1 or +1.
 - Movement MUST set `focusRegion = SOURCE_LIST`.
 - Movement MUST autofill `buffer` with the pointed source's `effectiveValue`.
+- Movement MUST set `edit.cursor = buffer.length` after autofill.
 - Printable typing, Backspace, and `ctrl+h` while `focusRegion = SOURCE_LIST` MUST exit source-list
   navigation, clear `sourcePointerIndex`, and clear `sourceEntryBuffer` before applying the edit.
 - Exact matches between `buffer` and a source `effectiveValue` MUST NOT create or move
@@ -661,40 +825,53 @@ Rules:
 Frame 12a: `↓` from frame 9 points at `cmdty_id: "AAPL"` and fills `AAPL`.
 Frame 12b: `↑` from frame 9 wraps to `user_symbol: "APPLE"` and fills `APPLE`.
 
-### 7.5 Validation
+### 7.5 Target Validation
 
-Validation grammar:
+Target validation is an injected policy. The TUI component MUST call `config.targetPolicy.validate`
+whenever the edit buffer, ghost/default target, source selection, or target-relevant context changes.
+The component MUST NOT hard-code target-name grammar, allowed characters, maximum length, error
+precedence, or error message text.
+
+Validation inputs:
 
 ```text
-TOKEN ::= [A-Z] ([A-Z0-9-]{0,22} [A-Z0-9])?
+validationValue =
+  if edit.buffer is non-empty:
+    edit.buffer
+  else if mapping.targetValue == null:
+    mapping.defaultSourceValue
+  else:
+    mapping.targetValue
+
+context.isConcreteBuffer = edit.buffer is non-empty
+context.isGhostOnlyDefault = edit.buffer is empty and mapping.targetValue == null
+context.mapping = active mapping
 ```
-
-Additional rules:
-
-- Empty buffer with only ghost text MUST be treated as valid if the full displayed ghost value is valid,
-  but submit affordance SHOULD be shown only once the displayed value is a concrete buffer value or a
-  source/autocomplete selection.
-- A concrete buffer MUST be at least 1 character.
-- A concrete buffer MUST be at most 24 display columns.
-- A concrete buffer MUST start with `A-Z`.
-- A concrete buffer MUST contain only `A-Z`, `0-9`, and `-` after the first character.
-- A concrete buffer MUST end with `A-Z` or `0-9`.
 
 Display and gating:
 
-- `✓` MUST render for valid concrete input.
-- `✗` MUST render for invalid concrete input.
-- `Enter` MUST submit only when validation is `VALID`.
-- Error precedence MUST be:
-  1. `24 chars max`
-  2. `must start with A–Z`
-  3. `only A–Z, 0–9, and - allowed`
-  4. `must end with A–Z or 0–9`
-- Frame 10: after typing the first `4`, the footer MUST show `Error: must start with A–Z`; `✗` MUST
-  appear two spaces to the right of the reverse-video cursor.
-- Frame 11: after the 24th character, the cursor reaches the max token boundary and `✗` MUST render at
-  the capped icon column. A 25th character MUST be discarded, flash `✗` at the capped icon column, and
-  set transient error `24 chars max`.
+- The validation icon and error message MUST be the values returned by `config.targetPolicy.validate`.
+- `✓` MUST render when policy validation returns `status = VALID`.
+- `✗` MUST render when policy validation returns `status = INVALID`.
+- `Enter` MUST submit only when validation returns `status = VALID` and the value is a concrete buffer
+  value, source selection, or autocomplete selection. Ghost-only default text can be policy-valid for
+  display, but MUST NOT by itself show the submit affordance.
+- `config.targetPolicy.maxDisplayWidth` MUST control the input cap, the max-length cursor position, and
+  the capped validation-icon column. The component MUST NOT assume 24 columns except in the storyboard
+  commodity fixture.
+
+Storyboard commodity fixture validation:
+
+- Frame 10: after typing the first `4`, the commodity target policy MUST return error
+  `must start with A-Z`; `✗` MUST appear two spaces to the right of the reverse-video cursor.
+- Frame 11: after the 24th character, the cursor reaches the configured max target boundary and `✗`
+  MUST render at the capped icon column. A 25th character MUST be discarded, flash `✗` at the capped
+  icon column, and set transient error `24 chars max`.
+- The max-length flash and policy-provided max-length error MUST be visible on the immediate render
+  after the discarded over-limit character. The storyboard does not require a wall-clock fade duration;
+  implementations MUST clear the transient max-length error on the next accepted edit-buffer mutation,
+  source navigation event, mode exit, or validation-result change. Golden tests MUST assert the
+  immediate render and MUST NOT depend on real-time timer expiry.
 
 ## 8. Scrolling and Viewport Rules
 
@@ -874,59 +1051,21 @@ Behavior:
 - `LAYOUT_BLOCKED` MUST render at most `bodyCapacity` body rows from the active edit block.
 - `LAYOUT_BLOCKED` MUST use the same header, prompt, table header, token rendering, validation icon,
   and footer semantics as `EDITING`, except for the blocked footer text below.
-
-Mockup for a 7-row terminal where the separator above the footer has collapsed and effective
-`bodyCapacity = 2`; the full two-source edit block fits:
-
-```bash
-❯ Reviewing 11 commodity mappings. __ctrl+s submit  ·  ctrl+c cancel__
-  Editing mapping for "QQQ":
-
-   #   Beancount Token            GnuCash Source
-▸  9   QQQ* * ✓                     ┃ cmdty_id: "QQQ"
-                                  ┃ user_symbol: (not set)
-  type to edit  ·  ↑↓ select source  ·  ↵ submit  ·  esc cancel
-```
-
-Mockup for a 6-row terminal where the separator above the footer has collapsed and effective
-`bodyCapacity = 1`; blocked footer text is rendered:
-
-```bash
-❯ Reviewing 11 commodity mappings. __ctrl+s submit  ·  ctrl+c cancel__
-  Editing mapping for "QQQ":
-
-   #   Beancount Token            GnuCash Source
-▸  9   QQQ* * ✓                     ┃ cmdty_id: "QQQ"
-  Enlarge terminal to edit sources  ·  esc cancel
-```
-
-Mockup for a 5-row terminal where the separator above the footer has collapsed and effective
-`bodyCapacity = 0`; footer truncates rendering of the table body:
-
-```bash
-❯ Reviewing 11 commodity mappings. __ctrl+s submit  ·  ctrl+c cancel__
-  Editing mapping for "QQQ":
-
-   #   Beancount Token            GnuCash Source
-  Enlarge terminal to edit sources  ·  esc cancel
-```
-
-Mockup for an 11-row terminal where `bodyCapacity = 5` and 11 total mappings; optional context rows
-fill below the anchored edit block according to the anchor-high, fill-below-first rule:
-
-```bash
-❯ Reviewing 11 commodity mappings. __ctrl+s submit  ·  ctrl+c cancel__
-  Editing mapping for "QQQ":
-
-   #   Beancount Token            GnuCash Source
-▸  9   QQQ* * ✓                     ┃ cmdty_id: "QQQ"
-                                  ┃ user_symbol: (not set)
-  __10   VTSAX                      cmdty_id: "VTSAX"__
-  __11   VWUSX                      cmdty_id: "VWUSX"__
-
-  type to edit  ·  ↑↓ select source  ·  ↵ submit  ·  esc cancel
-
-```
+- In `LAYOUT_BLOCKED`, the footer text MUST be
+  `  Enlarge terminal to edit sources  ·  esc cancel`.
+- At terminal height 7 with the storyboard fixture, the footer separator MUST collapse, the effective
+  `bodyCapacity` MUST be 2, the full two-source edit block MUST render, and the normal editing footer
+  MUST render immediately after the second source row.
+- At terminal height 6 with the storyboard fixture, the footer separator MUST collapse, the effective
+  `bodyCapacity` MUST be 1, only the first row of the active edit block MUST render, and the blocked
+  footer text MUST render immediately after that body row.
+- At terminal height 5 with the storyboard fixture, the footer separator MUST collapse, the effective
+  `bodyCapacity` MUST be 0, no body rows MUST render, and the blocked footer text MUST render
+  immediately after the table header.
+- At terminal height 11 with the storyboard fixture, `bodyCapacity` MUST be 5. Editing ordinal 9 MUST
+  render the two-row edit anchor for ordinal 9, then ordinal 10, then ordinal 11. The renderer MUST NOT
+  backfill ordinals 1 through 8 above the edit anchor, and the normal editing footer MUST render two
+  rows below ordinal 11 when the footer separator is visible.
 
 ## 9. Collision Resolution Semantics
 
@@ -986,16 +1125,22 @@ strip ANSI for geometry and inspect style spans separately for bold, dim, and re
 | Confirmation default regression | Change an accept or exit prompt to `YES`, leave confirmation, re-enter any y/n confirmation, and assert `confirmation.choice=NO`. No renderer/component local state may remember the previous boolean. |
 | `ctrl+c` dispatcher absent | Assert `ctrl+c` in `BROWSING` enters exit confirmation, in `EDITING` cancels edit, in `ACCEPT` cancels batch, and second `ctrl+c` in `EXIT` emits SIGINT. |
 | Filtering underspecified | Assert Tab and `!` both toggle collision metafilter; query text matches ordinal/token only; source text does not match; empty results clear selection; `ctrl+s` still opens accept confirmation with zero collisions. |
-| Edit input append contradiction | Assert frame 4 to 5 streaming overwrite produces `ATT`, not `AT-TATT` or `ATTT`; ghost disappears when buffer no longer prefixes `defaultSourceValue`. |
+| Edit input insertion contradiction | Assert frame 4 to 5 end-cursor insertion produces `ATT`, not `AT-TATT` or `ATTT`; ghost disappears when buffer no longer prefixes `defaultSourceValue`. |
 | Lossy domain model | Unit-test collision groups, source effective values, literal `targetValue`, derived `currentTargetValue`, default source, and live edited target as separate fields. |
 | Missing sorting rules | Change row 3 target to `ATT`; assert order remains row 2 then row 3 and does not resort by new target. |
 | Layout not deterministic | Golden-render all frames at 15x75; assert row numbers for header, prompt, table header, footer, blank filler, and no alternate screen sequences. |
-| Validation incomplete | Assert grammar cases, `✓`/`✗`, submit gating, 24th-character cap, and 25th-character discard/flash. |
+| Injected validation incomplete | Assert a test `targetPolicy` controls grammar cases, `✓`/`✗`, submit gating, maximum display width, and over-limit discard/flash; assert the storyboard commodity fixture still enforces the 24-column commodity policy. |
+| Source sanitization hard-coded | Provide sources with caller-supplied `originalValue` and `sanitizedValue`; assert `effectiveValue`, source display arrows, default source value, ghost text, and source selection use those supplied fields exactly and no sanitization function is invoked by the TUI. |
 | Source selection incomplete | Assert `↑`/`↓` enter source navigation at last/first active source, autofill by `sourcePointerIndex`, moving above the first source or below the last source restores `sourceEntryBuffer`, and typing/backspace exits source navigation. |
 | Refactored mapping semantics | Assert `targetValue = null` enters edit mode with empty buffer plus `defaultSourceValue` ghost text; assert literal `targetValue = defaultSourceValue` enters edit mode with that value pre-filled and commits back as a literal string. |
 | Derived ghost semantics | Assert frame 12b Backspace changes `APPLE` to `APPL`, returns focus to token input, clears source navigation, and renders ghost `E`; assert submitting stores literal `APPL` and re-entering edit mode shows no ghost. |
+| Portability of page keys | In a test harness that does not distinguish shifted arrows, assert `PgUp`/`PgDn` perform page movement and normal arrows still perform one-row movement. |
+| Unsupported key handling | Send an unlisted control sequence in each mode and assert root state and render output do not change. |
+| Readline-style key aliases | Assert `ctrl+j`/`ctrl+m` dispatch as `Enter`, `ctrl+i` as `Tab`, `ctrl+?` as Backspace, `ctrl+p`/`ctrl+n` as up/down, `ctrl+b`/`ctrl+f` as left/right, `ctrl+a`/`ctrl+e` as line-boundary movement, `ctrl+d` as forward delete, `ctrl+k`/`ctrl+u`/`ctrl+w` as filter/edit line deletion, and representative readline search/yank/macro functions are no-ops. |
+| Edit filter preservation | Enter edit from an active text filter, cancel or submit, type another browsing character, and assert it inserts at the preserved filter cursor. |
+| Invalid printable edit characters | Type `!` in `EDITING`; assert it is inserted into `edit.buffer`, validation is `INVALID`, `✗` renders, `Enter` is gated, and no sanitization occurs. |
 
-## 11. Non-Goals, Assumptions, and Unresolved Questions
+## 11. Non-Goals and Assumption Resolution
 
 ### 11.1 Non-Goals
 
@@ -1004,25 +1149,43 @@ strip ANSI for geometry and inspect style spans separately for bold, dim, and re
 - This contract does not define alternate datasets beyond the fields and algorithms above.
 - This contract does not define persistence format after `ACCEPTED`, `SKIPPED`, `CANCELLED`, or `SIGINT`.
 - This contract does not require a specific terminal library.
+- This contract does not implement a full readline editor. It defines only the readline-style aliases
+  and no-op families listed in `5.1 Readline-Style Input Bindings`.
+- This contract does not define a wall-clock duration for max-length error fade. Implementers only need
+  the immediate render and deterministic clearing behavior defined in validation.
 
-### 11.2 Assumptions
+### 11.2 Assumption Resolution Log
 
-- ASCII case-insensitive filtering is required, although the storyboard does not demonstrate lowercase input.
-- `ctrl+c` in `EDITING` is treated as edit cancel because the storyboard header says `ctrl+c cancel`; the
-  storyboard does not show an edit-mode `ctrl+c` frame.
-- `ctrl+c` in accept confirmation cancels the batch because the header says `ctrl+c cancel`;
-  the storyboard only explicitly defines second `ctrl+c` SIGINT for exit confirmation.
-- Leaving accept confirmation with `NO` selects the first visible row at the current scroll offset.
-  This is inferred from frames 7a to 7b.
-- Frame 13 keeps the prior text filter `1` and appends `2`, yielding `12`; the storyboard does not show
-  the full intermediate path from frame 12b to frame 13.
+| Former assumption/question | Resolution |
+|---|---|
+| ASCII case-insensitive filtering was an assumption. | Resolved in `3.3 Filter Query Parser`: matching MUST be ASCII case-insensitive, lowercase queries MUST match uppercase targets, and tests MUST include a lowercase query. |
+| `ctrl+c` in `EDITING` was inferred from the header. | Resolved in `4.2 Transition Table` and `5. Key Handling Matrix`: `ctrl+c` in `EDITING` MUST cancel edit, preserve filter, clear edit state, and return to `BROWSING`. |
+| `ctrl+c` in accept confirmation was inferred from the header. | Resolved in `4.2 Transition Table` and `5. Key Handling Matrix`: `ctrl+c` in `CONFIRMING ACCEPT` MUST cancel the batch and set `result.status = CANCELLED`; only `CONFIRMING EXIT` arms second-`ctrl+c` SIGINT. |
+| Leaving accept confirmation with `NO` selected was inferred from frames 7a to 7b. | Resolved in `4.2 Transition Table` and `8.4 Confirming Scrolling`: `Enter` with `choice == NO` MUST return to `BROWSING`, and selected row MUST become the first visible row at the current `scrollOffset`. |
+| Frame 13 preserving filter `1` before appending `2` had an omitted intermediate path. | Resolved in `7.1 Entering Edit Mode`: entering, submitting, or cancelling `EDITING` MUST preserve filter state and cursor, so returning to browsing and typing `2` inserts at the preserved end cursor. |
+| Readline shortcuts other than Backspace and `ctrl+h` were undefined. | Resolved in `5.1 Readline-Style Input Bindings` and `11.1 Non-Goals`: common readline aliases are normalized to filter/edit input events, and unsupported readline families are explicit no-ops. |
+| `Shift+↑`/`Shift+↓` portability was undefined. | Resolved in `5. Key Handling Matrix`: implementations MUST support `PgUp`/`PgDn` as reliable page equivalents and MUST NOT reinterpret indistinguishable normal arrows as page movement. |
+| Max-length error fade timing was undefined. | Resolved in `7.5 Validation` and `11.1 Non-Goals`: immediate render is required, deterministic clearing is defined, and wall-clock fade duration is out of scope. |
+| Printable invalid characters such as `!` in edit mode were undefined beyond validation failure. | Resolved in `7.2 Streaming Insert Algorithm`: invalid printable characters MUST insert into `edit.buffer`, produce validation `INVALID`, render `✗`, gate submit, and must not be silently sanitized or discarded except by the configured maximum display width. |
 
-### 11.3 Unresolved Questions
+## 12. Implementation Targets and Development Method
 
-- The storyboard does not define readline shortcuts other than Backspace and `ctrl+h`.
-- The storyboard does not define whether `Shift+↑`/`Shift+↓` are distinguishable from normal arrows in
-  all terminal environments; implementations may map `PgUp`/`PgDn` as the reliable page equivalents.
-- The storyboard does not define exact timing for max-length error fade. Tests SHOULD assert immediate
-  behavior only unless a timer is explicitly specified later.
-- The storyboard does not define behavior for printable invalid characters such as `!` in edit mode
-  beyond validation failure.
+### 12.1 Language/Runtime Target
+
+- **Implementation Language**: Python 3.
+- **Runtime Environment**: Standard Unix/macOS terminal environments. The application must not assume specific proprietary terminal features beyond standard ANSI escape sequences.
+- **Preferred TUI Library**: The architecture requires the use of `blessed` for input/rendering. `blessed` is chosen because it provides raw terminal capabilities (input capturing, precise Unicode string width calculations, and basic ANSI styling) without imposing a conflicting widget lifecycle or state management architecture. This strictly aligns with the requirement for pure, centralized root state projections.
+
+### 12.2 Testing and Execution Method
+
+- **TDD/BDD Execution**: Implementers MUST follow Test-Driven Development (TDD) or Behavior-Driven Development (BDD). Failing tests MUST be written first for each behavior slice before implementing the logic.
+- **Golden-Render Tests**: The implementation MUST include golden-render tests for storyboard frames 1a through 15.
+- **Behavioral Tests**: The implementation MUST include behavioral tests covering all state transitions, key handling, filtering logic, editing algorithms, input validation, scrolling limits, and collision resolution semantics defined in this specification.
+- **Local Execution**: All tests MUST be runnable locally with a single documented command (e.g., `pytest`).
+- **Acceptance Criteria**: Every implementation story or task MUST include specific acceptance tests before the code implementation begins.
+
+### 12.3 Story Handoff Expectations
+
+- **Behavioral Slicing**: Epics and stories MUST be sliced by testable behavior (e.g., "Filter by text", "Handle Backspace in Edit Mode"), not solely by UI component (e.g., "Implement the Footer").
+- **Acceptance Criteria**: Each story MUST include clear Given/When/Then acceptance criteria.
+- **Contract Traceability**: Each story MUST identify the specific golden frames or behavioral contracts from this specification that it covers and implements.

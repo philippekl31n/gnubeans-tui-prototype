@@ -1,9 +1,14 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
-name = "repl-nix-workspace"
-version = "0.1.0"
-description = "Add your description here"
+name = "gnubeans-mapping-tui"
+version = "0.2.0"
+description = "Beancount Commodity Symbol Editor TUI"
 requires-python = ">=3.11"
 dependencies = [
+    "blessed>=1.44.0",
     "rich>=13",
     "textual>=8.2.6",
 ]
@@ -16,4 +21,8 @@ dev = [
 [dependency-groups]
 dev = [
     "pytest>=7",
+    "pytest-bdd>=8.1.0",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
