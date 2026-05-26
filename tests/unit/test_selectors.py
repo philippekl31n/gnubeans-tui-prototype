@@ -3,6 +3,50 @@ import pytest
 from mapping_resolution_tui.state import AppConfig, Mapping, Source
 
 
+def _story_1_4_mappings() -> list[Mapping]:
+    return [
+        Mapping(
+            ordinal=1,
+            sources=[
+                Source(label="cmdty_id", original_value="AAPL", sanitized_value=None),
+                Source(label="user_symbol", original_value="APPLE", sanitized_value=None),
+            ],
+            default_source_label="user_symbol",
+            target_value=None,
+        ),
+        Mapping(
+            ordinal=2,
+            sources=[
+                Source(label="cmdty_id", original_value="AT&T", sanitized_value="AT-T"),
+            ],
+            default_source_label="cmdty_id",
+            target_value=None,
+        ),
+        Mapping(
+            ordinal=3,
+            sources=[
+                Source(label="cmdty_id", original_value="AT-T", sanitized_value=None),
+            ],
+            default_source_label="cmdty_id",
+            target_value=None,
+        ),
+        Mapping(
+            ordinal=4,
+            sources=[
+                Source(label="cmdty_id", original_value="100-F", sanitized_value="C100-F"),
+            ],
+            default_source_label="cmdty_id",
+            target_value=None,
+        ),
+        Mapping(
+            ordinal=5,
+            sources=[Source(label="cmdty_id", original_value="MSFT", sanitized_value=None)],
+            default_source_label="cmdty_id",
+            target_value=None,
+        ),
+    ]
+
+
 def test_effective_source_value_prefers_sanitized_value_without_mutating_source():
     from mapping_resolution_tui.selectors import select_source_effective_value
 
@@ -222,3 +266,83 @@ def test_mapping_invariant_validation_reports_invalid_fixture_data_deterministic
 
     with pytest.raises(ValueError, match=expected_message):
         validate_mapping_invariants(config, mapping)
+
+
+def test_base_display_order_sorts_by_default_value_original_value_then_ordinal():
+    from mapping_resolution_tui.selectors import select_base_display_order
+
+    mappings = list(reversed(_story_1_4_mappings()))
+
+    assert [mapping.ordinal for mapping in select_base_display_order(mappings)] == [
+        2,
+        3,
+        1,
+        4,
+        5,
+    ]
+
+
+def test_collision_groups_and_count_detect_initial_at_t_collision():
+    from mapping_resolution_tui.selectors import (
+        select_collision_groups,
+        select_unresolved_collision_count,
+    )
+
+    groups = select_collision_groups(_story_1_4_mappings())
+
+    assert groups == (("AT-T", (2, 3)),)
+    assert select_unresolved_collision_count(_story_1_4_mappings()) == 1
+
+
+def test_unresolved_collision_ordinals_include_only_collision_group_members():
+    from mapping_resolution_tui.selectors import (
+        select_row_collision_metadata,
+        select_unresolved_collision_ordinals,
+    )
+
+    ordinals = select_unresolved_collision_ordinals(_story_1_4_mappings())
+
+    assert ordinals == frozenset({2, 3})
+    assert select_row_collision_metadata(_story_1_4_mappings(), 2).is_unresolved is True
+    assert select_row_collision_metadata(_story_1_4_mappings(), 3).is_unresolved is True
+    assert select_row_collision_metadata(_story_1_4_mappings(), 1).is_unresolved is False
+    assert select_row_collision_metadata(_story_1_4_mappings(), 4).is_unresolved is False
+    assert select_row_collision_metadata(_story_1_4_mappings(), 5).is_unresolved is False
+
+
+def test_base_display_order_does_not_change_after_literal_target_edit():
+    from dataclasses import replace
+
+    from mapping_resolution_tui.selectors import select_base_display_order
+
+    mappings = _story_1_4_mappings()
+    edited_mappings = [
+        replace(mapping, target_value="ZZZ") if mapping.ordinal == 2 else mapping
+        for mapping in mappings
+    ]
+
+    assert [mapping.ordinal for mapping in select_base_display_order(edited_mappings)] == [
+        2,
+        3,
+        1,
+        4,
+        5,
+    ]
+
+
+def test_collision_selectors_are_repeatable_and_do_not_store_state_on_mappings():
+    from mapping_resolution_tui.selectors import (
+        select_collision_groups,
+        select_unresolved_collision_count,
+        select_unresolved_collision_ordinals,
+    )
+
+    mappings = _story_1_4_mappings()
+
+    assert select_collision_groups(mappings) == select_collision_groups(mappings)
+    assert select_unresolved_collision_count(mappings) == 1
+    assert select_unresolved_collision_count(mappings) == 1
+    assert select_unresolved_collision_ordinals(mappings) == frozenset({2, 3})
+    assert all(not hasattr(mapping, "collision_groups") for mapping in mappings)
+    assert all(not hasattr(mapping, "unresolved_collisions") for mapping in mappings)
+    assert all(not hasattr(mapping, "unresolved_collision_count") for mapping in mappings)

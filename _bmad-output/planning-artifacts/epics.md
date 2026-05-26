@@ -339,3 +339,93 @@ So that the TUI can start from a complete, testable review state without hidden 
 **When** tests attempt to mutate state dataclass fields directly
 **Then** mutation fails or is prevented by frozen dataclass behavior
 **And** future changes must be expressed through explicit state replacement.
+
+### Story 1.3: Derive Source, Default, and Target Values
+
+As a developer,
+I want pure selectors for source and target derivation,
+So that review behavior is computed consistently from root state without duplicated mutable fields.
+
+**Acceptance Criteria:**
+
+**Given** Story 1.2 has implemented immutable state and fixture data
+**When** the developer starts this story
+**Then** they first write failing selector tests for source effective values, default source values, current target values, active sources, and invalid fixture invariants
+**And** selector implementation begins only after the tests fail.
+
+**Given** a source has both `originalValue` and `sanitizedValue`
+**When** the effective source value selector is called
+**Then** it returns `sanitizedValue`
+**And** it does not mutate either stored source field.
+
+**Given** a source has `sanitizedValue = None`
+**When** the effective source value selector is called
+**Then** it returns `originalValue`.
+
+**Given** a mapping has a valid `defaultSourceLabel`
+**When** the default source selector is called
+**Then** it returns the matching source from that mapping
+**And** the default source value selector returns that source's effective value.
+
+**Given** a mapping has `targetValue = None`
+**When** the current target value selector is called
+**Then** it returns the default source value.
+
+**Given** a mapping has a literal `targetValue`
+**When** the current target value selector is called
+**Then** it returns that literal target value
+**And** it does not canonicalize a value equal to the default source back to `None`.
+
+**Given** a mapping contains sources with missing values
+**When** the active sources selector is called
+**Then** it returns only sources whose effective value is not `None`
+**And** it preserves the mapping's source display order.
+
+**Given** fixture data violates entity invariants
+**When** validation tests construct duplicate source labels, unknown source labels, unknown default source labels, missing default sources, or a sanitized value for a missing original value
+**Then** the implementation reports the invariant failure deterministically
+**And** no derived selector silently repairs the invalid data.
+
+### Story 1.4: Sort Mappings and Detect Initial Collisions
+
+As a reviewer,
+I want mappings displayed in deterministic order with unresolved collisions identified,
+So that I can immediately see which mappings need attention before editing.
+
+**Acceptance Criteria:**
+
+**Given** Stories 1.1 through 1.3 have established fixture data and derived target selectors
+**When** the developer starts this story
+**Then** they first write failing tests for stable display sorting, collision grouping, unresolved collision counts, and collision row membership
+**And** production selector logic is implemented only after those tests fail.
+
+**Given** the storyboard fixture mappings are loaded
+**When** the base display order selector is called
+**Then** mappings are sorted by default source value
+**And** ties are broken by ASCII order of the default source's original value
+**And** remaining ties are broken by original ordinal.
+
+**Given** rows 2 and 3 both derive current target value `AT-T`
+**When** collision groups are selected
+**Then** the implementation returns one collision group containing ordinals 2 and 3
+**And** the unresolved collision count is `1`.
+
+**Given** a mapping's current target value is unique
+**When** unresolved collision ordinals are selected
+**Then** that mapping's ordinal is not included
+**And** only rows belonging to collision groups are marked unresolved.
+
+**Given** a later story changes a mapping's literal target value
+**When** the stable base display order selector is called again
+**Then** ordering remains based on initialization/default-source sort rules
+**And** target edits do not dynamically reorder rows.
+
+**Given** collision selectors are pure derived state
+**When** tests call them repeatedly against the same root state
+**Then** they return the same collision groups and counts
+**And** they do not store `collisionGroups`, `unresolvedCollisions`, or `unresolvedCollisionCount` as mutable root or component state.
+
+**Given** collision indicators will later be rendered by row projection
+**When** tests request row-level collision metadata
+**Then** ordinals 2 and 3 expose an unresolved collision marker
+**And** all other storyboard fixture rows expose no collision marker.
