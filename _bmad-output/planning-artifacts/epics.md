@@ -429,3 +429,57 @@ So that I can immediately see which mappings need attention before editing.
 **When** tests request row-level collision metadata
 **Then** ordinals 2 and 3 expose an unresolved collision marker
 **And** all other storyboard fixture rows expose no collision marker.
+
+### Story 1.5: Prove the Initial Review State
+
+As a reviewer,
+I want the initial mapping review state verified through behavior and golden baseline tests,
+So that the starting screen is trustworthy before filtering, editing, and confirmation behavior are added.
+
+**Acceptance Criteria:**
+
+**Given** Stories 1.1 through 1.4 have implemented fixture data, derived values, sorting, and collision selectors
+**When** the developer starts this story
+**Then** they first write failing BDD and golden-render baseline tests for the initial review state
+**And** they capture the failing output before adding any renderer or row-projection code needed by the tests.
+
+**Given** the storyboard fixture starts fresh in browsing mode
+**When** tests inspect the root state
+**Then** `mode` is `BROWSING`, `filter` is empty, `selectedOrdinal` is `1`, `scrollOffset` is `0`, and result status is `RUNNING`
+**And** `edit` is `None`.
+
+**Given** the initial visible row selector is evaluated for a 15-row terminal
+**When** tests inspect visible rows
+**Then** rows 1 through 9 are visible in the initial frame
+**And** row 1 is selected.
+
+**Given** the initial collision selectors are evaluated
+**When** tests inspect collision state
+**Then** the unresolved collision count is `1`
+**And** rows 2 and 3 are marked unresolved.
+
+**Given** the initial review prompt and footer are derived
+**When** tests inspect prompt/footer text
+**Then** the prompt communicates `Tab to view collisions`
+**And** the footer communicates page movement and edit-selected behavior.
+
+**Given** the initial frame 1a golden baseline is rendered without ANSI geometry effects
+**When** tests strip ANSI and inspect geometry
+**Then** the header includes `1 unresolved collision`
+**And** row 1 has the selection cursor, rows 2 and 3 have collision markers, and the footer lands on row 15.
+
+**Given** style spans are inspected separately from stripped geometry
+**When** tests inspect the initial frame style metadata or ANSI spans
+**Then** shortcut text can be distinguished as dim where required
+**And** selection/cursor styling can be asserted without changing display-width calculations.
+
+**Given** the initial frame 1a baseline can be rendered from the storyboard fixture
+**When** this story is complete
+**Then** the repository exposes a documented local command that launches the TUI with storyboard fixture inputs in a normal terminal session
+**And** the command is exposed through the project's canonical execution surface, preferring a configured script or console entrypoint runnable through the project toolchain over a direct module path
+**And** the README documents the command, fixture scope, and that automated golden/behavior tests remain the authoritative acceptance checks.
+
+**Given** the renderer is still an incremental baseline
+**When** this story is complete
+**Then** it only needs to support frame 1a behavior required by this epic
+**And** later golden-render stories remain responsible for the full storyboard frames 1b through 15.
