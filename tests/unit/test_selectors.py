@@ -268,15 +268,15 @@ def test_mapping_invariant_validation_reports_invalid_fixture_data_deterministic
         validate_mapping_invariants(config, mapping)
 
 
-def test_base_display_order_sorts_by_default_value_original_value_then_ordinal():
-    from mapping_resolution_tui.selectors import select_base_display_order
+def test_initial_display_sort_orders_by_default_value_original_value_then_ordinal():
+    from mapping_resolution_tui.selectors import sort_mappings_for_initial_display
 
     mappings = list(reversed(_story_1_4_mappings()))
 
-    assert [mapping.ordinal for mapping in select_base_display_order(mappings)] == [
+    assert [mapping.ordinal for mapping in sort_mappings_for_initial_display(mappings)] == [
+        1,
         2,
         3,
-        1,
         4,
         5,
     ]
@@ -310,21 +310,21 @@ def test_unresolved_collision_ordinals_include_only_collision_group_members():
     assert select_row_collision_metadata(_story_1_4_mappings(), 5).is_unresolved is False
 
 
-def test_base_display_order_does_not_change_after_literal_target_edit():
+def test_initial_display_sort_uses_default_sources_not_literal_target_values():
     from dataclasses import replace
 
-    from mapping_resolution_tui.selectors import select_base_display_order
+    from mapping_resolution_tui.selectors import sort_mappings_for_initial_display
 
     mappings = _story_1_4_mappings()
-    edited_mappings = [
+    target_overridden_mappings = [
         replace(mapping, target_value="ZZZ") if mapping.ordinal == 2 else mapping
         for mapping in mappings
     ]
 
-    assert [mapping.ordinal for mapping in select_base_display_order(edited_mappings)] == [
+    assert [mapping.ordinal for mapping in sort_mappings_for_initial_display(target_overridden_mappings)] == [
+        1,
         2,
         3,
-        1,
         4,
         5,
     ]

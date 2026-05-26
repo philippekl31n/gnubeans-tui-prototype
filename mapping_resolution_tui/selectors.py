@@ -2,7 +2,15 @@
 Pure selectors for derived mapping state.
 """
 
+from dataclasses import dataclass
+
 from mapping_resolution_tui.state import AppConfig, Mapping, Source
+
+
+@dataclass(frozen=True)
+class RowCollisionMetadata:
+    ordinal: int
+    is_unresolved: bool
 
 
 def select_source_effective_value(source: Source) -> str | None:
@@ -39,6 +47,54 @@ def select_active_sources(mapping: Mapping) -> list[Source]:
         for source in mapping.sources
         if select_source_effective_value(source) is not None
     ]
+
+
+def sort_mappings_for_initial_display(mappings: list[Mapping]) -> tuple[Mapping, ...]:
+    return tuple(
+        sorted(
+            mappings,
+            key=lambda mapping: (
+                select_default_source_value(mapping),
+                select_default_source(mapping).original_value or "",
+                mapping.ordinal,
+            ),
+        )
+    )
+
+
+def select_collision_groups(mappings: list[Mapping]) -> tuple[tuple[str, tuple[int, ...]], ...]:
+    ordinals_by_target: dict[str, list[int]] = {}
+    for mapping in mappings:
+        target_value = select_current_target_value(mapping)
+        ordinals_by_target.setdefault(target_value, []).append(mapping.ordinal)
+
+    return tuple(
+        (target_value, tuple(sorted(ordinals)))
+        for target_value, ordinals in sorted(ordinals_by_target.items())
+        if len(ordinals) > 1
+    )
+
+
+def select_unresolved_collision_count(mappings: list[Mapping]) -> int:
+    return len(select_collision_groups(mappings))
+
+
+def select_unresolved_collision_ordinals(mappings: list[Mapping]) -> frozenset[int]:
+    return frozenset(
+        ordinal
+        for _, ordinals in select_collision_groups(mappings)
+        for ordinal in ordinals
+    )
+
+
+def select_row_collision_metadata(
+    mappings: list[Mapping],
+    ordinal: int,
+) -> RowCollisionMetadata:
+    return RowCollisionMetadata(
+        ordinal=ordinal,
+        is_unresolved=ordinal in select_unresolved_collision_ordinals(mappings),
+    )
 
 
 def validate_mapping_invariants(config: AppConfig, mapping: Mapping) -> None:
