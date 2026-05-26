@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "gnubeans-mapping-tui"
-version = "0.2.1"
-description = "Beancount Commodity Symbol Editor TUI"
+name = "mapping-resolution-tui"
+version = "0.3.0"
+description = "A reusable Python terminal component for resolving mapping collisions through keyboard-driven review, source-assisted editing, validation, and confirmation."
 requires-python = ">=3.11"
 dependencies = [
     "blessed>=1.44.0",
