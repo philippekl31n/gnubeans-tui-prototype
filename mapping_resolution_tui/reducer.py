@@ -2,7 +2,7 @@
 Reducer module: pure state transitions and application initialization.
 """
 
-from dataclasses import replace
+
 
 from mapping_resolution_tui.selectors import sort_mappings_for_initial_display
 from mapping_resolution_tui.state import (
@@ -28,17 +28,22 @@ def make_initial_state(
     sorted_mappings = list(sort_mappings_for_initial_display(mappings))
     
     # Assign sequential ordinals 1..N after the bootstrap-time sort
-    new_mappings = []
+    ordered_mappings = []
     for i, mapping in enumerate(sorted_mappings, 1):
-        new_mappings.append(replace(mapping, ordinal=i))
+        ordered_mappings.append(Mapping(
+            ordinal=i,
+            sources=mapping.sources,
+            default_source_label=mapping.default_source_label,
+            target_value=mapping.target_value,
+        ))
 
     return AppState(
         config=config,
         mode=Mode.BROWSING,
-        mappings=new_mappings,
+        mappings=ordered_mappings,
         filter=FilterState(raw="", collision_only=False, text="", cursor=0),
         selection=SelectionState(
-            selected_ordinal=new_mappings[0].ordinal if new_mappings else None,
+            selected_ordinal=ordered_mappings[0].ordinal if ordered_mappings else None,
             scroll_offset=0,
         ),
         edit=None,

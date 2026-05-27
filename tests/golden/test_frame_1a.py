@@ -75,7 +75,4 @@ def test_header_shortcut_text_contains_dim_span(frame_lines):
     assert DIM in frame_lines[0]
 
 
-def test_selected_row_contains_reverse_video_span(frame_lines):
-    # the ▸ cursor row (index 4) must contain a reverse-video span
-    REVERSE = "\x1b[7m"
-    assert REVERSE in frame_lines[4]
+

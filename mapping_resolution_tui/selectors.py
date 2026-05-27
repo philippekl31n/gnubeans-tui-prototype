@@ -35,7 +35,7 @@ def select_default_source(mapping: Mapping) -> Source:
         if source.label == mapping.default_source_label:
             return source
     raise ValueError(
-        f"unknown default source label for mapping {mapping.ordinal}: "
+        f"unknown default source label for mapping: "
         f"{mapping.default_source_label}"
     )
 
@@ -44,7 +44,7 @@ def select_default_source_value(mapping: Mapping) -> str:
     default_source = select_default_source(mapping)
     effective_value = select_source_effective_value(default_source)
     if effective_value is None:
-        raise ValueError(f"missing default source value for mapping {mapping.ordinal}")
+        raise ValueError(f"missing default source value for mapping")
     return effective_value
 
 
@@ -69,7 +69,6 @@ def sort_mappings_for_initial_display(mappings: list[Mapping]) -> tuple[Mapping,
             key=lambda mapping: (
                 select_default_source_value(mapping),
                 select_default_source(mapping).original_value or "",
-                mapping.ordinal,
             ),
         )
     )

@@ -45,10 +45,10 @@ class Source:
 
 @dataclass(frozen=True)
 class Mapping:
-    ordinal: int
     sources: List[Source]
     default_source_label: str
     target_value: Optional[str]
+    ordinal: Optional[int] = None
 
 @dataclass(frozen=True)
 class AppConfig:
