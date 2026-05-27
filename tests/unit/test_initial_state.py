@@ -5,9 +5,9 @@ These tests must FAIL before production code is added.
 
 
 def _make_state(frame_height: int = 15):
-    from mapping_resolution_tui.fixtures.storyboard import make_storyboard_config, make_storyboard_mappings
+    from tests.fixtures.storyboard import make_config, make_mappings
     from mapping_resolution_tui.reducer import make_initial_state
-    return make_initial_state(make_storyboard_config(), make_storyboard_mappings(), frame_height=frame_height)
+    return make_initial_state(make_config(), make_mappings(), frame_height=frame_height)
 
 
 # ── AC1: root state fields ────────────────────────────────────────────────────

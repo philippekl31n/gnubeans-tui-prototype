@@ -7,11 +7,11 @@ import pytest
 
 @pytest.fixture
 def frame_lines():
-    from mapping_resolution_tui.fixtures.storyboard import make_storyboard_config, make_storyboard_mappings
+    from tests.fixtures.storyboard import make_config, make_mappings
     from mapping_resolution_tui.reducer import make_initial_state
-    from mapping_resolution_tui.renderer import render_frame
-    state = make_initial_state(make_storyboard_config(), make_storyboard_mappings(), frame_height=15)
-    return render_frame(state)
+    from mapping_resolution_tui.renderer import render_lines
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    return render_lines(state)
 
 
 @pytest.fixture

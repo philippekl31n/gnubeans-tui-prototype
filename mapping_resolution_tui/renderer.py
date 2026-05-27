@@ -43,7 +43,7 @@ def strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
-def render_frame(state: AppState) -> list[str]:
+def render_lines(state: AppState) -> list[str]:
     config = state.config
     mappings = state.mappings
     height = state.terminal.height

@@ -31,12 +31,12 @@ uv sync --group dev
 ## Storyboard demo
 
 ```
-uv run review-demo
+uv run demo storyboard
 ```
 
 Renders the initial browsing frame loaded with the 11-commodity storyboard
-fixture (`mapping_resolution_tui/fixtures/storyboard.py`). The fixture
-exercises bootstrap sort order and includes one AT-T collision (ordinals 2
+fixture (`tests/fixtures/storyboard.py`). The fixture
+exercises bootstrap sort order and includes one AT-T collision (indexes 2
 and 3). The frame renders inline into the terminal scroll buffer; the shell
 prompt returns immediately.
 

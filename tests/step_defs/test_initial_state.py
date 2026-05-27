@@ -6,9 +6,9 @@ scenarios("../features/initial_state.feature")
 
 @given("the storyboard fixture is loaded in a 15-row terminal", target_fixture="state")
 def storyboard_state():
-    from mapping_resolution_tui.fixtures.storyboard import make_storyboard_config, make_storyboard_mappings
+    from tests.fixtures.storyboard import make_config, make_mappings
     from mapping_resolution_tui.reducer import make_initial_state
-    return make_initial_state(make_storyboard_config(), make_storyboard_mappings(), frame_height=15)
+    return make_initial_state(make_config(), make_mappings(), frame_height=15)
 
 
 @when("the initial state is inspected", target_fixture="inspected_state")

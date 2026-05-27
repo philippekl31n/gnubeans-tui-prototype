@@ -4,6 +4,9 @@ Reducer module: pure state transitions and application initialization.
 
 
 
+from typing import Optional
+import shutil
+
 from mapping_resolution_tui.selectors import sort_mappings_for_initial_display
 from mapping_resolution_tui.state import (
     AppConfig,
@@ -23,8 +26,11 @@ from mapping_resolution_tui.state import (
 def make_initial_state(
     config: AppConfig,
     mappings: list[Mapping],
-    frame_height: int = 15,
+    frame_height: Optional[int] = None,
 ) -> AppState:
+    if frame_height is None:
+        frame_height = shutil.get_terminal_size(fallback=(75, 15)).lines
+        
     sorted_mappings = list(sort_mappings_for_initial_display(mappings))
     
     # Assign sequential ordinals 1..N after the bootstrap-time sort
