@@ -84,7 +84,7 @@ interface AppConfig {
 }
 
 interface TargetPolicy {
-  maxDisplayWidth: number;
+  maxTokenLength: number;
   validate(value: string, context: TargetValidationContext): ValidationState;
 }
 
@@ -150,7 +150,7 @@ interface TerminalState {
 }
 
 interface ResultState {
-  status: "RUNNING" | "ACCEPTED" | "SKIPPED" | "CANCELLED" | "SIGINT";
+  status: "RUNNING" | "ACCEPTED" | "SKIPPED" | "SIGINT";
 }
 ```
 
@@ -436,7 +436,7 @@ between key events until the user confirms, changes choice, cancels, or leaves c
 | `CONFIRMING ACCEPT` | `Enter` | `choice == YES` | Set `result.status = ACCEPTED` | Terminal final state |
 | `CONFIRMING ACCEPT` | `Enter` | `choice == NO` | Leave confirmation; selection becomes first visible row at current scroll | `BROWSING` |
 | `CONFIRMING ACCEPT` | `Esc` | Any | Leave confirmation | `BROWSING` |
-| `CONFIRMING ACCEPT` | `ctrl+c` | Any | Cancel batch, set `result.status = CANCELLED` | Terminal final state |
+| `CONFIRMING ACCEPT` | `ctrl+c` | Any | Enter exit confirmation; set `choice = NO`; `secondCtrlCArmed = true` | `CONFIRMING` with `EXIT` |
 | `CONFIRMING EXIT` | `y` | Any | `choice = YES` | `CONFIRMING EXIT` |
 | `CONFIRMING EXIT` | `n` | Any | `choice = NO` | `CONFIRMING EXIT` |
 | `CONFIRMING EXIT` | `←` / `→` | Any | Toggle choice | `CONFIRMING EXIT` |
@@ -465,7 +465,7 @@ between key events until the user confirms, changes choice, cancels, or leaves c
 | `Backspace` | Delete filter char before cursor or metafilter | Return to token input if needed, then delete edit char before cursor | No-op | No-op |
 | `ctrl+h` | Same as Backspace | Same as Backspace | No-op | No-op |
 | `ctrl+s` | Open accept confirmation if zero collisions | No-op | No-op | No-op |
-| `ctrl+c` | Enter exit confirmation | Cancel edit to browsing | Cancel batch | Send SIGINT |
+| `ctrl+c` | Enter exit confirmation | Enter exit confirmation | Enter exit confirmation | Send SIGINT |
 | `y` / `n` | Insert into filter at cursor | Insert into buffer at cursor | Set choice | Set choice |
 | Other printable | Insert into filter at cursor | Insert into buffer at cursor | No-op | No-op |
 
@@ -604,10 +604,10 @@ Columns are 1-based.
 | Ordinal | 4..5 | Right-aligned to width 2 for the 11-row storyboard dataset. |
 | Collision marker | 8 | `!` when unresolved, otherwise space. |
 | Token start | 9 | Current target or edit buffer starts here. |
-| Token max display | `9..(8 + config.targetPolicy.maxDisplayWidth)` | Storyboard commodity fixture: 24 display columns, columns 9..32. |
+| Token max display | `9..(8 + config.targetPolicy.maxTokenLength)` | Storyboard commodity fixture: 24 display columns, columns 9..32. |
 | Edit cursor at offset L | `9 + L` | Reverse-video character at offset L, or reverse-video space when L is at end. In the storyboard commodity fixture, offset 24 is column 33. |
 | Validation icon normal | Cursor column + 2 | `✓` or `✗`, except max-length cap below. |
-| Validation icon max cap | `10 + config.targetPolicy.maxDisplayWidth` | In the storyboard commodity fixture, at 24 chars the icon MUST remain at column 34. |
+| Validation icon max cap | `10 + config.targetPolicy.maxTokenLength` | In the storyboard commodity fixture, at 24 chars the icon MUST remain at column 34. |
 | Source divider | 36 | `┃` in expanded edit rows. |
 | Source text | 38 | Source display text begins after divider and one space. |
 | Source pointer | 34 | `▸` before the divider when source list has focus or exact match points at that source. |
@@ -726,7 +726,7 @@ if focusRegion == SOURCE_LIST:
 
 candidateBuffer = buffer with ch inserted at edit.cursor
 
-if displayWidth(candidateBuffer) > config.targetPolicy.maxDisplayWidth:
+if displayWidth(candidateBuffer) > config.targetPolicy.maxTokenLength:
   discard ch
   set maxLengthFlashUntil
   set error to config.targetPolicy.validate(candidateBuffer, context).errorMessage
@@ -741,7 +741,7 @@ recompute collisions using buffer for edited mapping
 
 Printable characters that are invalid under `config.targetPolicy.validate`, including `!` in the
 storyboard commodity fixture, MUST still be inserted into `edit.buffer` at `edit.cursor` when
-`config.targetPolicy.maxDisplayWidth` has not been reached. They MUST produce validation `INVALID`,
+`config.targetPolicy.maxTokenLength` has not been reached. They MUST produce validation `INVALID`,
 render `✗`, show the policy-provided validation error, and keep `Enter` submit gated. Implementations
 MUST NOT silently discard, sanitize, or transform invalid printable characters except for characters
 rejected by the configured maximum display width.
@@ -860,7 +860,7 @@ Display and gating:
 - `Enter` MUST submit only when validation returns `status = VALID` and the value is a concrete buffer
   value, source selection, or autocomplete selection. Ghost-only default text can be policy-valid for
   display, but MUST NOT by itself show the submit affordance.
-- `config.targetPolicy.maxDisplayWidth` MUST control the input cap, the max-length cursor position, and
+- `config.targetPolicy.maxTokenLength` MUST control the input cap, the max-length cursor position, and
   the capped validation-icon column. The component MUST NOT assume 24 columns except in the storyboard
   commodity fixture.
 
@@ -1153,7 +1153,7 @@ strip ANSI for geometry and inspect style spans separately for bold, dim, and re
 - This contract does not define color values.
 - This contract does not define mouse behavior.
 - This contract does not define alternate datasets beyond the fields and algorithms above.
-- This contract does not define persistence format after `ACCEPTED`, `SKIPPED`, `CANCELLED`, or `SIGINT`.
+- This contract does not define persistence format after `ACCEPTED`, `SKIPPED`, or `SIGINT`.
 - This contract does not require a specific terminal library.
 - This contract does not implement a full readline editor. It defines only the readline-style aliases
   and no-op families listed in `5.1 Readline-Style Input Bindings`.
@@ -1166,7 +1166,7 @@ strip ANSI for geometry and inspect style spans separately for bold, dim, and re
 |---|---|
 | ASCII case-insensitive filtering was an assumption. | Resolved in `3.3 Filter Query Parser`: matching MUST be ASCII case-insensitive, lowercase queries MUST match uppercase targets, and tests MUST include a lowercase query. |
 | `ctrl+c` in `EDITING` was inferred from the header. | Resolved in `4.2 Transition Table` and `5. Key Handling Matrix`: `ctrl+c` in `EDITING` MUST cancel edit, preserve filter, clear edit state, and return to `BROWSING`. |
-| `ctrl+c` in accept confirmation was inferred from the header. | Resolved in `4.2 Transition Table` and `5. Key Handling Matrix`: `ctrl+c` in `CONFIRMING ACCEPT` MUST cancel the batch and set `result.status = CANCELLED`; only `CONFIRMING EXIT` arms second-`ctrl+c` SIGINT. |
+| `ctrl+c` in accept confirmation was inferred from the header. | Resolved in `4.2 Transition Table` and `5. Key Handling Matrix`: `ctrl+c` in `CONFIRMING ACCEPT` MUST enter exit confirmation (same as `ctrl+c` in `BROWSING`); only `CONFIRMING EXIT` arms second-`ctrl+c` SIGINT. |
 | Leaving accept confirmation with `NO` selected was inferred from frames 7a to 7b. | Resolved in `4.2 Transition Table` and `8.4 Confirming Scrolling`: `Enter` with `choice == NO` MUST return to `BROWSING`, and selected row MUST become the first visible row at the current `scrollOffset`. |
 | Frame 13 preserving filter `1` before appending `2` had an omitted intermediate path. | Resolved in `7.1 Entering Edit Mode`: entering, submitting, or cancelling `EDITING` MUST preserve filter state and cursor, so returning to browsing and typing `2` inserts at the preserved end cursor. |
 | Readline shortcuts other than Backspace and `ctrl+h` were undefined. | Resolved in `5.1 Readline-Style Input Bindings` and `11.1 Non-Goals`: common readline aliases are normalized to filter/edit input events, and unsupported readline families are explicit no-ops. |

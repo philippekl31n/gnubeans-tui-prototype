@@ -28,7 +28,7 @@ def test_root_app_state_has_required_fields():
         selection=SelectionState(selected_ordinal=None, scroll_offset=0),
         edit=None,
         confirmation=ConfirmationState(kind="NONE", choice="NO", second_ctrl_c_armed=False),
-        terminal=TerminalState(width=80, height=24, frame_width=75, frame_height=15),
+        terminal=TerminalState(height=24),
         result=ResultState(status="RUNNING")
     )
     
@@ -65,7 +65,7 @@ def get_commodity_target_policy() -> 'mapping_resolution_tui.state.TargetPolicy'
     from mapping_resolution_tui.state import TargetValidationContext, ValidationState, TargetPolicy
     def validate(value: str, context: TargetValidationContext) -> ValidationState:
         return ValidationState(status="VALID", icon="✓", error_message=None)
-    return TargetPolicy(max_display_width=24, validate=validate)
+    return TargetPolicy(max_token_length=24, validate=validate)
 
 def get_storyboard_config() -> 'mapping_resolution_tui.state.AppConfig':
     from mapping_resolution_tui.state import AppConfig

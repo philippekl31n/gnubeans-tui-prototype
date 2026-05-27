@@ -34,7 +34,7 @@ class ValidationState:
 
 @dataclass(frozen=True)
 class TargetPolicy:
-    max_display_width: int
+    max_token_length: int
     validate: Callable[[str, TargetValidationContext], ValidationState]
 
 @dataclass(frozen=True)
@@ -95,14 +95,39 @@ class ConfirmationState:
 
 @dataclass(frozen=True)
 class TerminalState:
-    width: int
     height: int
-    frame_width: int
-    frame_height: int
 
 @dataclass(frozen=True)
 class ResultState:
     status: str
+
+
+class FooterHint(Enum):
+    PAGE_SCROLL = "PAGE_SCROLL"
+    EDIT_SELECTED = "EDIT_SELECTED"
+    CLEAR_FILTER = "CLEAR_FILTER"
+    SCROLL = "SCROLL"
+    CONFIRM = "CONFIRM"
+    EDIT_MAPPINGS = "EDIT_MAPPINGS"
+    TYPE_TO_EDIT = "TYPE_TO_EDIT"
+    SELECT_SOURCE = "SELECT_SOURCE"
+    SUBMIT = "SUBMIT"
+    CANCEL = "CANCEL"
+
+
+@dataclass(frozen=True)
+class FooterContent:
+    hints: tuple[FooterHint, ...]
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class FilterPromptContent:
+    filter_text: str
+    filter_cursor: int
+    collision_only: bool
+    collision_hint_visible: bool
+
 
 @dataclass(frozen=True)
 class AppState:

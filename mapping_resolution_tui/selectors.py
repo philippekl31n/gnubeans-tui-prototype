@@ -3,8 +3,21 @@ Pure selectors for derived mapping state.
 """
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from mapping_resolution_tui.state import AppConfig, Mapping, Source
+from mapping_resolution_tui.state import (
+    AppConfig,
+    ConfirmationChoice,
+    FilterPromptContent,
+    FooterContent,
+    FooterHint,
+    Mapping,
+    Mode,
+    Source,
+)
+
+if TYPE_CHECKING:
+    from mapping_resolution_tui.state import AppState
 
 
 @dataclass(frozen=True)
@@ -95,6 +108,61 @@ def select_row_collision_metadata(
         ordinal=ordinal,
         is_unresolved=ordinal in select_unresolved_collision_ordinals(mappings),
     )
+
+
+def select_body_capacity(height: int) -> int:
+    """body_capacity = height - 4 fixed rows - 1 separator - 1 footer"""
+    return max(0, height - 6)
+
+
+def select_visible_rows(state: "AppState") -> list[Mapping]:
+    rows: list[Mapping] = list(state.mappings)
+
+    if state.filter.collision_only:
+        collision_ordinals = select_unresolved_collision_ordinals(state.mappings)
+        rows = [m for m in rows if m.ordinal in collision_ordinals]
+
+    if state.filter.text:
+        text_lower = state.filter.text.lower()
+
+        def _matches(m: Mapping) -> bool:
+            if text_lower in str(m.ordinal):
+                return True
+            return text_lower in select_current_target_value(m).lower()
+
+        rows = [m for m in rows if _matches(m)]
+
+    return rows
+
+
+def select_filter_prompt(state: "AppState", unresolved_count: int) -> FilterPromptContent:
+    return FilterPromptContent(
+        filter_text=state.filter.text,
+        filter_cursor=state.filter.cursor,
+        collision_only=state.filter.collision_only,
+        collision_hint_visible=unresolved_count > 0,
+    )
+
+
+def select_footer_content(state: "AppState") -> FooterContent:
+    if state.mode == Mode.BROWSING:
+        hints: list[FooterHint] = [FooterHint.PAGE_SCROLL, FooterHint.EDIT_SELECTED]
+        if state.filter.text or state.filter.collision_only:
+            hints.append(FooterHint.CLEAR_FILTER)
+        return FooterContent(hints=tuple(hints))
+    if state.mode == Mode.CONFIRMING:
+        action = (
+            FooterHint.CONFIRM
+            if state.confirmation.choice == ConfirmationChoice.YES
+            else FooterHint.EDIT_MAPPINGS
+        )
+        return FooterContent(hints=(FooterHint.SCROLL, FooterHint.PAGE_SCROLL, action))
+    return FooterContent(hints=(
+        FooterHint.TYPE_TO_EDIT,
+        FooterHint.SELECT_SOURCE,
+        FooterHint.SUBMIT,
+        FooterHint.CANCEL,
+    ))
 
 
 def validate_mapping_invariants(config: AppConfig, mapping: Mapping) -> None:

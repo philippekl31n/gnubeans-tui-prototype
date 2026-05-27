@@ -483,3 +483,66 @@ So that the starting screen is trustworthy before filtering, editing, and confir
 **When** this story is complete
 **Then** it only needs to support frame 1a behavior required by this epic
 **And** later golden-render stories remain responsible for the full storyboard frames 1b through 15.
+
+## Epic 2: Browse, Filter, and Navigate Mappings
+
+Users can narrow the mapping list, view collision-only rows, move selection predictably, page through rows, handle empty results, and rely on unsupported keys doing nothing.
+
+### Story 2.1: Filter Rows by Target Text and Ordinal
+
+As a reviewer,
+I want to type a text filter that matches mapping ordinals and target tokens only,
+So that I can quickly narrow the review list without source values creating false matches.
+
+**Acceptance Criteria:**
+
+**Given** Epic 1 has established the initial review state and visible-row selectors
+**When** the developer starts this story
+**Then** they first write failing tests for browsing text insertion, filter cursor movement, ordinal matching, token matching, case-insensitive matching, source non-matching, and highlight metadata
+**And** production filter logic is implemented only after those tests fail.
+
+**Given** the app is in `BROWSING` mode with an empty filter
+**When** the user types a printable character other than reserved browsing keys
+**Then** the character is inserted into `filter.text` at `filter.cursor`
+**And** `filter.cursor` advances by the inserted character length
+**And** `filter.raw` reflects the visible query text.
+
+**Given** `filter.cursor` is in the middle of `filter.text`
+**When** the user types another printable character
+**Then** the character is inserted at the cursor position
+**And** existing text after the cursor is preserved.
+
+**Given** the user moves the filter cursor left or right using supported browsing input bindings
+**When** the cursor movement would pass the beginning or end of `filter.text`
+**Then** the cursor is clamped to the valid range
+**And** no filter text is lost.
+
+**Given** the filter text is `1`
+**When** visible rows are selected
+**Then** the result includes ordinals `1`, `10`, and `11`
+**And** it includes row 4 because current target token `C100-F` contains `1`.
+
+**Given** the filter text is lowercase ASCII such as `a`
+**When** visible rows are selected
+**Then** it matches uppercase target tokens containing `A`
+**And** matching is ASCII case-insensitive.
+
+**Given** a source original value or source label contains the filter text
+**When** the current target token and ordinal do not contain that text
+**Then** the row is not matched
+**And** source labels, original values, sanitized values, effective values, and source display text are ignored by the filter matcher.
+
+**Given** `filter.text` is non-empty
+**When** visible rows are derived
+**Then** every non-overlapping matched span in the ordinal display and current target token is exposed as bold highlight metadata
+**And** no highlight metadata is emitted for source text.
+
+**Given** `filter.text` is empty
+**When** visible rows are derived
+**Then** no bold highlight spans are emitted
+**And** all rows remain eligible subject to any active metafilter handled by later stories.
+
+**Given** a filter text mutation occurs
+**When** selectors recompute visible rows
+**Then** filtering is derived from root state without storing visible rows as mutable component state
+**And** repeated selector calls against the same state return the same rows and highlight metadata.
