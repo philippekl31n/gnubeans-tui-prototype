@@ -546,3 +546,121 @@ So that I can quickly narrow the review list without source values creating fals
 **When** selectors recompute visible rows
 **Then** filtering is derived from root state without storing visible rows as mutable component state
 **And** repeated selector calls against the same state return the same rows and highlight metadata.
+
+### Story 2.2: Toggle and Clear Collision-Only Filtering
+
+As a reviewer,
+I want to quickly switch between all mappings and unresolved collision mappings,
+So that I can focus on the rows that require resolution without losing predictable filter behavior.
+
+**Acceptance Criteria:**
+
+**Given** Story 2.1 has implemented browsing filter text behavior
+**When** the developer starts this story
+**Then** they first write failing tests for `Tab` toggling, `!` toggling, metafilter prompt rendering, Backspace clearing, Esc clearing, visible-row restriction, and frame 2/3 behavior
+**And** production collision-only filter logic is implemented only after those tests fail.
+
+**Given** the app is in `BROWSING` mode with `filter.collisionOnly = False`
+**When** the user presses `Tab`
+**Then** `filter.collisionOnly` becomes `True`
+**And** `filter.raw` renders with a leading `!`.
+
+**Given** the app is in `BROWSING` mode with any filter text
+**When** the user types `!`
+**Then** `filter.collisionOnly` toggles
+**And** a literal `!` is not inserted into `filter.text`.
+
+**Given** `filter.collisionOnly = True` and `filter.text` is empty
+**When** visible rows are selected
+**Then** only unresolved collision rows are eligible
+**And** the storyboard fixture shows ordinals 2 and 3.
+
+**Given** `filter.collisionOnly = True` and `filter.text = "3"`
+**When** visible rows are selected
+**Then** matching is applied within unresolved collision rows only
+**And** the storyboard fixture shows ordinal 3.
+
+**Given** collision-only filtering is active with no text
+**When** the prompt is derived
+**Then** it renders the active metafilter as a leading `!` before the type-to-filter prompt
+**And** `!` is not counted as part of `filter.cursor`.
+
+**Given** `filter.cursor = 0`, `filter.text` is empty, and `filter.collisionOnly = True`
+**When** the user presses Backspace or a supported backward-delete alias
+**Then** `filter.collisionOnly` becomes `False`
+**And** `filter.text` remains empty.
+
+**Given** either collision-only filtering or text filtering is active
+**When** the user presses `Esc` in `BROWSING` mode
+**Then** both `filter.collisionOnly` and `filter.text` are cleared
+**And** `filter.cursor` is reset to `0`.
+
+**Given** `filter.collisionOnly` changes
+**When** visible rows and selection are recomputed
+**Then** the same selection clamping rules apply as text filtering
+**And** no visible-row list is stored as mutable component state.
+
+**Given** storyboard frame 2 is exercised from frame 1a with `Tab` or `!`
+**When** tests inspect state and render metadata
+**Then** collision-only filtering is active, selected ordinal is 2, visible rows are 2 and 3, and the footer includes clear-filter behavior.
+
+**Given** storyboard frame 3 is exercised from frame 2 by typing `3`
+**When** tests inspect state and render metadata
+**Then** collision-only filtering remains active, `filter.text = "3"`, selected ordinal is 3, and ordinal `3` has bold match metadata.
+
+### Story 2.3: Maintain Selection Through Filtering and Empty Results
+
+As a reviewer,
+I want selection to remain predictable when filters change or match nothing,
+So that browsing never points at a hidden row or an invalid mapping.
+
+**Acceptance Criteria:**
+
+**Given** Stories 2.1 and 2.2 have implemented text and collision-only filtering
+**When** the developer starts this story
+**Then** they first write failing tests for selection clamping, empty-result selection clearing, filter cursor preservation, blank body-row derivation, and empty-result footer behavior
+**And** production selection/filter integration logic is implemented only after those tests fail.
+
+**Given** a filter change leaves the currently selected ordinal visible
+**When** visible rows and selection are recomputed
+**Then** `selectedOrdinal` remains unchanged
+**And** `scrollOffset` is clamped to the derived visible row list.
+
+**Given** a filter change removes the currently selected ordinal but leaves matching rows
+**When** visible rows and selection are recomputed
+**Then** `selectedOrdinal` becomes the first visible row ordinal
+**And** the new selected row is stable by the current visible-row order.
+
+**Given** collision-only filtering is enabled from the initial frame
+**When** selection is recomputed
+**Then** `selectedOrdinal` becomes `2`
+**And** the previously selected ordinal `1` is not retained because it is hidden.
+
+**Given** collision-only filtering is active and filter text becomes `3`
+**When** selection is recomputed
+**Then** `selectedOrdinal` becomes `3`
+**And** the visible row list contains only ordinal `3`.
+
+**Given** filter text produces no matching rows
+**When** visible rows and selection are recomputed
+**Then** `visibleRows` is empty
+**And** `selectedOrdinal` is `None`.
+
+**Given** visible rows are empty in browsing mode
+**When** table body projection is derived
+**Then** one blank table body row is exposed below the table header
+**And** no row cursor is emitted.
+
+**Given** visible rows are empty in browsing mode
+**When** footer text is derived
+**Then** it renders `Error: no matching rows  ·  esc clear filter`
+**And** the footer still preserves clear-filter affordance.
+
+**Given** filter text is changed through insertion, deletion, or clear operations
+**When** the reducer updates filter state
+**Then** `filter.cursor` is clamped to a valid insertion offset
+**And** it is reset to `0` only when filter text is cleared by `Esc`.
+
+**Given** storyboard frame 13 is exercised by returning to browsing with filter `1` and typing `2`
+**When** tests inspect state and render metadata
+**Then** `filter.text = "12"`, no rows match, `selectedOrdinal` is `None`, and the empty-result body/footer are rendered.
