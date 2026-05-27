@@ -48,3 +48,15 @@ uv run pytest tests/
 
 The automated golden render and BDD behaviour tests are the authoritative
 acceptance checks. The demo command is a visual aid only.
+
+Golden render tests use **pyte** as a virtual terminal emulator: `screen.display`
+provides ANSI-stripped geometry for content assertions, and
+`screen.buffer[row][col].bold` / `.reverse` provide cell-level style assertions.
+Each frame also has a snapshot test that compares the full plain-text display
+against a committed reference file in `tests/golden/snapshots/`.
+
+To regenerate snapshots after an intentional renderer change:
+
+```
+uv run pytest tests/golden/ --update-snapshots
+```

@@ -1097,7 +1097,11 @@ user changes frame 14 to `Y` and presses `Enter`.
 ## 10. Golden-State Acceptance Tests
 
 All golden tests MUST assert app state, visible rows, prompt/footer, and render. Render assertions MUST
-strip ANSI for geometry and inspect style spans separately for bold, dim, and reverse-video.
+use a virtual terminal emulator (pyte) to separate geometry from style: geometry assertions use
+`screen.display` (ANSI-stripped), style assertions use pyte cell attributes (`bold`, `reverse`). SGR 2
+(dim/faint) is not tracked by pyte and MUST be verified by inspecting the raw ANSI output directly. Each
+frame MUST also have a snapshot test comparing the full plain-text display against a committed reference
+file; snapshots are regenerated with `pytest --update-snapshots`.
 
 ### 10.1 Frame Tests
 
