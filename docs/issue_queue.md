@@ -1,6 +1,8 @@
-### 6. The "confirm all" exit path (Y → ↵) is never shown
+### ~~6. The "confirm all" exit path (Y → ↵) is never shown~~ (resolved in storyboard and spec)
 
-The storyboard ends at Frame 14 (back to CONFIRMING with N). The state after pressing `↵` with Y selected — success screen, program exit, return value — is never depicted. This is a meaningful terminal state that's completely absent.
+~~The storyboard ends at Frame 14 (back to CONFIRMING with N). The state after pressing `↵` with Y selected — success screen, program exit, return value — is never depicted. This is a meaningful terminal state that's completely absent.~~
+
+Frame 15 was added to the storyboard: `11 commodities created. / ❯ / [blank lines]`. The arch spec golden-state table covers Frame 15 with `result.status=ACCEPTED` and the exact render assertions.
 
 ---
 
@@ -10,70 +12,84 @@ Frames 7b and 7c now show BROWSING with 0 collisions. Frame 1a adds a note: "Whe
 
 ---
 
-### 8. Collapsed display rule for multiple GnuCash sources
+### ~~8. Collapsed display rule for multiple GnuCash sources~~ (resolved in storyboard and spec)
 
-Row 1 appears in collapsed views (Frames 1, 6, 8, 14) as:
-```
-1   APPLE   user_symbol: "APPLE"
-```
-But Frame 9's expanded view reveals a **second source**: `cmdty_id: "AAPL"`. The rule for which source is displayed in the single-line collapsed column — and whether any indicator of additional sources exists — is never specified.
+~~Row 1 appears in collapsed views (Frames 1, 6, 8, 14) as:~~
+~~`1   APPLE   user_symbol: "APPLE"`~~
+~~But Frame 9's expanded view reveals a **second source**: `cmdty_id: "AAPL"`. The rule for which source is displayed in the single-line collapsed column — and whether any indicator of additional sources exists — is never specified.~~
 
----
-
-### 10. Arch spec uses generic labels inconsistent with storyboard
-
-Two concrete mismatches between the arch spec and every storyboard frame:
-- HeaderComponent template says `Reviewing {total} items.` — storyboard says "commodity mappings".
-- TableComponent header row says `Target Value` / `Source Data` — storyboard says `Beancount Token` / `GnuCash Source`.
+The storyboard consistently uses the default source (by `defaultSourceLabel`) in collapsed rows with no indicator of additional sources. The arch spec (§ Source Display) formalises the format: `{label}: "{originalValue}"` for plain values, `{label}: "{originalValue}" → "{sanitizedValue}"` for sanitized values, and `(not set)` for null. The current renderer predates this rule (Epic 1 only); later stories will implement it.
 
 ---
 
-### 11. `ctrl+s submit` shortcut is absent from the arch spec
+### ~~10. Arch spec uses generic labels inconsistent with storyboard~~ (resolved in spec)
 
-Frames 7b–13 all show `ctrl+s submit · ctrl+c cancel` in the header when collisions = 0. Frame 13 → 14 uses `ctrl+s` as the transition. The arch spec has no mention of `ctrl+s` anywhere — not in the keyboard routing matrix, not in RootLayout events, not in ShortcutsFooter templates. Required spec: trigger conditions (BROWSING/EDITING, collisions = 0), action (enter CONFIRMING with N pre-selected), and whether it is available or blocked during EDITING.
+~~Two concrete mismatches between the arch spec and every storyboard frame:~~
+~~- HeaderComponent template says `Reviewing {total} items.` — storyboard says "commodity mappings".~~
+~~- TableComponent header row says `Target Value` / `Source Data` — storyboard says `Beancount Token` / `GnuCash Source`.~~
 
----
-
-### 12. ctrl+c skip-confirmation state (Frame 1b) is absent from the arch spec
-
-Frame 1b shows a new CONFIRMING-like state triggered by `ctrl+c`: prompt is `Skip adding commodities? [y/*N*]`, scrollable table, footer `↑↓ scroll · shift+↑↓ pageup/dn · ↵ edit mappings`. This is a second "confirm" variant distinct from the "Accept all?" CONFIRMING mode in every way — different prompt, different default boolean (N not Y), different Y outcome (exit without saving). None of this is described in the arch spec. Pressing `ctrl+c` a second time in this state sends SIGINT.
+The arch spec header template now reads `❯ Reviewing {total} {entityNameSingular} {mappingNounPlural}.` and the table header uses `{targetColumnLabel}` / `{sourceColumnLabel}`. The implementation reads these from `AppConfig`; labels are caller-supplied, not hardcoded.
 
 ---
 
-### 13. FILTERING mode is deprecated but still present in the arch spec
+### ~~11. `ctrl+s submit` shortcut is absent from the arch spec~~ (resolved in spec)
 
-Per the updated storyboard, filtering is live within BROWSING mode — the table reacts as the user types with no `↵`-gated mode transition. There is no separate `FILTERING` AppMode. The arch spec still has `FILTERING` as an enum value with its own full keyboard routing section. The entire FILTERING routing block must be removed and its behaviors absorbed into BROWSING. Key changes: filter input mutates `filterQuery` live; `↵` in BROWSING goes directly to EDITING (not FILTERING); `esc` clears filter and stays in BROWSING; the `esc → CONFIRMING` rule is removed.
+~~Frames 7b–13 all show `ctrl+s submit · ctrl+c cancel` in the header when collisions = 0. Frame 13 → 14 uses `ctrl+s` as the transition. The arch spec has no mention of `ctrl+s` anywhere — not in the keyboard routing matrix, not in RootLayout events, not in ShortcutsFooter templates.~~
 
----
-
-### 14. ShortcutsFooter templates don't match storyboard
-
-All six templates in the arch spec ShortcutsFooter differ from the storyboard. Representative gaps:
-- Arch spec BROWSING: `Type to filter · ↑↓ prev/next page · ↵ select row` — storyboard: `shift+↑↓ pageup/dn · ↵ edit selected`
-- Arch spec Confirming (Y): `↑↓ prev/next page · ↵ confirm` — storyboard: `↑↓ scroll · shift+↑↓ pageup/dn · ↵ confirm`
-- "Type to filter" appears in both arch spec BROWSING/FILTERING templates but never in any storyboard frame.
+`ctrl+s` is now fully specified in the arch spec: keyboard routing matrix (`BROWSING` → `CONFIRMING` when `unresolvedCollisionCount == 0`, no-op otherwise), header template for the zero-collision case, and readline-conflict note.
 
 ---
 
-### 15. `▸` cursor semantics in BROWSING contradict the arch spec
+### ~~12. ctrl+c skip-confirmation state (Frame 1b) is absent from the arch spec~~ (resolved in spec)
 
-Arch spec: `selectedIndex: number | null (null when Props.mode is BROWSING or CONFIRMING)`. But Frames 1a, 7b, 7c all show `▸` in BROWSING and the transition 7b → 7c uses plain `↑` to move it by one row. `selectedIndex` must be a non-null tracked value in BROWSING. The arch spec navigation event description also only says BROWSING "paginates scrollOffset" and makes no mention of per-row cursor movement.
+~~Frame 1b shows a new CONFIRMING-like state triggered by `ctrl+c`... None of this is described in the arch spec.~~
 
----
-
-### 16. Filter hint ghost-text mechanism is unspecified in the arch spec
-
-Three distinct filter prompt states are visible in the storyboard but none are fully described in the arch spec:
-
-1. Empty filter, collisions > 0: `T` of "Tab to view collisions" is in reverse-video (acting as a cursor hint).
-2. Empty filter, collisions = 0: `T` of "Type to filter" is in reverse-video.
-3. Metafilter prefix typed (e.g. `!`): prefix renders normally, then `T` of "Type to filter" is in reverse-video.
-
-The arch spec PromptComponent defines only one static BROWSING template and one active FILTERING template (which is now moot). The ghost-text hint mechanism, the collision-count-dependent hint variants, and the cursor-char-as-first-hint-char pattern are all undocumented.
+Frame 1b is now in the arch spec golden-state table as `CONFIRMING EXIT, choice NO, secondCtrlCArmed=true`, with `Skip adding commodities? [y/*N*]` prompt, scroll-only table, `↵ edit mappings` footer, and second `ctrl+c` → SIGINT behaviour.
 
 ---
 
-### 17. BROWSING `↑↓` row navigation is missing from the ShortcutsFooter
+### ~~13. FILTERING mode is deprecated but still present in the arch spec~~ (resolved in spec)
 
-BROWSING footer in all frames shows only `shift+↑↓ pageup/dn`. But transition 7b → 7c uses plain `↑` (no shift) to move `▸` up one row. Plain `↑↓` is a valid, functional key in BROWSING for per-row cursor movement, but it is not advertised in the footer. Confirm whether this is intentional (undocumented power-user key) or an oversight in the footer template.
+~~Per the updated storyboard, filtering is live within BROWSING mode... The arch spec still has `FILTERING` as an enum value with its own full keyboard routing section.~~
 
+`FILTERING` has been fully removed from the arch spec. Printable character input in `BROWSING` now inserts directly into `filter.text`; `↵` goes to `EDITING`; `esc` clears filter and stays in `BROWSING`.
+
+---
+
+### ~~14. ShortcutsFooter templates don't match storyboard~~ (resolved in spec)
+
+~~All six templates in the arch spec ShortcutsFooter differ from the storyboard.~~
+
+The arch spec footer table now matches the storyboard:
+- Browsing, inactive/empty filter: `shift+↑↓ pageup/dn  ·  ↵ edit selected`
+- Browsing, active filter with rows: `shift+↑↓ pageup/dn  ·  ↵ edit selected  ·  esc clear filter`
+- Browsing, active filter, no rows: `Error: no matching rows  ·  esc clear filter`
+- Confirming (YES): `↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ confirm`
+- Confirming (NO): `↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ edit mappings`
+
+---
+
+### ~~15. `▸` cursor semantics in BROWSING contradict the arch spec~~ (resolved in spec)
+
+~~Arch spec: `selectedIndex: number | null (null when Props.mode is BROWSING or CONFIRMING)`. But Frames 1a, 7b, 7c all show `▸` in BROWSING...~~
+
+The arch spec now states `▸` renders on the BROWSING selected row; `selectedOrdinal` is a non-null tracked value in `BROWSING`. Row cursor semantics are specified in the layout table.
+
+---
+
+### ~~16. Filter hint ghost-text mechanism is unspecified in the arch spec~~ (resolved in spec)
+
+~~Three distinct filter prompt states are visible in the storyboard but none are fully described in the arch spec.~~
+
+The arch spec prompt table now covers all three states:
+1. Empty filter, collisions > 0: `Tab to view collisions` with `T` reverse-video and remainder dim
+2. Empty filter, collisions = 0: `Type to filter` with `T` reverse-video and remainder dim
+3. Metafilter only (`!`): `!Type to filter` with only `T` reverse-video and remainder dim
+
+---
+
+### ~~17. BROWSING `↑↓` row navigation is missing from the ShortcutsFooter~~ (resolved by design)
+
+~~BROWSING footer in all frames shows only `shift+↑↓ pageup/dn`. But transition 7b → 7c uses plain `↑` (no shift) to move `▸` up one row.~~
+
+Plain `↑↓` is intentionally absent from the footer — it is an undocumented power-user shortcut. The keyboard routing matrix specifies the behaviour; the footer template deliberately omits it to keep the hint line minimal.
