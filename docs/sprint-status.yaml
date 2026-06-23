@@ -1,0 +1,188 @@
+# sprint-status.yaml
+# Epic 2 — Browse, Filter, and Navigate Mappings
+# Drop into: docs/sprint-status.yaml
+# Updated: 2026-06-25
+
+schema_version: 1
+
+epic:
+  id: 2
+  title: Browse, Filter, and Navigate Mappings
+  spec_ref: docs/tui_architecture_spec.md
+  storyboard_ref: docs/tui_interaction_storyboard.md
+  functional_requirements: [FR9, FR10, FR11, FR12, FR13, FR14, FR28, FR29, FR30]
+
+sprint: 1
+# status values: todo | in_progress | done | blocked
+
+tasks:
+
+  - key: TASK-001
+    type: task
+    title: Wire action dispatch infrastructure
+    status: todo
+    assignee: null
+    depends_on: []
+    files:
+      - mapping_resolution_tui/actions.py
+      - mapping_resolution_tui/reducer.py
+      - mapping_resolution_tui/loop.py
+    summary: >
+      Establish the Redux-style dispatch plumbing that all Epic 2 stories
+      depend on. Currently actions.py is an empty stub, reducer.py only
+      contains make_initial_state(), and loop.py prints a static frame
+      with no input handling.
+    acceptance_criteria:
+      - "actions.py defines action dataclasses for all browsing-mode filter
+        operations: character insertion, cursor movement (left/right),
+        collision-only toggle, and filter clear"
+      - "reducer.py exposes a reduce(state: AppState, action) -> AppState
+        dispatch function that delegates to per-action handlers and returns
+        a new immutable state"
+      - "loop.py implements a blocking event loop: read keypress → normalise
+        readline-style aliases → dispatch action → re-derive state via
+        selectors → re-render"
+      - "Unsupported keys and unrecognised control sequences leave state and
+        rendered output unchanged (FR30)"
+      - "Loop exits cleanly on the configured quit key"
+    implementation_notes:
+      - "All state mutations must return new frozen dataclasses — no in-place
+        mutation"
+      - "Readline alias normalisation (e.g. ctrl+b → cursor-left) belongs in
+        the input layer before the action is constructed (FR29)"
+      - "FilterState.raw must be kept in sync with collision_only + text on
+        every mutation; select_filter_prompt already reads it for the leading
+        ! rendering"
+      - "This task is a prerequisite for all three Epic 2 stories; implement
+        first or in parallel with writing the BDD step stubs"
+
+  - key: TASK-002
+    type: story
+    title: Text filter input with cursor and match highlights
+    status: todo
+    assignee: null
+    depends_on: [TASK-001]
+    functional_requirements: [FR9, FR11]
+    files:
+      - mapping_resolution_tui/reducer.py
+      - mapping_resolution_tui/renderer.py
+    golden_frames:
+      - frame_8  # filter text "1"; rows 1, 4, 10, 11 visible; bold spans; single-char input proven
+    user_story: >
+      As a reviewer, I want to type a text filter that matches mapping
+      ordinals and target tokens only, so that I can quickly narrow the
+      review list without source values creating false matches.
+    acceptance_criteria:
+      - "Typing a printable character in BROWSING mode inserts it into
+        filter.text at the cursor position and advances the cursor by 1"
+      - "Left/right arrow (and readline aliases ctrl+b / ctrl+f) move
+        filter.cursor within filter.text, clamped to [0, len(filter.text)]"
+      - "Backspace / ctrl+h removes the character before the cursor when
+        filter.text is non-empty and the cursor is > 0"
+      - "select_visible_rows filters by ordinal string and current target
+        token value, ASCII case-insensitively; source labels, sanitised
+        values, and effective values are excluded from matching"
+      - "Non-overlapping matched spans in the ordinal display and target
+        token cell are exposed as bold highlight metadata in rendered output
+        (frame 3: ordinal 3 and token AT-T bold when filter is 3)"
+      - "Filter cursor position is reflected in the rendered filter prompt
+        (cursor block appears at the correct character offset)"
+      - "Golden frame frame_8 committed: filter text '1' active, rows 1, 4
+        (token C100-F), 10, 11 visible with correct bold highlight spans;
+        demonstrates single-character input, row narrowing, and highlight
+        metadata in a collision-free dataset"
+      - "All existing golden tests continue to pass"
+    definition_of_done:
+      - "Feature is implemented and tested"
+      - "BDD scenario for text filtering passes (step definitions wired to
+        action dispatch)"
+      - "Golden frame frame_8 committed and passing under uv run pytest"
+
+  - key: TASK-003
+    type: story
+    title: Collision-only metafilter toggle and filter clear
+    status: todo
+    assignee: null
+    depends_on: [TASK-001]
+    functional_requirements: [FR10]
+    files:
+      - mapping_resolution_tui/reducer.py
+      - mapping_resolution_tui/renderer.py
+    golden_frames:
+      - frame_2         # Tab pressed from 1a; collision-only active; rows 2 and 3 visible
+      - frame_esc_clear # Esc from filtered state; all rows restored; identical to frame_1a
+    user_story: >
+      As a reviewer, I want to quickly switch to collision-only rows and
+      clear all active filters, so that I can focus on what needs resolving
+      without manual scrolling or re-typing.
+    acceptance_criteria:
+      - "Pressing Tab toggles filter.collision_only from False to True (and
+        back); no character is inserted into filter.text"
+      - "Typing ! in BROWSING mode toggles filter.collision_only without
+        inserting a literal ! into filter.text"
+      - "When collision_only is True, the filter prompt renders a leading !
+        before the ghost text (frame 2: Filter: !*T*__ype to filter__)"
+      - "Pressing Esc in BROWSING mode clears both filter.collision_only and
+        filter.text, resetting filter.cursor to 0"
+      - "When filter.text is empty and filter.cursor is 0, pressing Backspace
+        (or ctrl+h alias) toggles filter.collision_only to False rather than
+        attempting to delete a character"
+      - "When both collision_only and filter.text are active, only unresolved
+        collision rows matching the text are shown (storyboard frame 3)"
+      - "FilterState.raw is kept in sync: ! prefix when collision_only,
+        followed by filter.text"
+      - "Golden frame frame_2 committed: Tab from frame_1a, collision-only
+        active, rows 2 and 3 visible"
+      - "Golden frame frame_esc_clear committed: filter fully cleared, all
+        rows restored, output identical to frame_1a"
+      - "All existing golden tests continue to pass"
+    definition_of_done:
+      - "Feature is implemented and tested"
+      - "BDD scenario for collision-only toggle and Esc clear passes"
+      - "Golden frames frame_2 and frame_esc_clear committed and passing
+        under uv run pytest"
+
+  - key: TASK-004
+    type: story
+    title: Selection clamping and empty-result rendering
+    status: todo
+    assignee: null
+    depends_on: [TASK-001]
+    functional_requirements: [FR12, FR13]
+    files:
+      - mapping_resolution_tui/selectors.py
+      - mapping_resolution_tui/renderer.py
+    golden_frames:
+      - frame_3    # collision-only + text "3"; ordinal 3 selected and highlighted
+      - frame_13   # no-match state; blank body row; error footer
+    user_story: >
+      As a reviewer, I want selection to remain predictable when filters
+      change or match nothing, so that browsing never points at a hidden
+      row or an invalid mapping.
+    acceptance_criteria:
+      - "When a filter change leaves the currently selected ordinal visible,
+        selectedOrdinal is unchanged"
+      - "When a filter change removes the selected ordinal but other rows
+        remain, selectedOrdinal clamps to the first visible row's ordinal"
+      - "When collision-only is toggled on from frame_1a (ordinal 1 selected),
+        selectedOrdinal becomes 2 (first collision row), not 1"
+      - "When collision-only is active and filter.text becomes 3,
+        selectedOrdinal becomes 3; only ordinal 3 is visible (frame 3)"
+      - "When a filter produces no matching rows, visibleRows is empty and
+        selectedOrdinal is None"
+      - "When visibleRows is empty in BROWSING mode, one blank table body
+        row is rendered below the header with no row cursor"
+      - "The footer renders 'Error: no matching rows  ·  esc clear filter'
+        when visibleRows is empty (storyboard frame 13)"
+      - "filter.cursor is clamped to a valid insertion offset after any
+        filter.text mutation; reset to 0 only when text is cleared by Esc"
+      - "Golden frame frame_3 committed: collision-only + text filter 3
+        active, ordinal 3 selected and highlighted"
+      - "Golden frame frame_13 committed: no-match state, blank body row,
+        error footer"
+      - "All existing golden tests continue to pass"
+    definition_of_done:
+      - "Feature is implemented and tested"
+      - "BDD scenario for selection clamping and empty results passes"
+      - "Golden frames frame_3 and frame_13 committed and passing under
+        uv run pytest"
