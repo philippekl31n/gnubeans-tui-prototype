@@ -1,254 +1,229 @@
 # sprint-status.yaml
-# Epic 2 — Browse, Filter, and Navigate Mappings
-# Drop into: docs/sprint-status.yaml
-# Updated: 2026-06-25
-#
-# NOTE (2026-06-25): aligned with the reworked render layout contract
-# (tui_architecture_spec.md S6.1/S6.2/S6.7, S8). The frame is a variable-height
-# inline render, not a fixed 15x75 grid: it ends at the footer with no trailing
-# blank padding, and scrolling engages only when content+chrome overflows the
-# host terminal. Golden snapshots for the under-full browsing frames referenced
-# below (frame_2, frame_3, frame_8, frame_13, frame_esc_clear) MUST be captured
-# against this contract.
+# Epic 3 — Edit Target Tokens and Resolve Collisions
+# Drop into: docs/sprint-status-epic3.yaml
+# Updated: 2026-06-24
 
 schema_version: 1
 
 epic:
-  id: 2
-  title: Browse, Filter, and Navigate Mappings
+  id: 3
+  title: Edit Target Tokens and Resolve Collisions
   spec_ref: docs/tui_architecture_spec.md
   storyboard_ref: docs/tui_interaction_storyboard.md
-  functional_requirements: [FR9, FR10, FR11, FR12, FR13, FR14, FR28, FR29, FR30]
+  functional_requirements: [FR8, FR15, FR16, FR17, FR18, FR19, FR20, FR21, FR22, FR23]
 
 sprint: 1
 # status values: todo | in_progress | done | blocked
+# prerequisite: TASK-001 (Epic 2 dispatch infrastructure) must be complete
 
 tasks:
 
-  - key: TASK-001
+  - key: TASK-005
     type: task
-    title: Wire action dispatch infrastructure
-    status: done
+    title: Add edit-mode selectors for ghost text, concrete value, and source pointer
+    status: todo
     assignee: null
     depends_on: []
     files:
-      - mapping_resolution_tui/actions.py
-      - mapping_resolution_tui/reducer.py
-      - mapping_resolution_tui/loop.py
+      - mapping_resolution_tui/selectors.py
     summary: >
-      Establish the Redux-style dispatch plumbing that all Epic 2 stories
-      depend on. Currently actions.py is an empty stub, reducer.py only
-      contains make_initial_state(), and loop.py prints a static frame
-      with no input handling.
+      Add the edit-specific derived-state functions that the renderer and
+      reducer will call during EDITING mode. Existing selectors cover
+      browsing-mode derivation only; none address the edit buffer ghost
+      suffix, rendered display value, validation input, or source pointer
+      autofill. Prerequisite for all three Epic 3 stories.
     acceptance_criteria:
-      - "actions.py defines action dataclasses for all browsing-mode filter
-        operations: character insertion, cursor movement (left/right),
-        collision-only toggle, and filter clear"
-      - "reducer.py exposes a reduce(state: AppState, action) -> AppState
-        dispatch function that delegates to per-action handlers and returns
-        a new immutable state"
-      - "loop.py implements a blocking event loop: read keypress → normalise
-        readline-style aliases → dispatch action → re-derive state via
-        selectors → re-render"
-      - "Unsupported keys and unrecognised control sequences leave state and
-        rendered output unchanged (FR30)"
-      - "Loop exits cleanly on the configured quit key"
+      - "select_ghost_suffix(state, mapping) returns the remaining suffix of
+        the default source value when: mapping.targetValue is None,
+        edit.cursor == len(edit.buffer), and edit.buffer is a case-sensitive
+        prefix of the default source effective value; returns '' otherwise (FR17)"
+      - "select_concrete_value(state, mapping) returns edit.buffer if
+        non-empty, else the default source effective value; this is the single
+        value passed to targetPolicy.validate() and committed on submit (FR22)"
+      - "select_source_pointer_value(state, mapping) returns the effective
+        value of the source at edit.source_pointer_index within
+        select_active_sources(mapping), or None when source_pointer_index
+        is None (FR21)"
+      - "select_edit_render_row(state, mapping) returns a dataclass with
+        everything the renderer needs for the expanded edit row: buffer text,
+        ghost suffix, cursor offset, validation icon and error message, focus
+        region, and visible sources with pointer indicator position"
+      - "All functions are pure, accept frozen state, return new objects or
+        primitives — no side effects"
+      - "All functions covered by unit tests"
     implementation_notes:
-      - "All state mutations must return new frozen dataclasses — no in-place
-        mutation"
-      - "Readline alias normalisation (e.g. ctrl+b → cursor-left) belongs in
-        the input layer before the action is constructed (FR29)"
-      - "FilterState.raw must be kept in sync with collision_only + text on
-        every mutation; select_filter_prompt already reads it for the leading
-        ! rendering"
-      - "This task is a prerequisite for all three Epic 2 stories; implement
-        first or in parallel with writing the BDD step stubs"
+      - "Ghost suffix must handle the empty-buffer case: when edit.buffer is
+        empty and mapping.targetValue is None, the full default source value
+        is the ghost suffix"
+      - "select_concrete_value is the single source of truth — do not
+        replicate its logic in the reducer submit handler"
+      - "select_active_sources is already implemented; select_source_pointer_value
+        should delegate to it rather than re-filtering"
+      - "select_edit_render_row should be the only selector the renderer calls
+        for the expanded row — keep rendering logic out of the selector itself"
 
-  - key: TASK-002
+  - key: TASK-006
     type: story
-    title: Text filter input with cursor and match highlights
+    title: Enter edit mode and type with ghost text and validation
     status: todo
     assignee: null
-    depends_on: [TASK-001]
-    functional_requirements: [FR9, FR11, FR29]
-    files:
-      - mapping_resolution_tui/actions.py
-      - mapping_resolution_tui/reducer.py
-      - mapping_resolution_tui/renderer.py
-      - mapping_resolution_tui/loop.py
-    golden_frames:
-      - frame_8  # filter text "1"; rows 1, 4, 10, 11 visible; bold spans; single-char input proven
-    user_story: >
-      As a reviewer, I want to type a text filter that matches mapping
-      ordinals and target tokens only, so that I can quickly narrow the
-      review list without source values creating false matches.
-    acceptance_criteria:
-      - "Typing a printable character in BROWSING mode inserts it into
-        filter.text at the cursor position and advances the cursor by 1"
-      - "Left/right arrow (and readline aliases ctrl+b / ctrl+f) move
-        filter.cursor within filter.text, clamped to [0, len(filter.text)]"
-      - "Backspace / ctrl+h removes the character before the cursor when
-        filter.text is non-empty and the cursor is > 0"
-      - "Home / ctrl+a moves filter.cursor to 0; End / ctrl+e moves it to
-        len(filter.text) (readline beginning-of-line / end-of-line) — the
-        line-editing portion of FR9"
-      - "Delete / ctrl+d removes the character at filter.cursor (forward
-        delete-char) and is a no-op when the cursor is at the end of
-        filter.text"
-      - "ctrl+k deletes from filter.cursor through the end of filter.text
-        (kill-line); ctrl+u deletes from the start of filter.text through the
-        cursor and resets filter.cursor to 0 (unix-line-discard)"
-      - "ctrl+w / meta+backspace deletes the previous word before the cursor
-        and meta+d deletes the next word from the cursor, using ASCII word
-        boundaries wordChar = [A-Za-z0-9_-] (spec S5.1)"
-      - "Every line-editing mutation re-runs the post-mutation sequence: clamp
-        filter.cursor to [0, len(filter.text)], re-sync filter.raw, re-derive
-        visible rows, and clamp selection (spec S5.1)"
-      - "The input layer normalises the readline aliases ctrl+a, ctrl+e,
-        ctrl+d, ctrl+k, ctrl+u, ctrl+w (and meta+d / meta+backspace) to these
-        actions before dispatch (FR29), completing the browsing-filter
-        line-editing aliases on the spec S5.1 must-test list"
-      - "No-op readline families leave filter state and rendered output
-        unchanged, with at least one test per family: abort (ctrl+g),
-        quoted-insert (ctrl+q / ctrl+v), undo (ctrl+_), transpose (ctrl+t),
-        yank (ctrl+y), reverse-search (ctrl+r); ctrl+l re-renders only and
-        MUST NOT mutate state (spec S5.1)"
-      - "select_visible_rows filters by ordinal string and current target
-        token value, ASCII case-insensitively; source labels, sanitised
-        values, and effective values are excluded from matching"
-      - "Non-overlapping matched spans in the ordinal display and target
-        token cell are exposed as bold highlight metadata in rendered output
-        (frame 3: ordinal 3 and token AT-T bold when filter is 3)"
-      - "Filter cursor position is reflected in the rendered filter prompt
-        (cursor block appears at the correct character offset)"
-      - "Golden frame frame_8 committed: filter text '1' active, rows 1, 4
-        (token C100-F), 10, 11 visible with correct bold highlight spans;
-        demonstrates single-character input, row narrowing, and highlight
-        metadata in a collision-free dataset"
-      - "frame_8 is an under-full state (4 rows): the rendered frame ends at
-        the footer with no trailing blank padding below it, per the
-        variable-height layout contract (spec S6.1/S6.2)"
-      - "All existing golden tests continue to pass"
-    definition_of_done:
-      - "Feature is implemented and tested"
-      - "BDD scenario for text filtering passes (step definitions wired to
-        action dispatch)"
-      - "Readline line-editing aliases (ctrl+a / ctrl+e / ctrl+d / ctrl+k /
-        ctrl+u / ctrl+w, meta+d / meta+backspace) and one no-op-per-family
-        test pass under uv run pytest (spec S5.1 must-test coverage)"
-      - "Golden frame frame_8 committed and passing under uv run pytest"
-
-  - key: TASK-003
-    type: story
-    title: Collision-only metafilter toggle and filter clear
-    status: done
-    assignee: philippekl31n
-    depends_on: [TASK-001]
-    functional_requirements: [FR10]
+    depends_on: [TASK-001, TASK-005]
+    functional_requirements: [FR15, FR17, FR18, FR19, FR20]
     files:
       - mapping_resolution_tui/reducer.py
       - mapping_resolution_tui/renderer.py
     golden_frames:
-      - frame_2         # Tab pressed from 1a; collision-only active; rows 2 and 3 visible
-      - frame_esc_clear # Esc from filtered state; all rows restored; identical to frame_1a
+      - frame_4   # Enter from filtered browsing; empty buffer; ghost text; reverse-video cursor
+      - frame_5   # Valid buffer "ATT" with checkmark; submit hint in footer
+      - frame_9   # Editing "APPLE" mapping with ghost suffix streaming
+      - frame_10  # Invalid input "44PL"; error icon; error message
+      - frame_11  # 24-character buffer; max-length flash error
     user_story: >
-      As a reviewer, I want to quickly switch to collision-only rows and
-      clear all active filters, so that I can focus on what needs resolving
-      without manual scrolling or re-typing.
+      As a reviewer, I want to enter edit mode on a selected mapping and
+      type a replacement token with live ghost text and validation feedback,
+      so that I can confidently set or correct a target value before
+      submitting.
     acceptance_criteria:
-      - "Pressing Tab toggles filter.collision_only from False to True (and
-        back); no character is inserted into filter.text"
-      - "Typing ! in BROWSING mode toggles filter.collision_only without
-        inserting a literal ! into filter.text"
-      - "When collision_only is True, the filter prompt renders a leading !
-        before the ghost text (frame 2: Filter: !*T*__ype to filter__)"
-      - "Pressing Esc in BROWSING mode clears both filter.collision_only and
-        filter.text, resetting filter.cursor to 0"
-      - "When filter.text is empty and filter.cursor is 0, pressing Backspace
-        (or ctrl+h alias) toggles filter.collision_only to False rather than
-        attempting to delete a character"
-      - "When both collision_only and filter.text are active, only unresolved
-        collision rows matching the text are shown (storyboard frame 3)"
-      - "FilterState.raw is kept in sync: ! prefix when collision_only,
-        followed by filter.text"
-      - "Golden frame frame_2 committed: Tab from frame_1a, collision-only
-        active, rows 2 and 3 visible"
-      - "Golden frame frame_esc_clear committed: filter fully cleared, all
-        rows restored, output identical to frame_1a"
-      - "frame_2 is an under-full state (2 rows): the rendered frame ends at
-        the footer with no trailing blank padding below it (spec S6.1/S6.2);
-        frame_esc_clear matches the updated frame_1a, including its corrected
-        single-space-shorter footer hint indent"
+      - "Pressing Enter in BROWSING mode transitions to EDITING: mode =
+        EDITING, edit.mapping_ordinal = selected ordinal, edit.buffer = ''
+        when mapping.targetValue is None else edit.buffer = mapping.targetValue,
+        edit.cursor = len(edit.buffer), edit.focus_region = TOKEN_INPUT,
+        edit.source_pointer_index = None, edit.source_entry_buffer = None (FR15)"
+      - "Ghost suffix rendered when buffer is a prefix of the default source
+        value at cursor end and no literal target override exists; disappears
+        as soon as the buffer deviates from the default (FR17)"
+      - "Printable character inserted at cursor position, cursor advances by
+        1, ghost suffix and validation recomputed on every keystroke (FR18)"
+      - "Invalid printable characters (per targetPolicy) insert into the
+        buffer, set validation.status = INVALID with error icon and error
+        message, and gate the submit key (FR19)"
+      - "Over-limit characters are discarded; edit.max_length_flash_until set
+        to now + flash_duration; flash error renders immediately;
+        max_length_flash_until clears on next accepted edit change or mode
+        exit (FR20)"
+      - "Backspace removes the character before the cursor when focus_region
+        = TOKEN_INPUT and edit.buffer is non-empty; cursor decrements by 1"
+      - "Readline aliases for cursor movement and deletion (ctrl+a, ctrl+e,
+        ctrl+k, ctrl+u, ctrl+b, ctrl+f, ctrl+h) behave as specified in FR18"
+      - "Golden frame frame_4 committed: Enter from filtered browsing state,
+        empty buffer, ghost text visible, reverse-video cursor, row expanded,
+        surrounding rows super-dim"
+      - "Golden frame frame_5 committed: valid buffer ATT with checkmark icon,
+        submit hint added to footer"
+      - "Golden frame frame_9 committed: editing APPLE mapping with ghost
+        suffix streaming"
+      - "Golden frame frame_10 committed: invalid input 44PL, error icon,
+        error 'Error: must start with A-Z'"
+      - "Golden frame frame_11 committed: 24-character buffer, max-length
+        flash 'Error: 24 chars max'"
       - "All existing golden tests continue to pass"
     definition_of_done:
       - "Feature is implemented and tested"
-      - "BDD scenario for collision-only toggle and Esc clear passes"
-      - "Golden frames frame_2 and frame_esc_clear committed and passing
-        under uv run pytest"
+      - "BDD scenario for edit mode entry and typed input passes (step
+        definitions wired to action dispatch)"
+      - "Golden frames frame_4, frame_5, frame_9, frame_10, frame_11
+        committed and passing under uv run pytest"
 
-  - key: TASK-004
+  - key: TASK-007
     type: story
-    title: Selection clamping, browsing navigation, and empty-result rendering
-    status: done
-    assignee: philippekl31n
-    depends_on: [TASK-001]
-    functional_requirements: [FR12, FR13, FR14]
+    title: Navigate alternative sources and autofill the edit buffer
+    status: todo
+    assignee: null
+    depends_on: [TASK-001, TASK-005]
+    functional_requirements: [FR21]
     files:
-      - mapping_resolution_tui/actions.py
+      - mapping_resolution_tui/reducer.py
+      - mapping_resolution_tui/renderer.py
+    golden_frames:
+      - frame_12a  # Source pointer on first source; buffer matches source value; checkmark
+      - frame_12b  # Source pointer on second source; buffer updated to match
+    user_story: >
+      As a reviewer, I want to navigate the list of available sources and
+      autofill my edit buffer from the selected source's effective value,
+      so that I can quickly choose an established token without re-typing.
+    acceptance_criteria:
+      - "Pressing down-arrow from focus_region = TOKEN_INPUT saves edit.buffer
+        to edit.source_entry_buffer, sets source_pointer_index to first active
+        source index, sets focus_region = SOURCE_LIST, and autofills
+        edit.buffer with that source's effective value; validation
+        recomputed (FR21)"
+      - "Pressing up-arrow from TOKEN_INPUT saves buffer to source_entry_buffer,
+        sets source_pointer_index to last active source index, sets
+        focus_region = SOURCE_LIST, and autofills buffer; validation
+        recomputed (FR21)"
+      - "Up/down within SOURCE_LIST moves source_pointer_index through active
+        sources with wrapping; buffer autofilled from pointed source effective
+        value and validation recomputed on every move (FR21)"
+      - "Moving up past the first source (or down past the last) restores
+        source_entry_buffer to edit.buffer, clears source_pointer_index and
+        source_entry_buffer, and returns focus_region to TOKEN_INPUT (FR21)"
+      - "Typing a printable character or pressing Backspace while in
+        SOURCE_LIST exits source navigation: clears source_pointer_index and
+        source_entry_buffer, applies the character edit to edit.buffer as a
+        TOKEN_INPUT operation, returns focus_region = TOKEN_INPUT, and
+        revalidates (FR21)"
+      - "Source pointer indicator rendered in source column next to active
+        source; un-pointed sources render without indicator"
+      - "Golden frame frame_12a committed: pointer on first source
+        (cmdty_id: 'AAPL'), buffer matches source value, checkmark icon"
+      - "Golden frame frame_12b committed: pointer on second source
+        (user_symbol: 'APPLE'), buffer updated to match"
+      - "All existing golden tests continue to pass"
+    definition_of_done:
+      - "Feature is implemented and tested"
+      - "BDD scenario for source list navigation and autofill passes"
+      - "Golden frames frame_12a and frame_12b committed and passing under
+        uv run pytest"
+
+  - key: TASK-008
+    type: story
+    title: Submit or cancel an edit with filter preservation and live collision resolution
+    status: todo
+    assignee: null
+    depends_on: [TASK-001, TASK-005]
+    functional_requirements: [FR8, FR16, FR22, FR23]
+    files:
       - mapping_resolution_tui/reducer.py
       - mapping_resolution_tui/selectors.py
       - mapping_resolution_tui/renderer.py
-      - mapping_resolution_tui/loop.py
     golden_frames:
-      - frame_3    # collision-only + text "3"; ordinal 3 selected and highlighted
-      - frame_13   # no-match state; single blank body row; error footer; frame ends at footer, no filler rows
+      - frame_esc_from_edit   # Esc returns to pre-edit browsing frame with filter intact
+      - frame_submit_no_resolution  # Valid submit; returns to BROWSING; row updated; collisions recalculated
     user_story: >
-      As a reviewer, I want selection to remain predictable when filters
-      change or match nothing, so that browsing never points at a hidden
-      row or an invalid mapping.
+      As a reviewer, I want submitting or cancelling an edit to return me
+      to my browsing context with filters intact, and for collision
+      indicators to update live as I type, so that I always know whether
+      my edit resolves an outstanding conflict.
     acceptance_criteria:
-      - "When a filter change occurs, selectedOrdinal clamps to the first
-        visible row's ordinal and scrollOffset is reset to 0"
-      - "When collision-only is toggled on from frame_1a (ordinal 1 selected),
-        selectedOrdinal becomes 2 (first collision row), not 1"
-      - "When collision-only is active and filter.text becomes 3,
-        selectedOrdinal becomes 3; only ordinal 3 is visible (frame 3)"
-      - "Up / down arrows move selectedOrdinal by -1 / +1 within visibleRows,
-        clamped at the first and last visible row (FR14 row movement)"
-      - "Shift+up / Shift+down, PgUp / PgDn, and readline aliases ctrl+p / ctrl+n
-        page the view by the current non-editing body capacity; PgDn/ctrl+n clamps
-        scrollOffset to maxScrollOffset = max(0, len(visibleRows) - 1) and PgUp/ctrl+p
-        clamps to 0. If already on the first/last page, paging moves the selected
-        row to the first/last row without scrolling further (FR14 page movement;
-        spec S8.5)"
-      - "Browsing row movement uses standard viewport scrolling: the row cursor
-        moves within the scrollOffset window and the window scrolls only enough
-        to keep the selected row visible (no anchor-high pinning) (spec S8.2/S8.3)"
-      - "Page-key portability: PgUp / PgDn perform page movement even when the
-        terminal cannot distinguish Shift+arrows from plain arrows, and
-        indistinguishable plain arrows still move exactly one row (spec S5)"
-      - "When a filter produces no matching rows, visibleRows is empty and
-        selectedOrdinal is None"
-      - "When visibleRows is empty in BROWSING mode, one blank table body
-        row is rendered below the header with no row cursor"
-      - "The footer renders 'Error: no matching rows  ·  esc clear filter'
-        when visibleRows is empty (storyboard frame 13)"
-      - "The empty-result frame is variable-height and ends at the footer: it
-        is the single blank body row, the separator, and the footer with NO
-        blank filler rows padded below the footer or to the terminal bottom
-        (reworked spec S6.1/S6.2; frame_13 no longer renders trailing blanks)"
-      - "filter.cursor is clamped to a valid insertion offset after any
-        filter.text mutation; reset to 0 only when text is cleared by Esc"
-      - "Golden frame frame_3 committed: collision-only + text filter 3
-        active, ordinal 3 selected and highlighted"
-      - "Golden frame frame_13 committed: no-match state, blank body row,
-        error footer"
+      - "Pressing Enter when edit.validation.status = VALID and edit.buffer
+        is non-empty commits edit.buffer literally to mapping.targetValue
+        and exits EDITING (FR22)"
+      - "If the committed edit resolves the final collision
+        (select_unresolved_collision_count() == 0 after commit), mode
+        transitions to CONFIRMING with confirmation.kind = ACCEPT and
+        confirmation.choice = NO (FR23)"
+      - "If collisions remain after commit, mode returns to BROWSING with
+        selectedOrdinal, filter.text, filter.collision_only, filter.cursor,
+        and filter.raw identical to their state when editing began (FR16)"
+      - "Pressing Enter when validation is not VALID leaves mode = EDITING;
+        no commit occurs and the error remains visible (FR18)"
+      - "Pressing Esc or ctrl+c discards the edit buffer, resets edit to
+        None, and returns to BROWSING with all filter state preserved
+        exactly as it was on entry (FR16)"
+      - "On every edit keystroke, collision groups and
+        select_unresolved_collision_count are recomputed with edit.buffer
+        substituted for the edited mapping's targetValue; the collision
+        indicator on the edited row updates live (FR8)"
+      - "A mapping with an empty buffer is treated as unresolved for
+        collision purposes during live recomputation (FR8)"
+      - "Golden frame frame_esc_from_edit committed: state returns to the
+        pre-edit browsing frame with filter intact"
+      - "Golden frame frame_submit_no_resolution committed: returns to
+        BROWSING with the edited row's targetValue updated and collision
+        indicators recalculated"
       - "All existing golden tests continue to pass"
     definition_of_done:
       - "Feature is implemented and tested"
-      - "BDD scenario for selection clamping and empty results passes"
-      - "BDD scenario for browsing row and page movement passes (up/down,
-        ctrl+p/ctrl+n, PgUp/PgDn keep the selected row visible and clamp at
-        the list ends)"
-      - "Golden frames frame_3 and frame_13 committed and passing under
-        uv run pytest"
+      - "BDD scenarios for submit, cancel, and live collision recomputation
+        all pass"
+      - "All relevant golden frames committed and passing under uv run pytest"
