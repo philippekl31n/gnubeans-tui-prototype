@@ -330,6 +330,58 @@ def test_initial_display_sort_uses_default_sources_not_literal_target_values():
     ]
 
 
+def test_select_match_spans_finds_every_non_overlapping_match():
+    from mapping_resolution_tui.selectors import select_match_spans
+
+    assert select_match_spans("11", "1") == ((0, 1), (1, 2))
+    assert select_match_spans("10", "1") == ((0, 1),)
+    assert select_match_spans("C100-F", "1") == ((1, 2),)
+
+
+def test_select_match_spans_is_ascii_case_insensitive():
+    from mapping_resolution_tui.selectors import select_match_spans
+
+    assert select_match_spans("APPLE", "appl") == ((0, 4),)
+    assert select_match_spans("apple", "APPL") == ((0, 4),)
+
+
+def test_select_match_spans_empty_query_or_no_match_returns_no_spans():
+    from mapping_resolution_tui.selectors import select_match_spans
+
+    assert select_match_spans("APPLE", "") == ()
+    assert select_match_spans("APPLE", "z") == ()
+
+
+def test_select_ordinal_match_spans_offsets_for_right_aligned_padding():
+    from mapping_resolution_tui.selectors import select_ordinal_match_spans
+
+    # ordinal 1 padded to width 2 -> " 1"; the matched digit sits at index 1.
+    assert select_ordinal_match_spans(1, "1", 2) == ((1, 2),)
+    # ordinal 10 -> "10"; only the leading "1" matches.
+    assert select_ordinal_match_spans(10, "1", 2) == ((0, 1),)
+    # ordinal 11 -> "11"; every non-overlapping match is reported.
+    assert select_ordinal_match_spans(11, "1", 2) == ((0, 1), (1, 2))
+
+
+def test_select_visible_rows_matches_ordinal_and_token_only_excluding_sources():
+    from dataclasses import replace
+
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.reducer import make_initial_state
+    from mapping_resolution_tui.selectors import select_visible_rows
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+
+    # "1" matches ordinals 1/10/11 and the "1" inside token "C100-F" (ordinal 4).
+    state_one = replace(state, filter=replace(state.filter, text="1", raw="1", cursor=1))
+    assert [m.ordinal for m in select_visible_rows(state_one)] == [1, 4, 10, 11]
+
+    # "AAPL" is only the cmdty_id source value of ordinal 1 (token "APPLE"); the
+    # source must not be matched, so the filter yields no rows.
+    state_src = replace(state, filter=replace(state.filter, text="AAPL", raw="AAPL", cursor=4))
+    assert select_visible_rows(state_src) == []
+
+
 def test_collision_selectors_are_repeatable_and_do_not_store_state_on_mappings():
     from mapping_resolution_tui.selectors import (
         select_collision_groups,
