@@ -114,6 +114,44 @@ def select_body_capacity(height: int) -> int:
     return max(0, height - 6)
 
 
+def select_match_spans(text: str, query: str) -> tuple[tuple[int, int], ...]:
+    """Return non-overlapping ``[start, end)`` spans in ``text`` matching ``query``.
+
+    Matching is ASCII case-insensitive (spec §3.3). Occurrences are scanned
+    left to right so every non-overlapping match is reported. Returns an empty
+    tuple when ``query`` is empty or there is no match, so callers emit no bold
+    highlight spans for an empty filter.
+    """
+    if not query:
+        return ()
+    haystack = text.lower()
+    needle = query.lower()
+    spans: list[tuple[int, int]] = []
+    start = 0
+    while True:
+        index = haystack.find(needle, start)
+        if index == -1:
+            break
+        spans.append((index, index + len(needle)))
+        start = index + len(needle)
+    return tuple(spans)
+
+
+def select_ordinal_match_spans(ordinal: int, query: str, display_width: int) -> tuple[tuple[int, int], ...]:
+    """Return bold spans for an ordinal rendered right-aligned to ``display_width``.
+
+    Matching uses the decimal ordinal string without left padding (spec §3.3),
+    so the leading alignment spaces never match. Spans are shifted by the pad
+    width to address the right-aligned display cell.
+    """
+    ordinal_str = str(ordinal)
+    pad = display_width - len(ordinal_str)
+    return tuple(
+        (start + pad, end + pad)
+        for start, end in select_match_spans(ordinal_str, query)
+    )
+
+
 def select_visible_rows(state: "AppState") -> list[Mapping]:
     rows: list[Mapping] = list(state.mappings)
 
