@@ -27,7 +27,7 @@ def _commodity_validate(value: str, context: TargetValidationContext) -> Validat
         return ValidationState(status="INVALID", icon="✗", error_message="must start with A-Z")
     if not _BEANCOUNT_RE.match(value):
         return ValidationState(status="INVALID", icon="✗", error_message="only A-Z, 0-9, and - allowed")
-    if not (value[-1].isalpha() and value[-1].isupper() or value[-1].isdigit()):
+    if not ((value[-1].isalpha() and value[-1].isupper()) or value[-1].isdigit()):
         return ValidationState(status="INVALID", icon="✗", error_message="must end with A-Z or 0-9")
     return ValidationState(status="VALID", icon="✓", error_message=None)
 
