@@ -1,290 +1,177 @@
 # sprint-status.yaml
-# Epic 3 — Edit Target Tokens and Resolve Collisions
-# Drop into: docs/sprint-status-epic3.yaml
-# Updated: 2026-07-01
+# Epic 4 — Confirm or Exit the Mapping Session
+# Drop into: docs/sprint-status-epic4.yaml
+# Updated: 2026-06-24
 
 schema_version: 1
 
 epic:
-  id: 3
-  title: Edit Target Tokens and Resolve Collisions
-  spec_ref: docs/tui_architecture_spec.md
+  id: 4
+  title: Confirm or Exit the Mapping Session
+  spec_ref: docs/tui_architecture_spec.md  # sections 4.1, 4.2, 5, 6.4–6.6
   storyboard_ref: docs/tui_interaction_storyboard.md
-  functional_requirements: [FR8, FR15, FR16, FR17, FR18, FR19, FR20, FR21, FR22, FR23]
 
 sprint: 1
 # status values: todo | in_progress | done | blocked
-# prerequisite: TASK-001 (Epic 2 dispatch infrastructure) must be complete
+# prerequisite: TASK-001 (Epic 2 dispatch) and TASK-008 (Epic 3 FR23 auto-confirm) must be complete
 
 tasks:
 
-  - key: TASK-005
+  - key: TASK-009
     type: task
-    title: Add edit-mode selectors for ghost text, concrete value, and source pointer
-    status: done
+    title: Add confirmation-mode selectors and renderer case
+    status: todo
     assignee: null
     depends_on: []
     files:
       - mapping_resolution_tui/selectors.py
+      - mapping_resolution_tui/renderer.py
     summary: >
-      Add the edit-specific derived-state functions that the renderer and
-      reducer will call during EDITING mode. Existing selectors cover
-      browsing-mode derivation only; none address the edit buffer ghost
-      suffix, rendered display value, validation input, or source pointer
-      autofill. Prerequisite for all three Epic 3 stories.
+      Add the derived-state functions and renderer case for CONFIRMING mode.
+      select_footer_content partially handles CONFIRMING mode but there is
+      no selector for the prompt content itself and render_lines() has no
+      case for Mode.CONFIRMING. Prerequisite for all Epic 4 stories.
     acceptance_criteria:
-      - "select_ghost_suffix(state, mapping) returns the remaining suffix of
-        the default source value when: mapping.targetValue is None,
-        edit.cursor == len(edit.buffer), and edit.buffer is a case-sensitive
-        prefix of the default source effective value; returns '' otherwise (FR17)"
-      - "select_concrete_value(state, mapping) returns edit.buffer if
-        non-empty, else the default source effective value; this is the single
-        value passed to targetPolicy.validate() and committed on submit (FR22)"
-      - "select_source_pointer_value(state, mapping) returns the effective
-        value of the source at edit.source_pointer_index within
-        select_active_sources(mapping), or None when source_pointer_index
-        is None (FR21)"
-      - "select_source_pointer_value MUST bounds-check source_pointer_index
-        against len(select_active_sources(mapping)) and return None when the
-        index is out of range, rather than indexing directly and raising
-        IndexError (FR21)"
-      - "select_edit_render_row(state, mapping) returns a dataclass with
-        everything the renderer needs for the expanded edit row: buffer text,
-        ghost suffix, cursor offset, validation icon and error message, focus
-        region, and visible sources with pointer indicator position"
-      - "All functions are pure, accept frozen state, return new objects or
-        primitives — no side effects"
+      - "select_confirmation_prompt(state) returns a dataclass with: prompt
+        text ('Accept all?' or 'Skip adding commodities?'), yes/no indicator
+        strings with reverse-video on the active choice, and a flag for
+        whether YES is currently active — driven from confirmation.kind and
+        confirmation.choice"
+      - "select_confirmation_header(state) returns the header line text for
+        CONFIRMING mode as specified in spec section 6.4"
+      - "render_lines() handles Mode.CONFIRMING: full table at current scroll
+        offset, confirmation prompt overlaid below the table, confirmation
+        header and footer (spec sections 6.4–6.6)"
+      - "Prompt format: 'Accept all? [y/*N*]' and 'Skip adding commodities?
+        [y/*N*]' with reverse-video on the active choice character"
+      - "CONFIRMING mode renders full table with no super-dim rows"
+      - "All functions are pure, accept frozen state, no side effects"
       - "All functions covered by unit tests"
     implementation_notes:
-      - "Ghost suffix must handle the empty-buffer case: when edit.buffer is
-        empty and mapping.targetValue is None, the full default source value
-        is the ghost suffix"
-      - "select_concrete_value is the single source of truth — do not
-        replicate its logic in the reducer submit handler"
-      - "select_active_sources is already implemented; select_source_pointer_value
-        should delegate to it rather than re-filtering"
-      - "The §7.4 source-pointer movement protocol keeps source_pointer_index
-        within range during navigation, but that invariant is enforced by the
-        reducer at write time, not guaranteed at read time — do not assume it
-        holds inside the selector. Treat 0 <= source_pointer_index <
-        len(active_sources) as a condition to check, not an assumption to
-        rely on, so a stale or otherwise out-of-range index degrades to None
-        instead of crashing the render loop"
-      - "select_edit_render_row should be the only selector the renderer calls
-        for the expanded row — keep rendering logic out of the selector itself"
+      - "Drive prompt rendering entirely from select_confirmation_prompt —
+        avoid branching on ConfirmationKind inside the renderer"
+      - "Reverse-video convention for active choice (*N*) is consistent with
+        cursor indicators used elsewhere in the renderer"
+      - "Scrolling in CONFIRMING mode works identically to BROWSING — no
+        selectedOrdinal cursor is rendered, only scroll offset applies"
 
-  - key: TASK-006
+  - key: TASK-010
     type: story
-    title: Enter edit mode and type with ghost text and validation
+    title: Accept all resolved mappings and produce output
     status: todo
     assignee: null
-    depends_on: [TASK-001, TASK-005]
-    functional_requirements: [FR15, FR17, FR18, FR19, FR20]
+    depends_on: [TASK-001, TASK-009]
     files:
       - mapping_resolution_tui/reducer.py
       - mapping_resolution_tui/renderer.py
     golden_frames:
-      - frame_4   # Enter from filtered browsing; empty buffer; ghost text; reverse-video cursor
-      - frame_5   # Valid buffer "ATT" with checkmark; submit hint in footer
-      - frame_9   # Editing "APPLE" mapping with ghost suffix streaming
-      - frame_10  # Invalid input "44PL"; error icon; error message
-      - frame_11  # 24-character buffer; max-length flash error
+      - frame_6   # ACCEPT confirmation entered; prompt shown; NO active; full table
+      - frame_14  # Re-entry via ctrl+s from BROWSING; matches frame_6
+      - frame_accept_terminal  # TUI exits cleanly with mappings applied
     user_story: >
-      As a reviewer, I want to enter edit mode on a selected mapping and
-      type a replacement token with live ghost text and validation feedback,
-      so that I can confidently set or correct a target value before
-      submitting.
+      As a reviewer, I want to accept all my resolved mappings and produce
+      the output file, so that the commodity import is applied with my
+      corrections.
     acceptance_criteria:
-      - "Pressing Enter in BROWSING mode transitions to EDITING: mode =
-        EDITING, edit.mapping_ordinal = selected ordinal, edit.buffer = ''
-        when mapping.targetValue is None else edit.buffer = mapping.targetValue,
-        edit.cursor = len(edit.buffer), edit.focus_region = TOKEN_INPUT,
-        edit.source_pointer_index = None, edit.source_entry_buffer = None (FR15)"
-      - "Ghost suffix rendered when buffer is a prefix of the default source
-        value at cursor end and no literal target override exists; disappears
-        as soon as the buffer deviates from the default (FR17)"
-      - "Printable character inserted at cursor position, cursor advances by
-        1, ghost suffix and validation recomputed on every keystroke (FR18)"
-      - "Invalid printable characters (per targetPolicy) insert into the
-        buffer, set validation.status = INVALID with error icon and error
-        message, and gate the submit key (FR19)"
-      - "Over-limit characters are discarded; edit.max_length_flash_until set
-        to now + flash_duration; flash error renders immediately;
-        max_length_flash_until clears on next accepted edit change or mode
-        exit (FR20)"
-      - "Backspace removes the character before the cursor when focus_region
-        = TOKEN_INPUT and edit.buffer is non-empty; cursor decrements by 1"
-      - "Readline aliases for cursor movement and deletion (ctrl+a, ctrl+e,
-        ctrl+k, ctrl+u, ctrl+b, ctrl+f, ctrl+h) behave as specified in FR18"
-      - "Golden frame frame_4 committed: Enter from filtered browsing state,
-        empty buffer, ghost text visible, reverse-video cursor, row expanded,
-        surrounding rows super-dim"
-      - "Golden frame frame_5 committed: valid buffer ATT with checkmark icon,
-        submit hint added to footer"
-      - "Golden frame frame_9 committed: editing APPLE mapping with ghost
-        suffix streaming"
-      - "Golden frame frame_10 committed: invalid input 44PL, error icon,
-        error 'Error: must start with A-Z'"
-      - "Golden frame frame_11 committed: 24-character buffer, cursor clamped
-        to final character, max-length flash 'Error: 24 chars max'"
+      - "Entering ACCEPT confirmation (FR23 auto-trigger or ctrl+s from
+        BROWSING when unresolved collision count == 0) sets mode = CONFIRMING,
+        confirmation.kind = ACCEPT, confirmation.choice = NO"
+      - "ctrl+s accepted from BROWSING whenever select_unresolved_collision_count()
+        == 0, regardless of whether collisions were just resolved or were
+        already resolved"
+      - "y key sets confirmation.choice = YES; n sets choice = NO;
+        left/right arrows toggle between YES and NO"
+      - "Enter when choice = YES commits all mappings and exits the TUI
+        (terminal accept state)"
+      - "Enter when choice = NO, or Esc, returns to BROWSING with filter
+        state preserved"
+      - "Footer renders 'scroll · shift pageup/dn · enter edit mappings'
+        when choice = NO; 'scroll · shift pageup/dn · enter confirm' when
+        choice = YES"
+      - "Golden frame frame_6 committed: ACCEPT confirmation after last
+        collision resolved; 'Accept all? [y/*N*]'; full table visible; NO
+        reverse-video active"
+      - "Golden frame frame_14 committed: re-entry via ctrl+s after returning
+        to BROWSING; state matches frame_6"
+      - "Golden frame frame_accept_terminal committed: TUI exits cleanly with
+        mappings applied"
       - "All existing golden tests continue to pass"
     definition_of_done:
       - "Feature is implemented and tested"
-      - "BDD scenario for edit mode entry and typed input passes (step
-        definitions wired to action dispatch)"
-      - "Golden frames frame_4, frame_5, frame_9, frame_10, frame_11
-        committed and passing under uv run pytest"
+      - "BDD scenario for accept confirmation flow (auto-entry, ctrl+s entry,
+        y/n toggle, accept, return to browsing) passes"
+      - "Golden frames frame_6, frame_14, and frame_accept_terminal committed
+        and passing under uv run pytest"
 
-  - key: TASK-007
+  - key: TASK-011
     type: story
-    title: Navigate alternative sources and autofill the edit buffer
-    status: done
-    assignee: null
-    depends_on: [TASK-001, TASK-005]
-    functional_requirements: [FR21]
-    files:
-      - mapping_resolution_tui/reducer.py
-    golden_frames:
-      - frame_12a  # Source pointer on first source; buffer matches source value; checkmark
-      - frame_12b  # Source pointer on second source; buffer updated to match
-    user_story: >
-      As a reviewer, I want to navigate the list of available sources and
-      autofill my edit buffer from the selected source's effective value,
-      so that I can quickly choose an established token without re-typing.
-    acceptance_criteria:
-      - "Pressing down-arrow from focus_region = TOKEN_INPUT saves edit.buffer
-        to edit.source_entry_buffer, sets source_pointer_index to first active
-        source index, sets focus_region = SOURCE_LIST, and autofills
-        edit.buffer with that source's effective value; validation
-        recomputed (FR21)"
-      - "Pressing up-arrow from TOKEN_INPUT saves buffer to source_entry_buffer,
-        sets source_pointer_index to last active source index, sets
-        focus_region = SOURCE_LIST, and autofills buffer; validation
-        recomputed (FR21)"
-      - "Up/down within SOURCE_LIST moves source_pointer_index by one step
-        through active sources (no wrapping — boundary crossings are the
-        separate exit-to-TOKEN_INPUT case below, spec S7.4); buffer autofilled
-        from pointed source effective value and validation recomputed on
-        every move (FR21)"
-      - "Moving up past the first source (or down past the last) restores
-        source_entry_buffer to edit.buffer, clears source_pointer_index and
-        source_entry_buffer, and returns focus_region to TOKEN_INPUT (FR21)"
-      - "Typing a printable character or pressing Backspace while in
-        SOURCE_LIST exits source navigation: clears source_pointer_index and
-        source_entry_buffer, applies the character edit to edit.buffer as a
-        TOKEN_INPUT operation, returns focus_region = TOKEN_INPUT, and
-        revalidates (FR21)"
-      - "Source pointer indicator rendered in source column next to active
-        source; un-pointed sources render without indicator"
-      - "Golden frame frame_12a committed: pointer on first source
-        (cmdty_id: 'AAPL'), buffer matches source value, checkmark icon"
-      - "Golden frame frame_12b committed: pointer on second source
-        (user_symbol: 'APPLE'), buffer updated to match"
-      - "All existing golden tests continue to pass"
-    definition_of_done:
-      - "Feature is implemented and tested"
-      - "BDD scenario for source list navigation and autofill passes"
-      - "Golden frames frame_12a and frame_12b committed and passing under
-        uv run pytest"
-
-  - key: TASK-008
-    type: story
-    title: Submit or cancel an edit with filter preservation and live collision resolution
+    title: Scroll and verify the full mapping table while confirmation is shown
     status: todo
     assignee: null
-    depends_on: [TASK-001, TASK-005]
-    functional_requirements: [FR8, FR16, FR22, FR23]
-    files:
-      - mapping_resolution_tui/reducer.py
-      - mapping_resolution_tui/selectors.py
-      - mapping_resolution_tui/renderer.py
-    golden_frames:
-      - frame_esc_from_edit   # Esc returns to pre-edit browsing frame with filter intact
-      - frame_submit_no_resolution  # Valid submit; returns to BROWSING; row updated; collisions recalculated
-    user_story: >
-      As a reviewer, I want submitting or cancelling an edit to return me
-      to my browsing context with filters intact, and for collision
-      indicators to update live as I type, so that I always know whether
-      my edit resolves an outstanding conflict.
-    acceptance_criteria:
-      - "Pressing Enter when edit.validation.status = VALID and edit.buffer
-        is non-empty commits edit.buffer literally to mapping.targetValue
-        and exits EDITING (FR22)"
-      - "If the committed edit resolves the final collision
-        (select_unresolved_collision_count() == 0 after commit), mode
-        transitions to CONFIRMING with confirmation.kind = ACCEPT and
-        confirmation.choice = NO (FR23)"
-      - "If collisions remain after commit, mode returns to BROWSING with
-        selectedOrdinal, filter.text, filter.collision_only, filter.cursor,
-        and filter.raw identical to their state when editing began (FR16)"
-      - "Pressing Enter when validation is not VALID leaves mode = EDITING;
-        no commit occurs and the error remains visible (FR18)"
-      - "Pressing Esc or ctrl+c discards the edit buffer, resets edit to
-        None, and returns to BROWSING with all filter state preserved
-        exactly as it was on entry (FR16)"
-      - "On every edit keystroke, collision groups and
-        select_unresolved_collision_count are recomputed with edit.buffer
-        substituted for the edited mapping's targetValue; the collision
-        indicator on the edited row updates live (FR8)"
-      - "A mapping with an empty buffer is treated as unresolved for
-        collision purposes during live recomputation (FR8)"
-      - "Golden frame frame_esc_from_edit committed: state returns to the
-        pre-edit browsing frame with filter intact"
-      - "Golden frame frame_submit_no_resolution committed: returns to
-        BROWSING with the edited row's targetValue updated and collision
-        indicators recalculated"
-      - "All existing golden tests continue to pass"
-    definition_of_done:
-      - "Feature is implemented and tested"
-      - "BDD scenarios for submit, cancel, and live collision recomputation
-        all pass"
-      - "All relevant golden frames committed and passing under uv run pytest"
-
-  - key: TASK-009
-    type: task
-    title: Pop-then-hold micro-animation for the max-length flash
-    status: todo
-    assignee: null
-    depends_on: [TASK-006]
-    functional_requirements: [FR20]
+    depends_on: [TASK-001, TASK-009]
     files:
       - mapping_resolution_tui/reducer.py
       - mapping_resolution_tui/renderer.py
-      - mapping_resolution_tui/loop.py
     golden_frames:
-      - frame_11        # Existing: held phase, unchanged
-      - frame_11_burst  # New: burst phase, reverse-video icon/error at column 33
+      - frame_7a  # Down-arrow in ACCEPT confirmation; table scrolled one row; prompt unchanged
     user_story: >
-      As a reviewer, I want the max-length error to visibly pop when a
-      character is rejected, so my eye is drawn to it the instant it happens,
-      without the message disappearing before I've had a chance to read it.
+      As a reviewer, I want to scroll through the full mapping table while
+      a confirmation prompt is shown, so that I can verify all my changes
+      before committing or declining.
     acceptance_criteria:
-      - "TASK-006 already ships the held phase (indefinite, event-cleared
-        error display) unaffected by this task; this task adds a burst phase
-        that precedes it (spec §7.6)"
-      - "Every over-limit discard sets edit.max_length_flash_until = now() +
-        150ms, overwriting any prior deadline; repeated over-limit keystrokes
-        reset the window rather than extending or stacking it"
-      - "While now < edit.max_length_flash_until, the capped validation icon
-        and footer error line render reverse-video (burst); once that deadline
-        passes, both render in the ordinary INVALID style (held) with no
-        other visual change"
-      - "Any event that clears edit.validation's max-length error (accepted
-        edit-buffer mutation, source navigation, mode exit, validation-result
-        change) also clears edit.max_length_flash_until in the same
-        transition, cutting the burst short regardless of remaining time"
-      - "The input loop wakes up and re-renders at or after
-        edit.max_length_flash_until even with no keypress, so the burst-to-
-        held transition is visible to a reviewer who pauses mid-burst; it
-        MUST NOT poll once no burst is pending (spec §12.1)"
-      - "Golden frame frame_11 (held phase) continues to pass unchanged"
-      - "New golden frame frame_11_burst committed: same buffer/cursor state
-        as frame_11, reverse-video icon and error line, asserted via an
-        injected deterministic render-time clock rather than a real sleep"
+      - "In CONFIRMING mode, up/down arrows scroll the table body by one row;
+        selectedOrdinal is unaffected (no row cursor in CONFIRMING mode)"
+      - "Shift+up / shift+down scroll by one page"
+      - "Table renders at current scroll offset with all mappings at normal
+        brightness — no super-dim rows"
+      - "Confirmation prompt remains visible below the table body at all
+        scroll positions"
+      - "Footer shows scroll and page-scroll hints plus the context-sensitive
+        action hint at all scroll positions"
+      - "Scroll offset is clamped: cannot scroll past the first or last row"
+      - "Golden frame frame_7a committed: one down-arrow press in ACCEPT
+        confirmation; table scrolled by one row; prompt and footer unchanged"
       - "All existing golden tests continue to pass"
     definition_of_done:
       - "Feature is implemented and tested"
-      - "Burst and held phases both covered by deterministic unit tests (no
-        real-time sleep)"
-      - "Golden frames frame_11 and frame_11_burst committed and passing under
-        uv run pytest"
+      - "BDD scenario for table scrolling within CONFIRMING mode passes"
+      - "Golden frame frame_7a committed and passing under uv run pytest"
+
+  - key: TASK-012
+    type: story
+    title: Exit without saving with a double ctrl+c guard against accidental discard
+    status: todo
+    assignee: null
+    depends_on: [TASK-001, TASK-009]
+    files:
+      - mapping_resolution_tui/reducer.py
+      - mapping_resolution_tui/renderer.py
+    golden_frames:
+      - frame_1b  # ctrl+c from BROWSING with collisions; EXIT prompt; NO active
+    user_story: >
+      As a reviewer, I want to be warned before abandoning my mapping
+      session and required to press ctrl+c twice to force-exit, so that
+      I don't accidentally discard my work.
+    acceptance_criteria:
+      - "ctrl+c in BROWSING enters EXIT confirmation: mode = CONFIRMING,
+        confirmation.kind = EXIT, confirmation.choice = NO,
+        second_ctrl_c_armed = True"
+      - "y key sets choice = YES; n sets choice = NO; left/right arrows
+        toggle between YES and NO"
+      - "Enter when choice = YES sends SIGINT and exits the process"
+      - "Enter when choice = NO, or Esc, returns to BROWSING mode"
+      - "A second ctrl+c while in EXIT confirmation sends SIGINT immediately,
+        bypassing the y/n check entirely (second_ctrl_c_armed = True on
+        entry, never reset within CONFIRMING state)"
+      - "Prompt renders as 'Skip adding commodities? [y/*N*]' (spec
+        section 6.5)"
+      - "Footer shows scroll and page-scroll hints plus 'enter edit mappings'
+        when choice = NO"
+      - "Golden frame frame_1b committed: ctrl+c from BROWSING with unresolved
+        collisions; EXIT prompt shown; full table visible; NO active"
+      - "All existing golden tests continue to pass"
+    definition_of_done:
+      - "Feature is implemented and tested"
+      - "BDD scenarios for exit confirmation (y exit, n return to browsing,
+        second ctrl+c SIGINT) all pass"
+      - "Golden frame frame_1b committed and passing under uv run pytest"
