@@ -4,10 +4,22 @@ Reducer module: pure state transitions and application initialization.
 
 
 
+from dataclasses import replace
 from typing import Optional
 import shutil
 
-from mapping_resolution_tui.selectors import sort_mappings_for_initial_display
+from mapping_resolution_tui.actions import (
+    Action,
+    ClearFilter,
+    InsertChar,
+    MoveCursorLeft,
+    MoveCursorRight,
+    ToggleCollisionOnly,
+)
+from mapping_resolution_tui.selectors import (
+    select_visible_rows,
+    sort_mappings_for_initial_display,
+)
 from mapping_resolution_tui.state import (
     AppConfig,
     AppState,
@@ -61,3 +73,126 @@ def make_initial_state(
         terminal=TerminalState(height=frame_height),
         result=ResultState(status="RUNNING"),
     )
+
+
+# ── filter helpers ──────────────────────────────────────────────────────────
+
+
+def _with_filter(
+    state: AppState,
+    *,
+    text: str,
+    collision_only: bool,
+    cursor: int,
+) -> AppState:
+    """Return a new state whose filter has the given fields.
+
+    ``filter.cursor`` is clamped into ``[0, len(text)]`` and ``filter.raw`` is
+    kept in sync as ``("!" if collision_only else "") + text`` on every
+    mutation, as the filter prompt rendering depends on it. Selection is then
+    re-clamped against the resulting visible rows.
+    """
+    cursor = max(0, min(cursor, len(text)))
+    raw = ("!" if collision_only else "") + text
+    new_filter = FilterState(
+        raw=raw,
+        collision_only=collision_only,
+        text=text,
+        cursor=cursor,
+    )
+    return _clamp_selection(replace(state, filter=new_filter))
+
+
+def _clamp_selection(state: AppState) -> AppState:
+    """Keep ``selection.selected_ordinal`` pointing at a visible row.
+
+    Per spec 3.4: an empty result clears the selection; otherwise, if the
+    selected ordinal has been filtered away, selection clamps to the first
+    visible row. A still-visible selection is left untouched.
+    """
+    visible = select_visible_rows(state)
+    if not visible:
+        if state.selection.selected_ordinal is None:
+            return state
+        return replace(
+            state,
+            selection=replace(state.selection, selected_ordinal=None),
+        )
+
+    visible_ordinals = {m.ordinal for m in visible}
+    if state.selection.selected_ordinal in visible_ordinals:
+        return state
+    return replace(
+        state,
+        selection=replace(state.selection, selected_ordinal=visible[0].ordinal),
+    )
+
+
+# ── per-action handlers ─────────────────────────────────────────────────────
+
+
+def _reduce_insert_char(state: AppState, action: InsertChar) -> AppState:
+    cursor = state.filter.cursor
+    text = state.filter.text
+    new_text = text[:cursor] + action.char + text[cursor:]
+    return _with_filter(
+        state,
+        text=new_text,
+        collision_only=state.filter.collision_only,
+        cursor=cursor + len(action.char),
+    )
+
+
+def _reduce_move_cursor_left(state: AppState, action: MoveCursorLeft) -> AppState:
+    return _with_filter(
+        state,
+        text=state.filter.text,
+        collision_only=state.filter.collision_only,
+        cursor=state.filter.cursor - 1,
+    )
+
+
+def _reduce_move_cursor_right(state: AppState, action: MoveCursorRight) -> AppState:
+    return _with_filter(
+        state,
+        text=state.filter.text,
+        collision_only=state.filter.collision_only,
+        cursor=state.filter.cursor + 1,
+    )
+
+
+def _reduce_toggle_collision_only(
+    state: AppState, action: ToggleCollisionOnly
+) -> AppState:
+    return _with_filter(
+        state,
+        text=state.filter.text,
+        collision_only=not state.filter.collision_only,
+        cursor=state.filter.cursor,
+    )
+
+
+def _reduce_clear_filter(state: AppState, action: ClearFilter) -> AppState:
+    return _with_filter(state, text="", collision_only=False, cursor=0)
+
+
+_HANDLERS = {
+    InsertChar: _reduce_insert_char,
+    MoveCursorLeft: _reduce_move_cursor_left,
+    MoveCursorRight: _reduce_move_cursor_right,
+    ToggleCollisionOnly: _reduce_toggle_collision_only,
+    ClearFilter: _reduce_clear_filter,
+}
+
+
+def reduce(state: AppState, action: Action) -> AppState:
+    """Pure dispatch: route ``action`` to its handler, returning new state.
+
+    Every handler returns a fresh frozen :class:`AppState`; the input ``state``
+    is never mutated. An unrecognised action is a no-op and the same state is
+    returned unchanged (FR30).
+    """
+    handler = _HANDLERS.get(type(action))
+    if handler is None:
+        return state
+    return handler(state, action)

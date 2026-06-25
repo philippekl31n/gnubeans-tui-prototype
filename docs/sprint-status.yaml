@@ -28,7 +28,7 @@ tasks:
   - key: TASK-001
     type: task
     title: Wire action dispatch infrastructure
-    status: todo
+    status: done
     assignee: null
     depends_on: []
     files:
