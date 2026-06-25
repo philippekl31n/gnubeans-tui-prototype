@@ -17,7 +17,7 @@ Normative keywords:
 
 | Term | Definition |
 |---|---|
-| Terminal frame | The TUI redraw area. The canonical fixture frame is 15 rows by 75 columns. |
+| Terminal frame | The block of inline lines one redraw emits, like a single frame of film — its height is whatever the content needs, bounded by the host terminal. It is NOT an alternate-screen region or a fixed-size window; the renderer never enters the alternate screen buffer (§6.2). The storyboard uses a 15-row by 75-column terminal as the worked example, but no frame dimension is fixed. |
 | Display row | 1-based terminal row within the frame. |
 | Display column | 1-based terminal column within the frame. |
 | Mapping | One target token plus one or more source values. |
@@ -35,7 +35,7 @@ Display-width rules:
 
 - Layout MUST be computed using Unicode display width, not byte length.
 - The glyphs `❯`, `▸`, `┃`, `✓`, `✗`, `↑`, `↓`, `↵`, and `·` MUST be treated as width 1.
-- The en dash in `A–Z` and the arrow `→` MUST be treated as width 1 in the 15x75 golden render.
+- The en dash in `A–Z` and the arrow `→` MUST be treated as width 1 in the storyboard golden renders.
 - Implementations MUST NOT wrap any line. Text that exceeds the terminal width MUST remain on a
   single logical line and be horizontally scrollable by the terminal emulator.
 - ANSI styling MUST NOT count toward display width.
@@ -562,9 +562,10 @@ from each no-op family above. No-op tests MUST assert that root state and render
 
 ## 6. Render Layout Contract
 
-### 6.1 Fixed 15x75 Grid
+### 6.1 Inline Frame Layout
 
-For the canonical 15x75 frame:
+The frame renders inline at the host terminal's current width and height; no frame dimension is fixed.
+Logical rows are allocated top-down, where `B` is the number of rendered body rows:
 
 | Row | Contents |
 |---:|---|
@@ -572,23 +573,30 @@ For the canonical 15x75 frame:
 | 2 | Prompt |
 | 3 | Blank |
 | 4 | Table header |
-| 5..N | Table body rows, including expanded edit source rows or a single blank empty-result row |
-| N+1 | Blank separator |
-| N+2 | Footer |
-| Remaining rows through 15 | Blank filler lines cleared on each redraw |
+| 5..(4+B) | Table body rows, including expanded edit source rows or a single blank empty-result row |
+| next | Blank separator (present unless collapsed; see §8.1) |
+| next | Footer |
+
+The frame ends at the footer. The renderer MUST NOT pad the frame with blank lines to reach a fixed
+height or the terminal bottom; an under-full frame is simply shorter than the terminal, as expected of
+an inline component. `B` is bounded by `bodyCapacity` (§8.1): when the table content plus chrome fits
+the terminal, every row renders and the frame is shorter than the viewport; when it overflows,
+`B = bodyCapacity` and the list scrolls (§8).
 
 When the footer separator is visible, the footer MUST be exactly two rows below the last rendered table
 body row. When the footer separator is collapsed, the footer MUST be exactly one row below the last
-rendered table body row. When the table body reaches row 13 in the canonical 15-row frame, the footer
-is row 15.
+rendered table body row. These rules determine the footer's position; it is not pinned to a fixed row.
+For example, in a 15-row terminal the 9-row commodity body (rows 5..13) puts the separator on row 14
+and the footer on row 15 — an instance of these rules, not a fixed grid.
 
 ### 6.2 Inline Redraw and Clear
 
 - The TUI MUST render inline without entering the alternate screen buffer.
 - Each redraw MUST return the cursor to the top of the frame, clear every previously drawn frame line,
-  write the new 15-line frame, and leave the cursor after the frame.
-- If a later frame uses fewer body lines than a previous frame, the remaining old lines MUST be cleared
-  with blank filler lines through row 15.
+  write the new frame, and leave the cursor after the frame.
+- If a later frame is shorter than a previous frame, the lines the previous frame drew below the new
+  frame's footer MUST be cleared so no stale content remains. This is erasing leftover output, not
+  padding: the new frame itself MUST NOT add blank lines below its footer.
 - The renderer MUST NOT insert extra blank lines above row 1 or between logical rows.
 
 ### 6.3 Columns
@@ -671,7 +679,8 @@ When `result.status = ACCEPTED`, the TUI MUST render the final inline frame show
 - Row 1 MUST be `config.createdMessage(total)`. For the storyboard config and 11-row dataset this is
   `11 commodities created.`
 - Row 2 MUST be `❯`.
-- Rows 3 through 15 MUST be blank/cleared.
+- The result frame is two rows tall; no rows render below row 2. Any lines a previous, taller frame
+  drew below row 2 MUST be cleared (see §6.2).
 - The alternate screen buffer MUST NOT be used.
 
 ## 7. Edit Buffer, Ghost Text, Source Pointer, and Validation
@@ -970,7 +979,8 @@ of `visibleRows`; implementations MUST NOT backfill preceding rows above the anc
 
 When anchored allocation renders fewer than `bodyCapacity` rows, the footer separator and footer MUST
 follow the last rendered body row. The renderer MUST NOT insert filler body rows to push the footer to
-the terminal bottom. Remaining terminal rows after the footer MUST be cleared as blank filler lines.
+the terminal bottom, and MUST NOT pad blank lines below the footer. Any lines a previous, taller frame
+drew below the new footer MUST be cleared (see §6.2).
 
 When `bodyCapacity < anchorBlock.length`, the anchor cannot fully fit:
 
@@ -1109,7 +1119,7 @@ file; snapshots are regenerated with `pytest --update-snapshots`.
 |---|---|---|---|---|---|---|
 | 1a | Fresh dataset, rows 2 and 3 collide | None | `BROWSING`, `filter=""`, selected row 1, `scrollOffset=0`, 1 collision group | 1..9 | Prompt ghost `Tab to view collisions`; footer edit selected | Header includes `1 unresolved collision`; row 1 has `▸`; rows 2/3 have `!`; footer row 15 |
 | 1b | Frame 1a | `ctrl+c` | `CONFIRMING EXIT`, choice `NO`, `secondCtrlCArmed=true` | 1..9 | `Skip adding commodities? [y/N]`; footer edit mappings | Header shortcut says `ctrl+c exit`; no row cursor; second `ctrl+c` sends SIGINT |
-| 2 | Frame 1a or after exiting 1b | `Tab` or `!` | `BROWSING`, `collisionOnly=true`, selected row 2 | 2,3 | Prompt `!Type to filter`; footer clear filter | Footer row 8; rows 2/3 only; filler clears rows 9..15 |
+| 2 | Frame 1a or after exiting 1b | `Tab` or `!` | `BROWSING`, `collisionOnly=true`, selected row 2 | 2,3 | Prompt `!Type to filter`; footer clear filter | Footer row 8; rows 2/3 only; frame ends at the footer with no padding below it (stale lines from a taller prior frame cleared) |
 | 3 | Frame 2 | `3` | `BROWSING`, `collisionOnly=true`, `text="3"`, selected row 3 | 3 | Prompt `!3{cursor}`; footer clear filter | Ordinal `3` bold; no source matching; footer row 7 |
 | 4 | Frame 3 | `Backspace`, `↓`, `Enter` | `EDITING` row 3, empty buffer, ghost `AT-T`, token focus | 2 dim, expanded 3 | Editing prompt for `AT-T`; footer no submit | Row 2 super dim; active row shows `▸`, `!`, reverse `A`, dim `T-T`; source rows include `(not set)` |
 | 5 | Frame 4 | `A`, `T`, `T` | `EDITING` row 3, buffer `ATT`, valid, collisions zero live | 2 dim, expanded 3 | Footer includes submit | Rows 2/3 have no `!`; active row shows `ATT`, cursor, `✓` |
@@ -1125,7 +1135,7 @@ file; snapshots are regenerated with `pytest --update-snapshots`.
 | 12b | Frame 9 or 10/11 | `↑` | `EDITING`, buffer `APPLE`, valid, `sourcePointerIndex=1` | Expanded 1, dim 4/10/11 | Footer submit | Source pointer line 2; pointer came from source navigation, not exact-match tracking |
 | 13 | Frame 12b | `Enter` or `Esc`, then `2` after existing filter `1` | `BROWSING`, `text="12"`, selected null | Empty result | Error no matching rows | Blank body row under header; no cursor; footer row 7 |
 | 14 | Frame 13 | `ctrl+s` | `CONFIRMING ACCEPT`, choice `NO`, collisions zero | 1..9 | `Accept all? [y/N]`; footer edit mappings | Accept prompt defaults to `NO`; filter does not constrain confirming table |
-| 15 | Frame 14 | `y` or `←`, then `Enter` | Terminal accepted state, `result.status=ACCEPTED` | None | None | Frame line 1 is `11 commodities created.`; frame line 2 is `❯`; remaining frame lines are blank/cleared |
+| 15 | Frame 14 | `y` or `←`, then `Enter` | Terminal accepted state, `result.status=ACCEPTED` | None | None | Frame line 1 is `11 commodities created.`; frame line 2 is `❯`; the frame is two lines tall with no padding below row 2; lines from the prior frame are cleared |
 
 ### 10.2 Defect-Prevention Tests
 
@@ -1138,7 +1148,7 @@ file; snapshots are regenerated with `pytest --update-snapshots`.
 | Edit input insertion contradiction | Assert frame 4 to 5 end-cursor insertion produces `ATT`, not `AT-TATT` or `ATTT`; ghost disappears when buffer no longer prefixes `defaultSourceValue`. |
 | Lossy domain model | Unit-test collision groups, source effective values, literal `targetValue`, derived `currentTargetValue`, default source, and live edited target as separate fields. |
 | Missing sorting rules | Change row 3 target to `ATT`; assert order remains row 2 then row 3 and does not resort by new target. |
-| Layout not deterministic | Golden-render all frames at 15x75; assert row numbers for header, prompt, table header, footer, blank filler, and no alternate screen sequences. |
+| Layout not deterministic | Golden-render all frames in the storyboard's 15x75 example terminal; assert row numbers for header, prompt, table header, and footer, that each frame ends at its footer with no blank padding below it, and no alternate screen sequences. |
 | Injected validation incomplete | Assert a test `targetPolicy` controls grammar cases, `✓`/`✗`, submit gating, maximum display width, and over-limit discard/flash; assert the storyboard commodity fixture still enforces the 24-column commodity policy. |
 | Source sanitization hard-coded | Provide sources with caller-supplied `originalValue` and `sanitizedValue`; assert `effectiveValue`, source display arrows, default source value, ghost text, and source selection use those supplied fields exactly and no sanitization function is invoked by the TUI. |
 | Source selection incomplete | Assert `↑`/`↓` enter source navigation at last/first active source, autofill by `sourcePointerIndex`, moving above the first source or below the last source restores `sourceEntryBuffer`, and typing/backspace exits source navigation. |
