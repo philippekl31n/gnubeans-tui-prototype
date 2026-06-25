@@ -16,10 +16,7 @@ from mapping_resolution_tui.actions import (
     MoveCursorRight,
     ToggleCollisionOnly,
 )
-from mapping_resolution_tui.selectors import (
-    select_visible_rows,
-    sort_mappings_for_initial_display,
-)
+from mapping_resolution_tui.selectors import sort_mappings_for_initial_display
 from mapping_resolution_tui.state import (
     AppConfig,
     AppState,
@@ -89,8 +86,12 @@ def _with_filter(
 
     ``filter.cursor`` is clamped into ``[0, len(text)]`` and ``filter.raw`` is
     kept in sync as ``("!" if collision_only else "") + text`` on every
-    mutation, as the filter prompt rendering depends on it. Selection is then
-    re-clamped against the resulting visible rows.
+    mutation, as the filter prompt rendering depends on it.
+
+    Selection re-clamping (keeping ``selection.selected_ordinal`` on a visible
+    row when a filter change hides it) is deliberately *not* done here: that is
+    TASK-004's responsibility. TASK-001 keeps the reducer scoped to pure filter
+    state so the dispatch foundation carries no selection policy.
     """
     cursor = max(0, min(cursor, len(text)))
     raw = ("!" if collision_only else "") + text
@@ -100,32 +101,7 @@ def _with_filter(
         text=text,
         cursor=cursor,
     )
-    return _clamp_selection(replace(state, filter=new_filter))
-
-
-def _clamp_selection(state: AppState) -> AppState:
-    """Keep ``selection.selected_ordinal`` pointing at a visible row.
-
-    Per spec 3.4: an empty result clears the selection; otherwise, if the
-    selected ordinal has been filtered away, selection clamps to the first
-    visible row. A still-visible selection is left untouched.
-    """
-    visible = select_visible_rows(state)
-    if not visible:
-        if state.selection.selected_ordinal is None:
-            return state
-        return replace(
-            state,
-            selection=replace(state.selection, selected_ordinal=None),
-        )
-
-    visible_ordinals = {m.ordinal for m in visible}
-    if state.selection.selected_ordinal in visible_ordinals:
-        return state
-    return replace(
-        state,
-        selection=replace(state.selection, selected_ordinal=visible[0].ordinal),
-    )
+    return replace(state, filter=new_filter)
 
 
 # ── per-action handlers ─────────────────────────────────────────────────────

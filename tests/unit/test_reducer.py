@@ -2,9 +2,10 @@
 Unit tests for the BROWSING-mode action dispatch reducer (TASK-001).
 
 Exercises the four filter operations — character insertion, cursor movement,
-collision-only toggle, and filter clear — plus immutability, raw sync, and
-selection clamping. Uses the canonical 11-row storyboard dataset so the
-ordinal/collision shape matches the golden frames:
+collision-only toggle, and filter clear — plus immutability and raw sync.
+Selection re-clamping on filter change is TASK-004's concern and is covered
+there, not by this dispatch-foundation suite. Uses the canonical 11-row
+storyboard dataset so the ordinal/collision shape matches the golden frames:
 
     1 APPLE   2 AT-T(!)  3 AT-T(!)  4 C100-F  5 GOOGL  6 MSFT
     7 NVDA    8 QQQ      9 SPY      10 VTSAX  11 VWUSX
@@ -132,24 +133,25 @@ def test_clear_filter_resets_text_metafilter_and_cursor(state):
     assert visible_ordinals(s) == list(range(1, 12))
 
 
-# ── selection clamping (spec 3.4 foundation) ─────────────────────────────────
+# ── filter shapes visible rows; selection is left to TASK-004 ────────────────
 
-def test_collision_only_clamps_selection_to_first_collision_row(state):
+def test_collision_only_limits_visible_to_collision_group_without_touching_selection(state):
+    # The reducer narrows the visible rows but does not move the selection;
+    # re-clamping selection onto a visible row is TASK-004's responsibility.
     assert state.selection.selected_ordinal == 1
     s = reduce(state, ToggleCollisionOnly())
-    assert s.selection.selected_ordinal == 2
-
-
-def test_still_visible_selection_is_preserved(state):
-    # Filter "1" keeps ordinal 1 visible (rows 1, 4, 10, 11).
-    s = reduce(state, InsertChar("1"))
-    assert visible_ordinals(s) == [1, 4, 10, 11]
+    assert visible_ordinals(s) == [2, 3]
     assert s.selection.selected_ordinal == 1
 
 
-def test_empty_result_clears_selection(state):
+def test_text_filter_narrows_visible_rows(state):
+    # Filter "1" keeps ordinals 1, 4, 10, 11 visible.
+    s = reduce(state, InsertChar("1"))
+    assert visible_ordinals(s) == [1, 4, 10, 11]
+
+
+def test_non_matching_filter_yields_no_visible_rows(state):
     s = state
     for ch in "zzz":
         s = reduce(s, InsertChar(ch))
     assert visible_ordinals(s) == []
-    assert s.selection.selected_ordinal is None
