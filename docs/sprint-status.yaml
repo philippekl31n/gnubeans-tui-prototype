@@ -1,180 +1,228 @@
 # sprint-status.yaml
-# Epic 4 — Confirm or Exit the Mapping Session
-# Drop into: docs/sprint-status-epic4.yaml
-# Updated: 2026-06-24
+# Epic 5 — Render the Terminal Experience Exactly
+# Drop into: docs/sprint-status-epic5.yaml
+# Updated: 2026-06-25
 
 schema_version: 1
 
 epic:
-  id: 4
-  title: Confirm or Exit the Mapping Session
-  spec_ref: docs/tui_architecture_spec.md  # sections 4.1, 4.2, 5, 6.4–6.6
+  id: 5
+  title: Render the Terminal Experience Exactly
+  spec_ref: docs/tui_architecture_spec.md  # sections 1, 6, 7, 8, 10
   storyboard_ref: docs/tui_interaction_storyboard.md
+  functional_requirements: [FR31, FR32, FR33, FR34, FR35, FR36, FR37, FR38, FR39]
+  nfr: [NFR2, NFR3, NFR7, NFR8, NFR11, NFR12, NFR13]
+  ux_design_requirements: [UX-DR1, UX-DR2, UX-DR15]
 
 sprint: 1
 # status values: todo | in_progress | done | blocked
-# prerequisite: TASK-001 (Epic 2 dispatch) and TASK-008 (Epic 3 FR23 auto-confirm) must be complete
+# prerequisite: Epics 2–4 complete (all modes must exist before geometry can be fully tested)
+# note: TASK-013 (redraw infrastructure) is the only hard prerequisite within this epic;
+#       TASK-014 and TASK-015 can proceed in parallel once TASK-013 is done;
+#       TASK-016 requires all other Epic 5 tasks complete.
 
 tasks:
 
-  - key: TASK-009
+  - key: TASK-013
     type: task
-    title: Add confirmation-mode selectors and renderer case
+    title: Wire inline redraw, SIGWINCH resize handling, and ANSI style testability
     status: todo
     assignee: null
-    depends_on: []
+    depends_on: [TASK-001]
+    files:
+      - mapping_resolution_tui/loop.py
+      - mapping_resolution_tui/actions.py
+      - mapping_resolution_tui/reducer.py
+      - mapping_resolution_tui/renderer.py
+      - mapping_resolution_tui/state.py
+    summary: >
+      Wire the live rendering infrastructure that all Epic 5 stories depend
+      on. Currently loop.py prints a static frame once and exits. This task
+      implements inline clearing, the SIGWINCH signal handler, terminal
+      dimension tracking on resize, and the style-span testability layer
+      required by FR36.
+    acceptance_criteria:
+      - "SIGWINCH handler installed on main thread via
+        signal.signal(signal.SIGWINCH, handler); sets a thread-safe
+        pending-signal flag rather than making signal-unsafe calls inside
+        the handler (FR32, FR37)"
+      - "Event loop checks pending-signal flag each iteration; when set,
+        reads new (columns, rows), dispatches UpdateTerminalSize action,
+        and re-renders"
+      - "TerminalState extended with width: int; both height and width
+        updated via reduce() on every SIGWINCH"
+      - "Inline clearing: on each redraw, cursor moves up N lines (N = line
+        count of last rendered frame) and clears each line before writing
+        new content; no alternate screen buffer used at any point (FR32)"
+      - "Rendering triggered after every key dispatch and every resize;
+        both paths use the same render function"
+      - "render_lines() wraps bold, dim, and reverse-video in inspectable
+        span objects; style spans do not affect display-width calculations;
+        returns both printable lines and parallel style-span metadata (FR36)"
+      - "frame_1a golden test updated to assert style spans as well as
+        geometry; test continues to pass"
+    implementation_notes:
+      - "SIGWINCH handlers must be on the main thread (Python signal
+        restriction); event loop must also run on main thread"
+      - "Use pending-signal flag pattern to avoid signal-unsafe I/O calls
+        inside the handler; resize_demo.py models this approach"
+      - "Capture width alongside height on every resize — needed for FR33
+        Unicode display width layout and FR34 column clamping"
+      - "Style spans: a simple list of (start_col, end_col, style) tuples
+        per line is sufficient; keep the structure minimal"
+
+  - key: TASK-014
+    type: story
+    title: Render exact canonical geometry and all mode templates
+    status: todo
+    assignee: null
+    depends_on: [TASK-013]
+    functional_requirements: [FR31, FR33, FR34, FR35]
+    files:
+      - mapping_resolution_tui/renderer.py
+    golden_frames:
+      - frame_1a              # already committed; must still pass after geometry enforcement
+      - frame_geometry_browsing   # column position assertions for browsing row
+      - frame_geometry_editing    # column positions for edit row, validation, sources
+      - frame_geometry_confirming # column positions for confirmation prompt
+    user_story: >
+      As a reviewer, I want every mode to render in exactly the storyboarded
+      geometry so that the UI is pixel-accurate at the canonical 75×15
+      terminal size.
+    acceptance_criteria:
+      - "All frames render within canonical 15 rows × 75 columns; no line
+        exceeds 75 display-width columns (FR31)"
+      - "All layout computed using Unicode display width, not byte length;
+        named glyphs (❯, ▸, ┃, ✓, ✗, ↑, ↓, ↵, ·) each treated as width 1
+        (FR33)"
+      - "Lines never wrap; content exceeding terminal width remains
+        single-line terminal content (NFR12)"
+      - "Column positions match spec FR34 exactly: row cursor (▸), ordinal,
+        collision marker (!), target token, edit cursor (reverse-video),
+        validation icons (✓/✗), source divider (┃), source text, source
+        pointer (▸)"
+      - "All render templates produced (FR35): header, filter prompt, table
+        header, browsing body row, edit row (expanded), source rows,
+        confirmation prompt, empty-result row, layout-blocked row,
+        accepted-output row"
+      - "Each template matches the corresponding storyboard frame exactly
+        in content, spacing, and styling"
+      - "Renderer does not mutate AppState or have side effects beyond
+        returning rendered lines (NFR7)"
+      - "Column position unit tests assert exact character offsets for
+        every element specified in FR34"
+      - "All existing golden tests continue to pass"
+    definition_of_done:
+      - "Feature is implemented and tested"
+      - "All render templates verified against storyboard frames"
+      - "Column position assertions passing in unit tests for every FR34
+        element"
+
+  - key: TASK-015
+    type: story
+    title: Adapt table layout to terminal height and keep the edit row always visible
+    status: todo
+    assignee: null
+    depends_on: [TASK-013]
+    functional_requirements: [FR37, FR38, FR39]
     files:
       - mapping_resolution_tui/selectors.py
-      - mapping_resolution_tui/renderer.py
-    summary: >
-      Add the derived-state functions and renderer case for CONFIRMING mode.
-      select_footer_content partially handles CONFIRMING mode but there is
-      no selector for the prompt content itself and render_lines() has no
-      case for Mode.CONFIRMING. Prerequisite for all Epic 4 stories.
-    acceptance_criteria:
-      - "select_confirmation_prompt(state) returns a dataclass with: prompt
-        text ('Accept all?' or 'Skip adding commodities?'), raw 'Y'/'y' and 'N'/'n'
-        indicator strings, and a flag for whether YES is currently active. The
-        renderer applies reverse-video on the active choice character."
-      - "select_confirmation_header(state) returns the header line text for
-        CONFIRMING mode as specified in spec section 6.4"
-      - "render_lines() handles Mode.CONFIRMING: full table at current scroll
-        offset, confirmation prompt overlaid below the table, confirmation
-        header and footer (spec sections 6.4–6.6)"
-      - "Prompt format: 'Accept all? [y/*N*]' and 'Skip adding commodities?
-        [y/*N*]' with reverse-video on the active choice character"
-      - "CONFIRMING mode renders full table with no super-dim rows"
-      - "All functions are pure, accept frozen state, no side effects"
-      - "All functions covered by unit tests"
-    implementation_notes:
-      - "Drive prompt rendering entirely from select_confirmation_prompt —
-        avoid branching on ConfirmationKind inside the renderer"
-      - "Reverse-video convention for active choice (*N*) is consistent with
-        cursor indicators used elsewhere in the renderer"
-      - "Scrolling in CONFIRMING mode works identically to BROWSING — no
-        selectedOrdinal cursor is rendered, only scroll offset applies"
-
-  - key: TASK-010
-    type: story
-    title: Accept all resolved mappings and produce output
-    status: todo
-    assignee: null
-    depends_on: [TASK-001, TASK-009]
-    files:
       - mapping_resolution_tui/reducer.py
       - mapping_resolution_tui/renderer.py
     golden_frames:
-      - frame_6   # ACCEPT confirmation entered; prompt shown; NO active; full table
-      - frame_14  # Re-entry via ctrl+s from BROWSING; matches frame_6
-      - frame_accept_terminal  # TUI exits cleanly with mappings applied
+      - frame_short_separator_collapsed  # height where footer separator collapses
+      - frame_layout_blocked             # EDITING at height too small for anchor block
     user_story: >
-      As a reviewer, I want to accept all my resolved mappings and produce
-      the output file, so that the commodity import is applied with my
-      corrections.
+      As a reviewer, I want the table layout to adapt to my terminal height
+      and always keep my edit row visible, so that resizing never breaks
+      my view or hides the row I'm editing.
     acceptance_criteria:
-      - "Entering ACCEPT confirmation (FR23 auto-trigger or ctrl+s from
-        BROWSING when unresolved collision count == 0) sets mode = CONFIRMING,
-        confirmation.kind = ACCEPT, confirmation.choice = NO"
-      - "ctrl+s accepted from BROWSING whenever select_unresolved_collision_count()
-        == 0, regardless of whether collisions were just resolved or were
-        already resolved"
-      - "y key sets confirmation.choice = YES; n sets choice = NO;
-        left/right arrows toggle between YES and NO"
-      - "Enter when choice = YES commits all mappings and exits the TUI
-        (terminal accept state)"
-      - "Enter when choice = NO, or Esc, returns to BROWSING with filter
-        state preserved"
-      - "Footer renders 'scroll · shift pageup/dn · enter edit mappings'
-        when choice = NO; 'scroll · shift pageup/dn · enter submit mappings'
-        when choice = YES (spec section 6.6; the accept/YES footer appears in
-        no storyboard frame)"
-      - "Golden frame frame_6 committed: ACCEPT confirmation after last
-        collision resolved; 'Accept all? [y/*N*]'; full table visible; NO
-        reverse-video active; footer 'enter edit mappings' (identical to
-        frame 7a — no 'enter confirm')"
-      - "Golden frame frame_14 committed: re-entry via ctrl+s after returning
-        to BROWSING; state matches frame_6"
-      - "Golden frame frame_accept_terminal committed: TUI exits cleanly with
-        mappings applied"
+      - "select_body_capacity extended per spec §8.1: computes
+        bodyCapacityWithFooterSeparator and bodyCapacityWithoutFooterSeparator
+        separately; returns both bodyCapacity and footerSeparatorVisible (FR37)"
+      - "Footer separator visible when terminal.height >= 6 AND
+        bodyCapacityWithFooterSeparator >= minimumBodyRows; collapsed
+        otherwise (FR37)"
+      - "minimumBodyRows is mode-dependent: EDITING = activeSources.length;
+        BROWSING with selection = 1; otherwise 0 (FR37)"
+      - "All body capacity and anchored layout logic lives in selectors;
+        renderer only consumes selector output (NFR8)"
+      - "BROWSING anchored allocation: anchor = selected row; following
+        context fills remaining capacity; preceding rows above anchor are
+        never backfilled (spec §8.2, FR37)"
+      - "EDITING anchor block = edited row display + all source rows for
+        that mapping; normal rendering requires bodyCapacity >=
+        anchorBlock.length (FR38)"
+      - "When bodyCapacity < anchorBlock.length in EDITING: LAYOUT_BLOCKED
+        rendered; AppState editing state preserved intact; character
+        insertions and deletions received while blocked are discarded;
+        returns to normal edit rendering when height becomes sufficient
+        (FR39)"
+      - "Scroll offset clamped to [0, max(0, visibleRows.length -
+        bodyCapacity)] after every resize that changes bodyCapacity (FR37)"
+      - "Page size equals current non-editing bodyCapacity; PgDn/PgUp
+        use this value in all modes (FR37)"
+      - "Golden frame frame_short_separator_collapsed committed: height
+        where footer separator collapses; correct layout rendered"
+      - "Golden frame frame_layout_blocked committed: EDITING mode at
+        height too small for anchor block; LAYOUT_BLOCKED footer shown"
       - "All existing golden tests continue to pass"
     definition_of_done:
       - "Feature is implemented and tested"
-      - "BDD scenario for accept confirmation flow (auto-entry, ctrl+s entry,
-        y/n toggle, accept, return to browsing) passes"
-      - "Golden frames frame_6, frame_14, and frame_accept_terminal committed
-        and passing under uv run pytest"
+      - "BDD scenario for resize-triggered layout change (separator
+        collapse and LAYOUT_BLOCKED entry and exit) passes"
+      - "Non-canonical-height golden frames committed and passing under
+        uv run pytest"
 
-  - key: TASK-011
+  - key: TASK-016
     type: story
-    title: Scroll and verify the full mapping table while confirmation is shown
+    title: Cover all storyboard states with golden tests so every rendering regression is caught
     status: todo
     assignee: null
-    depends_on: [TASK-001, TASK-009]
+    depends_on: [TASK-013, TASK-014, TASK-015]
+    functional_requirements: [FR31, FR36]
+    ux_design_requirements: [UX-DR1, UX-DR2, UX-DR15]
     files:
-      - mapping_resolution_tui/reducer.py
-      - mapping_resolution_tui/renderer.py
+      - tests/golden/
+      - tests/step_defs/
     golden_frames:
-      - frame_7a  # Down-arrow in ACCEPT confirmation; table scrolled one row; prompt unchanged
+      - frame_1a              # initial browsing (already committed)
+      - frame_1b              # EXIT confirmation (ctrl+c from BROWSING with collisions)
+      - frame_2               # collision-only metafilter active
+      - frame_3               # combined collision-only + text filter
+      - frame_4               # edit mode entry; empty buffer; ghost text
+      - frame_5               # valid buffer with checkmark
+      - frame_6               # ACCEPT confirmation entry
+      - frame_7a              # scroll within ACCEPT confirmation
+      - frame_8               # text filter "1"; four rows visible; single-char input proven
+      - frame_9               # ghost text streaming in edit
+      - frame_10              # invalid input with error icon
+      - frame_11              # max-length flash error
+      - frame_12a             # source pointer on first source
+      - frame_12b             # source pointer on second source
+      - frame_13              # empty filter results
+      - frame_14              # ctrl+s re-entry to ACCEPT confirmation
+      - frame_accept_terminal # TUI accepted output
     user_story: >
-      As a reviewer, I want to scroll through the full mapping table while
-      a confirmation prompt is shown, so that I can verify all my changes
-      before committing or declining.
+      As a reviewer, I want every state shown in the storyboard to have a
+      committed golden reference that my running TUI matches exactly, so
+      that visual regressions are caught automatically and the implemented
+      UI is faithful to the design.
     acceptance_criteria:
-      - "In CONFIRMING mode, up/down arrows scroll the table body by one row;
-        selectedOrdinal is unaffected (no row cursor in CONFIRMING mode)"
-      - "Shift+up / shift+down scroll by one page"
-      - "Table renders at current scroll offset with all mappings at normal
-        brightness — no super-dim rows"
-      - "Confirmation prompt remains visible below the table body at all
-        scroll positions"
-      - "Footer shows scroll and page-scroll hints plus the context-sensitive
-        action hint at all scroll positions"
-      - "Scroll offset is clamped: cannot scroll past the first or last row"
-      - "Golden frame frame_7a committed: one down-arrow press in ACCEPT
-        confirmation; table scrolled by one row; prompt and footer unchanged"
-      - "All existing golden tests continue to pass"
+      - "Golden frames committed and passing for all 17 storyboard states
+        listed above; each frame asserts rendered line content (ANSI-stripped),
+        style spans, visible row set, AppState field values, and frame
+        dimensions (FR31, FR36, UX-DR1, UX-DR2)"
+      - "All golden tests runnable locally with a single command:
+        uv run pytest tests/ (NFR13)"
+      - "--update-snapshots flag regenerates all committed reference files
+        deterministically; running twice produces identical output"
+      - "No golden frame depends on wall-clock time or system-specific
+        terminal state; time-dependent fields (e.g. max_length_flash_until)
+        are injectable or stubbed in tests"
+      - "All existing 56 unit tests continue to pass alongside the new
+        golden suite"
     definition_of_done:
       - "Feature is implemented and tested"
-      - "BDD scenario for table scrolling within CONFIRMING mode passes"
-      - "Golden frame frame_7a committed and passing under uv run pytest"
-
-  - key: TASK-012
-    type: story
-    title: Exit without saving with a double ctrl+c guard against accidental discard
-    status: todo
-    assignee: null
-    depends_on: [TASK-001, TASK-009]
-    files:
-      - mapping_resolution_tui/reducer.py
-      - mapping_resolution_tui/renderer.py
-    golden_frames:
-      - frame_1b  # ctrl+c from BROWSING with collisions; EXIT prompt; NO active
-    user_story: >
-      As a reviewer, I want to be warned before abandoning my mapping
-      session and required to press ctrl+c twice to force-exit, so that
-      I don't accidentally discard my work.
-    acceptance_criteria:
-      - "ctrl+c in BROWSING enters EXIT confirmation: mode = CONFIRMING,
-        confirmation.kind = EXIT, confirmation.choice = NO,
-        second_ctrl_c_armed = True"
-      - "y key sets choice = YES; n sets choice = NO; left/right arrows
-        toggle between YES and NO"
-      - "Enter when choice = YES sets result.status = SKIPPED and exits
-        without adding commodities (clean skip); it MUST NOT send SIGINT —
-        SIGINT is reserved for the second ctrl+c force-exit (spec §4.1/§4.2)"
-      - "Enter when choice = NO, or Esc, returns to BROWSING mode"
-      - "A second ctrl+c while in EXIT confirmation sends SIGINT immediately,
-        bypassing the y/n check entirely (second_ctrl_c_armed = True on
-        entry, never reset within CONFIRMING state)"
-      - "Prompt renders as 'Skip adding commodities? [y/*N*]' (spec
-        section 6.5)"
-      - "Footer shows scroll and page-scroll hints plus 'enter edit mappings'
-        when choice = NO"
-      - "Golden frame frame_1b committed: ctrl+c from BROWSING with unresolved
-        collisions; EXIT prompt shown; full table visible; NO active"
-      - "All existing golden tests continue to pass"
-    definition_of_done:
-      - "Feature is implemented and tested"
-      - "BDD scenarios for exit confirmation (y → SKIPPED clean exit,
-        n/esc → return to browsing, second ctrl+c → SIGINT) all pass"
-      - "Golden frame frame_1b committed and passing under uv run pytest"
+      - "All storyboard golden frames green under uv run pytest"
+      - "--update-snapshots regeneration verified idempotent"
