@@ -23,7 +23,7 @@ Below are the exact visual states the TUI must accurately render across its life
    8   SPY                        cmdty_id: "SPY"
    9   QQQ                        cmdty_id: "QQQ"
 
-   shift+↑↓ pageup/dn  ·  ↵ edit selected
+  shift+↑↓ pageup/dn  ·  ↵ edit selected
 ```
 - Table rows are sorted first by sanitized version of gnucash source; then by ASCII order of original version (e.g. "AT&T" before "AT-T" in the case of the collision above); This prevents having to dynamically reorder the table when Beancount Token values change
 - The ordinal column is two digits wide (matching the width of the table size) and right-aligned
@@ -64,13 +64,6 @@ Below are the exact visual states the TUI must accurately render across its life
    3  !AT-T                       cmdty_id: "AT-T"
 
   shift+↑↓ pageup/dn  ·  ↵ edit selected  ·  esc clear filter
-
-
-
-
-
-
-
 ```
 - Shortcuts line moves up to remain just two lines below the table
 
@@ -85,14 +78,6 @@ Below are the exact visual states the TUI must accurately render across its life
 ▸  **3**  !AT-T                       cmdty_id: "AT-T"
 
   shift+↑↓ pageup/dn  ·  ↵ edit selected  ·  esc clear filter
-
-
-
-
-
-
-
-
 ```
 - String matches on values in the ordinal and Beancount Token columns bolded for visual feedback
 
@@ -109,12 +94,6 @@ Below are the exact visual states the TUI must accurately render across its life
                                   ┃ user_symbol: (not set)
 
   type to edit  ·  ↑↓ select source  ·  esc cancel
-
-
-
-
-
-
 ```
 - All characters in row 2 appear super dim while row 3 is expanded (as will be true for all rows surrounding the selected mapping while in edit mode)
 - When the mapping has no literal Beancount Token override, the input follows a model of streaming overwrite against derived ghost text: characters that keep the buffer as a prefix of the default source value advance through it (A→A, T→T); a character that makes the buffer stop matching the default-source prefix hides the remaining ghost text and appends normally
@@ -132,12 +111,6 @@ Below are the exact visual states the TUI must accurately render across its life
                                   ┃ user_symbol: (not set)
 
   type to edit  ·  ↑↓ select source  ·  ↵ submit  ·  esc cancel
-
-
-
-
-
-
 ```
 - The Collision icon (`!`) disappears from rows 2 and 3 when the second `T` is typed, i.e. as soon as the value of the Beancount Token deviates from the original (or sanitized, when present) version of the default GnuCash Source value
 
@@ -196,14 +169,6 @@ Below are the exact visual states the TUI must accurately render across its life
 ▸ 11   VWUSX                      cmdty_id: "VWUSX"
 
   shift+↑↓ pageup/dn  ·  ↵ edit selected
-
-
-
-
-
-
-
-
 ```
 
 > TRANSITION: User types `↑`
@@ -218,14 +183,6 @@ Below are the exact visual states the TUI must accurately render across its life
   11   VWUSX                      cmdty_id: "VWUSX"
 
   shift+↑↓ pageup/dn  ·  ↵ edit selected
-
-
-
-
-
-
-
-
 ```
 
 > TRANSITION: User types `1`
@@ -242,11 +199,6 @@ Below are the exact visual states the TUI must accurately render across its life
   **1**1   VWUSX                      cmdty_id: "VWUSX"
 
   shift+↑↓ pageup/dn  ·  ↵ edit selected  ·  esc clear filter
-
-
-
-
-
 ```
 - Row 4 is included in filter results on the basis of matching the “1” in the token string “C100-F”; values in the GnuCash Source column are not exposed to filter matching
 
@@ -265,11 +217,6 @@ Below are the exact visual states the TUI must accurately render across its life
   __11   VWUSX                      cmdty_id: "VWUSX"__
 
   type to edit  ·  ↑↓ select source  ·  ↵ submit  ·  esc cancel
-
-
-
-
-
 ```
 
 > TRANSITION to 10: User types `4`, `4`, `P` , `L`
@@ -291,11 +238,6 @@ Below are the exact visual states the TUI must accurately render across its life
   __11   VWUSX                      cmdty_id: "VWUSX"__
 
   Error: must start with A–Z  ·  ↑↓ select source  ·  esc cancel
-
-
-
-
-                  
 ```
 - The Error message and Invalid-input icon (`✗`) appear immediately after the first `4` is typed
 - The icon appears two spaces to the right of the reverse-video cursor (represented by `* *`)
@@ -317,11 +259,6 @@ Below are the exact visual states the TUI must accurately render across its life
   __11   VWUSX                      cmdty_id: "VWUSX"__
 
   Error: 24 chars max  ·  ↑↓ select source  ·  esc cancel
-
-
-
-
-
 ```
 - When the user types the 24th character in a Beancount Token input buffer, the cursor advances to column 32 of the display, but the input status icon (`✗` above) stops at column 33, breaking the ‘two spaces to the right of the cursor’ rule
 - When the user types the 25th character in a Beancount Token input buffer, the character is discarded, the Invalid-input icon (`✗`) flashes in column 33, and the error message "Error: 24 chars max" appears briefly before fading out/fading to the last error message pushed to the stack
@@ -343,11 +280,6 @@ Below are the exact visual states the TUI must accurately render across its life
   __11   VWUSX                      cmdty_id: "VWUSX"__
 
   type to edit  ·  ↑↓ select source  ·  ↵ submit  ·  esc cancel
-
-
-
-
-
 ```
 - While `▸` cursor is in the source column, up/down arrow movement traverses the source list. Moving above the first source or below the last source returns the cursor to the token input and restores the buffer value from before source-list navigation.
 
@@ -367,11 +299,6 @@ Below are the exact visual states the TUI must accurately render across its life
   __11   VWUSX                      cmdty_id: "VWUSX"__
 
   type to edit  ·  ↑↓ select source  ·  ↵ submit  ·  esc cancel
-
-
-
-
-
 ```
 - Position of `▸` in the source column reflects temporary source-list navigation, not exact-match tracking. If the user types `backspace` in this frame, focus returns to the token input, the source pointer disappears, and the buffer changes from `APPLE` to `APPL`; because the mapping still has no literal target override, the default-source ghost suffix reappears as `APPL*E*`.
 - If the user submits `APPL`, that literal value is written to the mapping. Re-entering edit mode for the mapping later displays `APPL` as a pre-filled input value with no ghost suffix.
@@ -389,14 +316,6 @@ Below are the exact visual states the TUI must accurately render across its life
 
 
   Error: no matching rows  ·  esc clear filter
-
-
-
-
-
-
-
-
 ```
 - An empty row is displayed under the table headers when no results match the current filter
 
@@ -427,17 +346,4 @@ Below are the exact visual states the TUI must accurately render across its life
 ```bash
 11 commodities created.
 ❯
-
-
-
-
-
-
-
-
-
-
-
-
-
 ```
