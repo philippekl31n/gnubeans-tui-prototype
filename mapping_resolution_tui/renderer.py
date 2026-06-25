@@ -12,6 +12,8 @@ from mapping_resolution_tui.selectors import (
     select_default_source,
     select_filter_prompt,
     select_footer_content,
+    select_match_spans,
+    select_ordinal_match_spans,
     select_unresolved_collision_count,
     select_unresolved_collision_ordinals,
     select_visible_rows,
@@ -43,6 +45,24 @@ def strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
+def _apply_bold_spans(text: str, spans: tuple[tuple[int, int], ...]) -> str:
+    """Wrap each ``[start, end)`` span of ``text`` in bold ANSI styling.
+
+    ANSI codes carry no display width, so the rendered cell geometry is
+    unchanged. With no spans the text is returned verbatim.
+    """
+    if not spans:
+        return text
+    parts: list[str] = []
+    cursor = 0
+    for start, end in spans:
+        parts.append(text[cursor:start])
+        parts.append(f"{_BOLD}{text[start:end]}{_RESET}")
+        cursor = end
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
 def render_lines(state: AppState) -> list[str]:
     config = state.config
     mappings = state.mappings
@@ -71,7 +91,17 @@ def render_lines(state: AppState) -> list[str]:
     # ── prompt ────────────────────────────────────────────────────────────────
     prompt_content = select_filter_prompt(state, unresolved_count)
     if prompt_content.filter_text:
-        prompt = f"  Filter: {prompt_content.filter_text}"
+        prefix = "!" if prompt_content.collision_only else ""
+        text = prompt_content.filter_text
+        cursor = prompt_content.filter_cursor
+        if cursor >= len(text):
+            # Cursor at end: reverse-video space after the visible query (§6.5).
+            query = f"{text}{_REV} {_RESET}"
+        else:
+            # Cursor covers the character at the offset (§6.5); the leading
+            # metafilter `!` is not part of filter.text and is not counted.
+            query = f"{text[:cursor]}{_REV}{text[cursor]}{_RESET}{text[cursor + 1:]}"
+        prompt = f"  Filter: {prefix}{query}"
     else:
         prefix = "!" if prompt_content.collision_only else ""
         hint_text = "Tab to view collisions" if prompt_content.collision_hint_visible else "Type to filter"
@@ -92,6 +122,7 @@ def render_lines(state: AppState) -> list[str]:
     scroll = state.selection.scroll_offset
     shown = visible[scroll : scroll + capacity]
 
+    filter_text = state.filter.text
     body_lines: list[str] = []
     for mapping in shown:
         is_selected = mapping.ordinal == state.selection.selected_ordinal
@@ -99,8 +130,24 @@ def render_lines(state: AppState) -> list[str]:
         cursor = "▸" if is_selected else " "
         target = select_current_target_value(mapping)
         source = select_default_source(mapping).original_value or ""
-        ordinal_str = f"{mapping.ordinal:>2}"
-        row = f"{cursor}  {ordinal_str}  {collision}{target:<{max_token_length}}  {source}"
+
+        ordinal_display = f"{mapping.ordinal:>2}"
+        token_field = f"{target:<{max_token_length}}"
+        if filter_text:
+            # Bold every non-overlapping filter match in the ordinal and target
+            # token cells; source values are never matched or highlighted (§3.3).
+            ordinal_cell = _apply_bold_spans(
+                ordinal_display,
+                select_ordinal_match_spans(mapping.ordinal, filter_text, len(ordinal_display)),
+            )
+            token_cell = _apply_bold_spans(
+                token_field, select_match_spans(target, filter_text)
+            )
+        else:
+            ordinal_cell = ordinal_display
+            token_cell = token_field
+
+        row = f"{cursor}  {ordinal_cell}  {collision}{token_cell}  {source}"
         body_lines.append(row)
 
 
@@ -115,5 +162,9 @@ def render_lines(state: AppState) -> list[str]:
     footer = f"  {hints}"
 
     # ── assemble ──────────────────────────────────────────────────────────────
+    # The inline frame is variable-height and ends at the footer; it MUST NOT be
+    # padded with blank lines to reach the terminal height (§6.1/§6.2). Clearing
+    # any stale lines a taller previous frame drew below the footer is the
+    # redraw loop's job, not the renderer's.
     lines = [header, prompt, "", table_header, *body_lines, "", footer]
     return lines
