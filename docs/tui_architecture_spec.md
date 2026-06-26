@@ -108,10 +108,10 @@ interface Source {
 }
 
 interface FilterState {
-  raw: string;
-  collisionOnly: boolean;
-  text: string;
-  cursor: number;
+  raw: string;            // editable filter buffer; readline edits and the cursor operate on this
+  cursor: number;         // caret index within `raw`, clamped to [0, raw.length]
+  collisionOnly: boolean; // DERIVED: `raw` begins with "!"
+  text: string;           // DERIVED: `raw` with a single leading "!" removed; the search portion
 }
 
 interface SelectionState {
@@ -169,7 +169,7 @@ Ownership rules:
   output text, target validation rules, target maximum display width, or validation error text.
 - `selectedOrdinal` MUST identify the selected mapping by stable ordinal, not by visible-row index.
 - `scrollOffset` MUST be the zero-based offset into the current derived visible row list.
-- `filter.cursor` MUST be the zero-based insertion offset into `filter.text`.
+- `filter.cursor` MUST be the zero-based insertion offset into `filter.raw` (which includes any leading `!`).
 - `edit.cursor` MUST be the zero-based insertion offset into `edit.buffer`.
 - Input cursors MUST be clamped to valid string boundaries after every mutation. The storyboard fixture
   uses ASCII values, but implementations MUST NOT split a Unicode scalar value when moving or deleting.
@@ -337,17 +337,30 @@ text           ::= any printable characters except control keys
 
 Key semantics:
 
-- Printable characters in `BROWSING` MUST insert into `filter.text` at `filter.cursor`, then advance
+- `filter.raw` is the single editable filter buffer. `filter.collisionOnly` and `filter.text` are
+  DERIVED after every mutation: `collisionOnly` is true when `filter.raw` begins with `!`, and
+  `filter.text` is `filter.raw` with a single leading `!` removed (the search portion used by matching).
+- Printable characters in `BROWSING` MUST insert into `filter.raw` at `filter.cursor`, then advance
   `filter.cursor` by the inserted character length.
-- In `BROWSING`, `Tab` MUST toggle `filter.collisionOnly`.
-- In `BROWSING`, `!` MUST toggle `filter.collisionOnly`; it MUST NOT append a literal `!` to
-  `filter.text`.
-- The prompt MUST render the active metafilter as a leading `!`.
+- `!` is an ordinary printable character. In `BROWSING`, `!` MUST insert a literal `!` into `filter.raw`
+  at `filter.cursor` like any other printable character; it MUST NOT toggle a metafilter flag. A `!`
+  inserted at index 0 thereby becomes the collision metafilter; a `!` inserted elsewhere is ordinary
+  search text.
+- In `BROWSING`, `Tab` / `ctrl+i` MUST autocomplete a leading `!` into `filter.raw` only when the
+  `Tab to view collisions` ghost text is visible — that is, only when `filter.raw` is empty and at least
+  one unresolved collision exists. It MUST insert `!` at index 0 and set `filter.cursor = 1`. In every
+  other situation `Tab` / `ctrl+i` MUST be a no-op; in particular a second `Tab` MUST NOT clear the
+  inserted `!`, and `Tab` MUST NOT autocomplete when no unresolved collisions exist.
+- Once present, the `!` responds to readline controls identically to any other character of `filter.raw`:
+  the cursor may move across it, and `Backspace`, `kill-line`, `unix-line-discard`, and the other
+  readline actions delete it like ordinary text. Deleting a leading `!` clears the collision metafilter
+  because `collisionOnly` is derived.
+- The prompt MUST render `filter.raw` literally, including any leading `!`.
 - Backspace, `ctrl+h`, and readline `backward-delete-char` aliases MUST delete the character before
-  `filter.cursor` when `filter.cursor > 0`, then decrement `filter.cursor`. If `filter.cursor == 0`
-  and `filter.text` is empty and `collisionOnly` is true, they MUST clear `collisionOnly`.
-- `Esc` MUST clear both `collisionOnly` and `text` when either is active.
-  Clearing `text` MUST set `filter.cursor = 0`.
+  `filter.cursor` when `filter.cursor > 0`, then decrement `filter.cursor`. At `filter.cursor == 0` they
+  MUST be a no-op.
+- `Esc` MUST clear `filter.raw` when it is non-empty, clearing both the derived metafilter and search
+  text. Clearing MUST set `filter.cursor = 0`.
 
 Matching semantics:
 
@@ -408,10 +421,11 @@ between key events until the user confirms, changes choice, cancels, or leaves c
 
 | Current state | Event | Guard | Side effects | Next state |
 |---|---|---|---|---|
-| `BROWSING` | Printable char | Any | Insert char into `filter.text` at `filter.cursor`; advance cursor; parse/filter; clamp selection | `BROWSING` |
-| `BROWSING` | `Tab` or `!` | Any | Toggle `filter.collisionOnly`; clamp selection | `BROWSING` |
-| `BROWSING` | `Backspace` or `ctrl+h` | Filter active | Delete filter char before cursor or clear metafilter; clamp cursor and selection | `BROWSING` |
-| `BROWSING` | `Esc` | Filter active | Clear filter and metafilter; clamp selection | `BROWSING` |
+| `BROWSING` | Printable char (incl. `!`) | Any | Insert char into `filter.raw` at `filter.cursor`; advance cursor; re-derive metafilter/search; parse/filter; clamp selection | `BROWSING` |
+| `BROWSING` | `Tab` / `ctrl+i` | `Tab to view collisions` ghost visible | Insert leading `!` into `filter.raw`; set `filter.cursor = 1`; parse/filter; clamp selection | `BROWSING` |
+| `BROWSING` | `Tab` / `ctrl+i` | Ghost not visible | No-op | `BROWSING` |
+| `BROWSING` | `Backspace` or `ctrl+h` | `filter.cursor > 0` | Delete char before cursor in `filter.raw`; clamp cursor and selection | `BROWSING` |
+| `BROWSING` | `Esc` | `filter.raw` non-empty | Clear `filter.raw`; set `filter.cursor = 0`; clamp selection | `BROWSING` |
 | `BROWSING` | `↑` / `↓` | `visibleRows` non-empty | Move `selectedOrdinal` by -1/+1 and adjust scroll to keep selected visible | `BROWSING` |
 | `BROWSING` | `Shift+↑` / `PgUp` | `visibleRows` non-empty | Page up; selected row becomes first visible row after paging | `BROWSING` |
 | `BROWSING` | `Shift+↓` / `PgDn` | `visibleRows` non-empty | Page down; selected row becomes first visible row after paging | `BROWSING` |
@@ -460,9 +474,9 @@ between key events until the user confirms, changes choice, cancels, or leaves c
 | `→` | Move filter cursor right | Move edit cursor right in token input; no-op in source list | Toggle choice | Toggle choice |
 | `Enter` | Edit selected row | Submit only if valid | Confirm if YES, otherwise edit mappings | Skip if YES, otherwise edit mappings |
 | `Esc` | Clear active filter, otherwise no-op | Cancel edit | Edit mappings | Edit mappings |
-| `Tab` | Toggle collision metafilter | Complete ghost text in token input | No-op | No-op |
-| `!` | Toggle collision metafilter | Insert literal `!`; validation becomes invalid | No-op | No-op |
-| `Backspace` | Delete filter char before cursor or metafilter | Return to token input if needed, then delete edit char before cursor | No-op | No-op |
+| `Tab` | Autocomplete `!` when `Tab to view collisions` ghost visible, else no-op | Complete ghost text in token input | No-op | No-op |
+| `!` | Insert literal `!` at cursor (a leading `!` is the collision metafilter) | Insert literal `!`; validation becomes invalid | No-op | No-op |
+| `Backspace` | Delete filter char before cursor | Return to token input if needed, then delete edit char before cursor | No-op | No-op |
 | `ctrl+h` | Same as Backspace | Same as Backspace | No-op | No-op |
 | `ctrl+s` | Open accept confirmation if zero collisions | No-op | No-op | No-op |
 | `ctrl+c` | Enter exit confirmation | Enter exit confirmation | Enter exit confirmation | Send SIGINT |
@@ -486,7 +500,10 @@ semantic key events into these actions before dispatching.
 App-specific bindings in the main key matrix MUST take precedence over readline names where the same
 key is reserved by the TUI:
 
-- `Tab` / `ctrl+i` in `BROWSING` MUST toggle the collision metafilter, not autocomplete.
+- `Tab` / `ctrl+i` in `BROWSING` MUST autocomplete a leading `!` collision metafilter into the filter
+  input, and only when the `Tab to view collisions` ghost text is visible (an empty filter with
+  unresolved collisions present). It MUST NOT toggle a metafilter flag, a second `Tab` MUST NOT clear
+  the inserted `!`, and it MUST be a no-op when no unresolved collisions exist.
 - `Tab` / `ctrl+i` in `EDITING` MUST complete ghost text, not generic readline completion.
 - `ctrl+s` in `BROWSING` MUST submit when collisions are zero, not start readline forward search.
 - `ctrl+c` MUST follow the TUI cancellation/exit contract, not readline signal defaults.
@@ -497,15 +514,15 @@ Text-editing actions:
 | Readline function family | Typical keys/sequences | Filter input behavior | Edit input behavior |
 |---|---|---|---|
 | `accept-line` | `Enter`, `ctrl+j`, `ctrl+m` | Dispatch as `Enter` and edit selected row if possible. | Dispatch as `Enter` and submit only when validation is `VALID`. |
-| `complete` | `Tab`, `ctrl+i` | Toggle `filter.collisionOnly`. | Complete ghost text when available; otherwise no-op. |
+| `complete` | `Tab`, `ctrl+i` | When the `Tab to view collisions` ghost is visible, insert a leading `!` into `filter.raw` and set `filter.cursor = 1`; otherwise no-op. | Complete ghost text when available; otherwise no-op. |
 | `backward-char` | `ctrl+b`, left-arrow escape sequences | Move `filter.cursor` left by one character; clamp at 0. | Move `edit.cursor` left by one character when `focusRegion = TOKEN_INPUT`; no-op in `SOURCE_LIST`. |
-| `forward-char` | `ctrl+f`, right-arrow escape sequences | Move `filter.cursor` right by one character; clamp at `filter.text.length`. | Move `edit.cursor` right by one character when `focusRegion = TOKEN_INPUT`; clamp at `edit.buffer.length`; no-op in `SOURCE_LIST`. |
+| `forward-char` | `ctrl+f`, right-arrow escape sequences | Move `filter.cursor` right by one character; clamp at `filter.raw.length`. | Move `edit.cursor` right by one character when `focusRegion = TOKEN_INPUT`; clamp at `edit.buffer.length`; no-op in `SOURCE_LIST`. |
 | `beginning-of-line` | `ctrl+a`, Home escape sequences | Set `filter.cursor = 0`. | Set `edit.cursor = 0` when `focusRegion = TOKEN_INPUT`; no-op in `SOURCE_LIST`. |
-| `end-of-line` | `ctrl+e`, End escape sequences | Set `filter.cursor = filter.text.length`. | Set `edit.cursor = edit.buffer.length` when `focusRegion = TOKEN_INPUT`; no-op in `SOURCE_LIST`. |
-| `backward-delete-char` | `Backspace`, `ctrl+h`, `ctrl+?` / DEL | Delete character before `filter.cursor`; if empty at cursor 0, clear active metafilter. | Return to token input if needed, then delete character before `edit.cursor`. |
+| `end-of-line` | `ctrl+e`, End escape sequences | Set `filter.cursor = filter.raw.length`. | Set `edit.cursor = edit.buffer.length` when `focusRegion = TOKEN_INPUT`; no-op in `SOURCE_LIST`. |
+| `backward-delete-char` | `Backspace`, `ctrl+h`, `ctrl+?` / DEL | Delete the character before `filter.cursor` in `filter.raw`; no-op at cursor 0 (a leading `!` deletes like any other character). | Return to token input if needed, then delete character before `edit.cursor`. |
 | `delete-char` | `ctrl+d`, Delete escape sequences | Delete character at `filter.cursor`; no-op at end. | Delete character at `edit.cursor`; no-op at end. |
-| `kill-line` | `ctrl+k` | Delete from `filter.cursor` through end of `filter.text`. | Delete from `edit.cursor` through end of `edit.buffer`. |
-| `unix-line-discard` | `ctrl+u` | Delete from start of `filter.text` through `filter.cursor`; set cursor to 0. | Delete from start of `edit.buffer` through `edit.cursor`; set cursor to 0. |
+| `kill-line` | `ctrl+k` | Delete from `filter.cursor` through end of `filter.raw`. | Delete from `edit.cursor` through end of `edit.buffer`. |
+| `unix-line-discard` | `ctrl+u` | Delete from start of `filter.raw` through `filter.cursor`; set cursor to 0. | Delete from start of `edit.buffer` through `edit.cursor`; set cursor to 0. |
 | `backward-kill-line` | `ctrl+x ctrl+?` | Same as `unix-line-discard`. | Same as `unix-line-discard`. |
 | `kill-word` | `meta+d` | Delete from cursor through the end of the next token. | Delete from cursor through the end of the next token. |
 | `backward-kill-word`, `unix-word-rubout` | `meta+backspace`, `ctrl+w` | Delete from the start of the previous token through cursor. | Delete from the start of the previous token through cursor. |
@@ -532,8 +549,9 @@ characters before the cursor, then delete the previous contiguous run of word ch
 After any filter-input readline mutation:
 
 ```text
-filter.cursor = clamp(filter.cursor, 0, filter.text.length)
-filter.raw = (filter.collisionOnly ? "!" : "") + filter.text
+filter.cursor = clamp(filter.cursor, 0, filter.raw.length)
+filter.collisionOnly = filter.raw starts with "!"
+filter.text = filter.collisionOnly ? filter.raw without its leading "!" : filter.raw
 parse/filter visible rows
 clamp selection
 ```
@@ -639,10 +657,10 @@ Shortcut portions in the header MUST be dim. The `❯` glyph SHOULD be bold.
 
 | State | Prompt |
 |---|---|
-| Browsing, no filter, collisions > 0 | `  Filter: Tab to view collisions`, with `T` reverse-video and remainder dim |
-| Browsing, no filter, collisions = 0 | `  Filter: Type to filter`, with `T` reverse-video and remainder dim |
-| Browsing, metafilter only | `  Filter: !Type to filter`, with only `T` reverse-video and remainder dim |
-| Browsing, text filter | `  Filter: {visibleQuery}{cursor}` |
+| Browsing, empty filter (`filter.raw == ""`), collisions > 0 | `  Filter: Tab to view collisions`, with `T` reverse-video and remainder dim |
+| Browsing, empty filter (`filter.raw == ""`), collisions = 0 | `  Filter: Type to filter`, with `T` reverse-video and remainder dim |
+| Browsing, metafilter only (`filter.raw == "!"`) | `  Filter: !Type to filter`, with only `T` reverse-video and remainder dim |
+| Browsing, search text present (`filter.text != ""`) | `  Filter: {visibleQuery}{cursor}` where `visibleQuery == filter.raw` |
 | Editing | `  Editing mapping for "{defaultSourceValue}":` |
 | Accept confirming | `  {acceptPrompt} [Y/n]` or `  {acceptPrompt} [y/N]`, active choice reverse-video and bold |
 | Exit confirming | `  {exitPrompt} [Y/n]` or `  {exitPrompt} [y/N]`, active choice reverse-video and bold |
@@ -651,9 +669,9 @@ Shortcut portions in the header MUST be dim. The `❯` glyph SHOULD be bold.
 
 | State | Footer |
 |---|---|
-| Browsing, inactive/empty filter | `  shift+↑↓ pageup/dn  ·  ↵ edit selected` |
-| Browsing, active filter with rows | `  shift+↑↓ pageup/dn  ·  ↵ edit selected  ·  esc clear filter` |
-| Browsing, active filter with no rows | `  Error: no matching rows  ·  esc clear filter` |
+| Browsing, empty filter (`filter.raw == ""`) | `  shift+↑↓ pageup/dn  ·  ↵ edit selected` |
+| Browsing, non-empty filter (`filter.raw != ""`) with rows | `  shift+↑↓ pageup/dn  ·  ↵ edit selected  ·  esc clear filter` |
+| Browsing, non-empty filter (`filter.raw != ""`) with no rows | `  Error: no matching rows  ·  esc clear filter` |
 | Editing, valid or empty | `  type to edit  ·  ↑↓ select source  ·  ↵ submit  ·  esc cancel` when valid; omit submit when invalid/empty |
 | Editing, invalid | `  Error: {message}  ·  ↑↓ select source  ·  esc cancel` |
 | Confirming, choice YES | `  ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ confirm` |
@@ -663,10 +681,14 @@ Frame 6 is a storyboard-specific render case: it enters `CONFIRMING ACCEPT` with
 still renders the footer text `↵ confirm`. This footer text MUST be preserved for frame-accurate
 rendering; the `Enter` key behavior MUST still follow `choice == NO` and return to `BROWSING`.
 
-For browsing text filters, `{cursor}` MUST render at `filter.cursor` within `filter.text`. If
-`filter.cursor == filter.text.length`, the cursor MUST be a reverse-video space after the visible query.
-If `filter.cursor < filter.text.length`, the cursor MUST cover the character at `filter.cursor`. The
-metafilter `!` prefix is not part of `filter.text` and MUST NOT be counted by `filter.cursor`.
+For browsing filters with search text, `{cursor}` MUST render at `filter.cursor` within `filter.raw`. If
+`filter.cursor == filter.raw.length`, the cursor MUST be a reverse-video space after the visible query.
+If `filter.cursor < filter.raw.length`, the cursor MUST cover the character at `filter.cursor`. A leading
+`!` metafilter is an ordinary character of `filter.raw`: it occupies index 0, is counted by
+`filter.cursor`, and is editable by readline actions exactly like any other character. When ghost text is
+rendered (empty filter or metafilter only), the caret is shown as the reverse-video first character of
+that ghost text. The `Tab to view collisions` ghost — and therefore the `Tab` / `ctrl+i` autocomplete it
+gates — renders only when `filter.raw` is empty and at least one unresolved collision exists.
 
 Frame 4 shows no submit affordance while the buffer is still ghost-only/uncommitted. Frames 5, 9, 12a,
 and 12b show submit once validation is valid.
@@ -1119,21 +1141,21 @@ file; snapshots are regenerated with `pytest --update-snapshots`.
 |---|---|---|---|---|---|---|
 | 1a | Fresh dataset, rows 2 and 3 collide | None | `BROWSING`, `filter=""`, selected row 1, `scrollOffset=0`, 1 collision group | 1..9 | Prompt ghost `Tab to view collisions`; footer edit selected | Header includes `1 unresolved collision`; row 1 has `▸`; rows 2/3 have `!`; footer row 15 |
 | 1b | Frame 1a | `ctrl+c` | `CONFIRMING EXIT`, choice `NO`, `secondCtrlCArmed=true` | 1..9 | `Skip adding commodities? [y/N]`; footer edit mappings | Header shortcut says `ctrl+c exit`; no row cursor; second `ctrl+c` sends SIGINT |
-| 2 | Frame 1a or after exiting 1b | `Tab` or `!` | `BROWSING`, `collisionOnly=true`, selected row 2 | 2,3 | Prompt `!Type to filter`; footer clear filter | Footer row 8; rows 2/3 only; frame ends at the footer with no padding below it (stale lines from a taller prior frame cleared) |
-| 3 | Frame 2 | `3` | `BROWSING`, `collisionOnly=true`, `text="3"`, selected row 3 | 3 | Prompt `!3{cursor}`; footer clear filter | Ordinal `3` bold; no source matching; footer row 7 |
+| 2 | Frame 1a or after exiting 1b | `Tab` (autocomplete) or `!` | `BROWSING`, `filter.raw="!"`, `collisionOnly=true` (derived), `filter.cursor=1`, selected row 2 | 2,3 | Prompt `!Type to filter`; footer clear filter | Footer row 8; rows 2/3 only; frame ends at the footer with no padding below it (stale lines from a taller prior frame cleared) |
+| 3 | Frame 2 | `3` | `BROWSING`, `filter.raw="!3"`, `collisionOnly=true` (derived), `text="3"` (derived), `filter.cursor=2`, selected row 3 | 3 | Prompt `!3{cursor}`; footer clear filter | Ordinal `3` bold; no source matching; footer row 7 |
 | 4 | Frame 3 | `Backspace`, `↓`, `Enter` | `EDITING` row 3, empty buffer, ghost `AT-T`, token focus | 2 dim, expanded 3 | Editing prompt for `AT-T`; footer no submit | Row 2 super dim; active row shows `▸`, `!`, reverse `A`, dim `T-T`; source rows include `(not set)` |
 | 5 | Frame 4 | `A`, `T`, `T` | `EDITING` row 3, buffer `ATT`, valid, collisions zero live | 2 dim, expanded 3 | Footer includes submit | Rows 2/3 have no `!`; active row shows `ATT`, cursor, `✓` |
 | 6 | Frame 5 | `Enter` | `CONFIRMING ACCEPT`, choice `NO`, `scrollOffset=0`, collisions zero | 1..9 | `Accept all? [y/N]`; footer confirm per storyboard frame | Header omits collision count; no cursor; row 3 target `ATT` |
 | 7a | Frame 6 | `↓` | `CONFIRMING ACCEPT`, choice `NO`, `scrollOffset=1` | 2..10 | `Accept all? [y/N]`; footer edit mappings | No cursor; first visible row is 2; row 10 visible |
 | 7b | Frame 7a | `Shift+↓`, `Enter` | `BROWSING`, collisions zero, selected row 11 | 11 | Filter ghost `Type to filter`; footer edit selected | Header includes `ctrl+s submit`; row 11 has `▸`; footer row 7 |
 | 7c | Frame 7b | `↑` | `BROWSING`, selected row 10, last page visible | 10,11 | Filter ghost `Type to filter`; footer edit selected | Row 10 has `▸`; row 11 follows; footer row 8 |
-| 8 | Frame 7c | `1` | `BROWSING`, `text="1"`, selected row 1 | 1,4,10,11 | Prompt `1{cursor}`; footer clear filter | Bold matches on ordinals 1/10/11 and token `C100-F`; source `100-F` is not matched |
+| 8 | Frame 7c | `1` | `BROWSING`, `filter.raw="1"`, `collisionOnly=false` (derived), `text="1"` (derived), `filter.cursor=1`, selected row 1 | 1,4,10,11 | Prompt `1{cursor}`; footer clear filter | Bold matches on ordinals 1/10/11 and token `C100-F`; source `100-F` is not matched |
 | 9 | Frame 8 | `Enter` | `EDITING` row 1, empty buffer, ghost `APPLE`, token focus | Expanded 1, dim 4/10/11 | Editing prompt for `APPLE`; footer submit | Active row shows reverse `A` and dim `PPLE`; source rows `AAPL`, `APPLE`; dim inactive rows |
 | 10 | Frame 9 | `4`, `4`, `P`, `L` | `EDITING` row 1, buffer `44PL`, invalid, token focus | Expanded 1, dim 4/10/11 | Error `must start with A–Z`; no submit | `✗` two spaces after cursor; footer row 11; no source pointer |
 | 11 | Frame 10 | Type `56789012345678901234` | `EDITING` row 1, 24-char buffer, invalid, max error active | Expanded 1, dim 4/10/11 | Error `24 chars max`; no submit | Cursor at max boundary; `✗` at capped icon column; 25th char discarded in separate assertion |
 | 12a | Frame 9 or 10/11 | `↓` | `EDITING`, buffer `AAPL`, valid, source focus first source | Expanded 1, dim 4/10/11 | Footer submit | Row-level cursor absent; source pointer at first source; `✓` shown |
 | 12b | Frame 9 or 10/11 | `↑` | `EDITING`, buffer `APPLE`, valid, `sourcePointerIndex=1` | Expanded 1, dim 4/10/11 | Footer submit | Source pointer line 2; pointer came from source navigation, not exact-match tracking |
-| 13 | Frame 12b | `Enter` or `Esc`, then `2` after existing filter `1` | `BROWSING`, `text="12"`, selected null | Empty result | Error no matching rows | Blank body row under header; no cursor; footer row 7 |
+| 13 | Frame 12b | `Enter` or `Esc`, then `2` after existing filter `1` | `BROWSING`, `filter.raw="12"`, `text="12"` (derived), selected null | Empty result | Error no matching rows | Blank body row under header; no cursor; footer row 7 |
 | 14 | Frame 13 | `ctrl+s` | `CONFIRMING ACCEPT`, choice `NO`, collisions zero | 1..9 | `Accept all? [y/N]`; footer edit mappings | Accept prompt defaults to `NO`; filter does not constrain confirming table |
 | 15 | Frame 14 | `y` or `←`, then `Enter` | Terminal accepted state, `result.status=ACCEPTED` | None | None | Frame line 1 is `11 commodities created.`; frame line 2 is `❯`; the frame is two lines tall with no padding below row 2; lines from the prior frame are cleared |
 
@@ -1144,7 +1166,7 @@ file; snapshots are regenerated with `pytest --update-snapshots`.
 | Distinct confirmation intents missing | Assert frame 1b uses `kind=EXIT`, prompt `Skip adding commodities?`, default `NO`, and `YES` result `SKIPPED`; frames 6 and 14 both use `kind=ACCEPT`, default `NO`, and `YES` result `ACCEPTED`. |
 | Confirmation default regression | Change an accept or exit prompt to `YES`, leave confirmation, re-enter any y/n confirmation, and assert `confirmation.choice=NO` immediately on entry. Also assert the renderer does not reset choice during redraw inside the same confirmation visit. |
 | `ctrl+c` dispatcher absent | Assert `ctrl+c` in `BROWSING` enters exit confirmation, in `EDITING` cancels edit, in `ACCEPT` cancels batch, and second `ctrl+c` in `EXIT` emits SIGINT. |
-| Filtering underspecified | Assert Tab and `!` both toggle collision metafilter; query text matches ordinal/token only; source text does not match; empty results clear selection; `ctrl+s` still opens accept confirmation with zero collisions. |
+| Filtering underspecified | Assert `!` inserts a literal `!` into `filter.raw` (a leading `!` enabling the collision metafilter) and `Tab`/`ctrl+i` autocompletes a leading `!` only when the `Tab to view collisions` ghost is visible (and is otherwise a no-op, including a second `Tab` and when no collisions exist); the `!` then edits like ordinary text via readline controls; query text matches ordinal/token only; source text does not match; empty results clear selection; `ctrl+s` still opens accept confirmation with zero collisions. |
 | Edit input insertion contradiction | Assert frame 4 to 5 end-cursor insertion produces `ATT`, not `AT-TATT` or `ATTT`; ghost disappears when buffer no longer prefixes `defaultSourceValue`. |
 | Lossy domain model | Unit-test collision groups, source effective values, literal `targetValue`, derived `currentTargetValue`, default source, and live edited target as separate fields. |
 | Missing sorting rules | Change row 3 target to `ATT`; assert order remains row 2 then row 3 and does not resort by new target. |
