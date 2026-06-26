@@ -70,10 +70,12 @@ tasks:
     status: todo
     assignee: null
     depends_on: [TASK-001]
-    functional_requirements: [FR9, FR11]
+    functional_requirements: [FR9, FR11, FR29]
     files:
+      - mapping_resolution_tui/actions.py
       - mapping_resolution_tui/reducer.py
       - mapping_resolution_tui/renderer.py
+      - mapping_resolution_tui/loop.py
     golden_frames:
       - frame_8  # filter text "1"; rows 1, 4, 10, 11 visible; bold spans; single-char input proven
     user_story: >
@@ -87,6 +89,30 @@ tasks:
         filter.cursor within filter.text, clamped to [0, len(filter.text)]"
       - "Backspace / ctrl+h removes the character before the cursor when
         filter.text is non-empty and the cursor is > 0"
+      - "Home / ctrl+a moves filter.cursor to 0; End / ctrl+e moves it to
+        len(filter.text) (readline beginning-of-line / end-of-line) — the
+        line-editing portion of FR9"
+      - "Delete / ctrl+d removes the character at filter.cursor (forward
+        delete-char) and is a no-op when the cursor is at the end of
+        filter.text"
+      - "ctrl+k deletes from filter.cursor through the end of filter.text
+        (kill-line); ctrl+u deletes from the start of filter.text through the
+        cursor and resets filter.cursor to 0 (unix-line-discard)"
+      - "ctrl+w / meta+backspace deletes the previous word before the cursor
+        and meta+d deletes the next word from the cursor, using ASCII word
+        boundaries wordChar = [A-Za-z0-9_-] (spec S5.1)"
+      - "Every line-editing mutation re-runs the post-mutation sequence: clamp
+        filter.cursor to [0, len(filter.text)], re-sync filter.raw, re-derive
+        visible rows, and clamp selection (spec S5.1)"
+      - "The input layer normalises the readline aliases ctrl+a, ctrl+e,
+        ctrl+d, ctrl+k, ctrl+u, ctrl+w (and meta+d / meta+backspace) to these
+        actions before dispatch (FR29), completing the browsing-filter
+        line-editing aliases on the spec S5.1 must-test list"
+      - "No-op readline families leave filter state and rendered output
+        unchanged, with at least one test per family: abort (ctrl+g),
+        quoted-insert (ctrl+q / ctrl+v), undo (ctrl+_), transpose (ctrl+t),
+        yank (ctrl+y), reverse-search (ctrl+r); ctrl+l re-renders only and
+        MUST NOT mutate state (spec S5.1)"
       - "select_visible_rows filters by ordinal string and current target
         token value, ASCII case-insensitively; source labels, sanitised
         values, and effective values are excluded from matching"
@@ -107,6 +133,9 @@ tasks:
       - "Feature is implemented and tested"
       - "BDD scenario for text filtering passes (step definitions wired to
         action dispatch)"
+      - "Readline line-editing aliases (ctrl+a / ctrl+e / ctrl+d / ctrl+k /
+        ctrl+u / ctrl+w, meta+d / meta+backspace) and one no-op-per-family
+        test pass under uv run pytest (spec S5.1 must-test coverage)"
       - "Golden frame frame_8 committed and passing under uv run pytest"
 
   - key: TASK-003
@@ -159,14 +188,17 @@ tasks:
 
   - key: TASK-004
     type: story
-    title: Selection clamping and empty-result rendering
+    title: Selection clamping, browsing navigation, and empty-result rendering
     status: todo
     assignee: null
     depends_on: [TASK-001]
-    functional_requirements: [FR12, FR13]
+    functional_requirements: [FR12, FR13, FR14]
     files:
+      - mapping_resolution_tui/actions.py
+      - mapping_resolution_tui/reducer.py
       - mapping_resolution_tui/selectors.py
       - mapping_resolution_tui/renderer.py
+      - mapping_resolution_tui/loop.py
     golden_frames:
       - frame_3    # collision-only + text "3"; ordinal 3 selected and highlighted
       - frame_13   # no-match state; single blank body row; error footer; frame ends at footer, no filler rows
@@ -183,6 +215,18 @@ tasks:
         selectedOrdinal becomes 2 (first collision row), not 1"
       - "When collision-only is active and filter.text becomes 3,
         selectedOrdinal becomes 3; only ordinal 3 is visible (frame 3)"
+      - "Up / down arrows (and readline aliases ctrl+p / ctrl+n) move
+        selectedOrdinal by -1 / +1 within visibleRows, clamped at the first
+        and last visible row (FR14 row movement)"
+      - "Shift+up / Shift+down and PgUp / PgDn page the view by the current
+        non-editing body capacity; PgDn clamps scrollOffset to maxOffset and
+        PgUp clamps to 0, and after paging the selected row becomes the first
+        visible row (FR14 page movement; spec S8.3/S8.5)"
+      - "Browsing movement uses anchored body allocation so the selected row
+        is always kept visible (spec S8.2)"
+      - "Page-key portability: PgUp / PgDn perform page movement even when the
+        terminal cannot distinguish Shift+arrows from plain arrows, and
+        indistinguishable plain arrows still move exactly one row (spec S5)"
       - "When a filter produces no matching rows, visibleRows is empty and
         selectedOrdinal is None"
       - "When visibleRows is empty in BROWSING mode, one blank table body
@@ -203,5 +247,8 @@ tasks:
     definition_of_done:
       - "Feature is implemented and tested"
       - "BDD scenario for selection clamping and empty results passes"
+      - "BDD scenario for browsing row and page movement passes (up/down,
+        ctrl+p/ctrl+n, PgUp/PgDn keep the selected row visible and clamp at
+        the list ends)"
       - "Golden frames frame_3 and frame_13 committed and passing under
         uv run pytest"
