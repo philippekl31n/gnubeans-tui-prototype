@@ -16,10 +16,16 @@ from mapping_resolution_tui.actions import (
     Action,
     ClearFilter,
     DeleteBackward,
+    DeleteForward,
+    DeleteWordBackward,
+    DeleteWordForward,
     InsertCharacter,
+    KillToEnd,
+    KillToStart,
+    MoveCursorEnd,
+    MoveCursorHome,
     MoveCursorLeft,
     MoveCursorRight,
-    ToggleCollisionOnly,
 )
 from mapping_resolution_tui.config import QUIT_KEY
 from mapping_resolution_tui.reducer import make_initial_state, reduce
@@ -27,20 +33,35 @@ from mapping_resolution_tui.renderer import render_lines
 from mapping_resolution_tui.state import AppConfig, Mapping
 
 # Readline-style control characters normalised in the input layer (FR29). App
-# bindings take precedence over generic readline names where they overlap.
+# bindings take precedence over generic readline names where they overlap. The
+# filter is one editable buffer (filter.raw); all of these edit it or move the
+# caret within it (spec §5.1).
+_CTRL_A = "\x01"  # beginning-of-line    -> cursor home
 _CTRL_B = "\x02"  # backward-char        -> cursor left
+_CTRL_D = "\x04"  # delete-char          -> forward delete
+_CTRL_E = "\x05"  # end-of-line          -> cursor end
 _CTRL_F = "\x06"  # forward-char         -> cursor right
 _CTRL_H = "\x08"  # backward-delete-char -> backspace
-_TAB = "\t"       # complete / ctrl+i    -> collision-only toggle
+_CTRL_K = "\x0b"  # kill-line            -> delete to end of line
+_CTRL_U = "\x15"  # unix-line-discard    -> delete to start of line
+_CTRL_W = "\x17"  # unix-word-rubout     -> delete word backward
 _ESC = "\x1b"     # abort filter         -> clear filter
 _DEL = "\x7f"     # DEL / ctrl+?         -> backspace
+# Meta/Alt word operations arrive as an ESC prefix; matched before the lone ESC.
+_META_D = "\x1bd"      # kill-word          -> delete word forward
+_META_BS = "\x1b\x7f"  # backward-kill-word -> delete word backward
+_META_BS_ALT = "\x1b\x08"
 
 # Names reported by blessed for multi-byte escape sequences (arrows, named keys).
+# `Tab` / `KEY_TAB` is intentionally NOT mapped here: in BROWSING it is reserved
+# for the bang-autocomplete metafilter (TASK-003) and is a no-op until then.
 _CURSOR_LEFT_NAMES = frozenset({"KEY_LEFT"})
 _CURSOR_RIGHT_NAMES = frozenset({"KEY_RIGHT"})
+_HOME_NAMES = frozenset({"KEY_HOME"})
+_END_NAMES = frozenset({"KEY_END"})
 _BACKSPACE_NAMES = frozenset({"KEY_BACKSPACE"})
+_DELETE_NAMES = frozenset({"KEY_DELETE"})
 _CLEAR_NAMES = frozenset({"KEY_ESCAPE"})
-_TOGGLE_NAMES = frozenset({"KEY_TAB"})
 
 
 def is_quit_key(key) -> bool:
@@ -64,30 +85,47 @@ def key_to_action(key) -> Action | None:
         return MoveCursorLeft()
     if name in _CURSOR_RIGHT_NAMES:
         return MoveCursorRight()
+    if name in _HOME_NAMES:
+        return MoveCursorHome()
+    if name in _END_NAMES:
+        return MoveCursorEnd()
     if name in _BACKSPACE_NAMES:
         return DeleteBackward()
+    if name in _DELETE_NAMES:
+        return DeleteForward()
     if name in _CLEAR_NAMES:
         return ClearFilter()
-    if name in _TOGGLE_NAMES:
-        return ToggleCollisionOnly()
 
-    # Single control characters and readline aliases (ctrl+b/f/h, Tab, Esc, DEL).
+    # Meta/Alt word operations (ESC-prefixed); checked before the lone ESC below.
+    if text == _META_D:
+        return DeleteWordForward()
+    if text in (_META_BS, _META_BS_ALT):
+        return DeleteWordBackward()
+
+    # Single control characters and readline aliases.
+    if text == _CTRL_A:
+        return MoveCursorHome()
+    if text == _CTRL_E:
+        return MoveCursorEnd()
     if text == _CTRL_B:
         return MoveCursorLeft()
     if text == _CTRL_F:
         return MoveCursorRight()
     if text in (_CTRL_H, _DEL):
         return DeleteBackward()
-    if text == _TAB:
-        return ToggleCollisionOnly()
+    if text == _CTRL_D:
+        return DeleteForward()
+    if text == _CTRL_K:
+        return KillToEnd()
+    if text == _CTRL_U:
+        return KillToStart()
+    if text == _CTRL_W:
+        return DeleteWordBackward()
     if text == _ESC:
         return ClearFilter()
 
-    # `!` toggles the metafilter in BROWSING and is never inserted literally.
-    if text == "!":
-        return ToggleCollisionOnly()
-
-    # Any remaining single printable ASCII character inserts into the filter.
+    # Any single printable ASCII character — including a literal `!`, which is
+    # ordinary filter text (spec §3.3) — inserts into filter.raw at the cursor.
     if len(text) == 1 and " " <= text <= "~":
         return InsertCharacter(text)
 

@@ -152,6 +152,18 @@ def select_ordinal_match_spans(ordinal: int, query: str, display_width: int) -> 
     )
 
 
+def parse_filter(raw: str) -> tuple[bool, str]:
+    """Derive ``(collision_only, text)`` from the editable ``filter.raw`` buffer.
+
+    ``collision_only`` is true when ``raw`` begins with ``!``; ``text`` is ``raw``
+    with a single leading ``!`` removed — the search portion used by matching
+    (spec §3.3). ``!`` is otherwise ordinary search text.
+    """
+    collision_only = raw.startswith("!")
+    text = raw[1:] if collision_only else raw
+    return collision_only, text
+
+
 def select_visible_rows(state: "AppState") -> list[Mapping]:
     rows: list[Mapping] = list(state.mappings)
 
@@ -174,6 +186,7 @@ def select_visible_rows(state: "AppState") -> list[Mapping]:
 
 def select_filter_prompt(state: "AppState", unresolved_count: int) -> FilterPromptContent:
     return FilterPromptContent(
+        filter_raw=state.filter.raw,
         filter_text=state.filter.text,
         filter_cursor=state.filter.cursor,
         collision_only=state.filter.collision_only,

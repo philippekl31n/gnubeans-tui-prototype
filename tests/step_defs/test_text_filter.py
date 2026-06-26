@@ -18,13 +18,25 @@ from mapping_resolution_tui.actions import (
 from mapping_resolution_tui.loop import key_to_action
 from mapping_resolution_tui.reducer import make_initial_state, reduce
 from mapping_resolution_tui.renderer import render_lines
-from mapping_resolution_tui.selectors import select_visible_rows
+from mapping_resolution_tui.selectors import parse_filter, select_visible_rows
 from tests.conftest import make_pyte_screen
 
 scenarios("../features/text_filter.feature")
 
 
-_ALIASES = {"ctrl+b": "\x02", "ctrl+f": "\x06", "ctrl+h": "\x08"}
+# Readline control bytes, keyed by the human label used in the feature file.
+_ALIASES = {
+    "ctrl+b": "\x02",
+    "ctrl+f": "\x06",
+    "ctrl+h": "\x08",
+    "ctrl+a": "\x01",
+    "ctrl+e": "\x05",
+    "ctrl+d": "\x04",
+    "ctrl+k": "\x0b",
+    "ctrl+u": "\x15",
+    "ctrl+w": "\x17",
+    "tab": "\t",
+}
 
 
 class _Ctx:
@@ -41,11 +53,19 @@ def loaded_ctx():
     return _Ctx(make_initial_state(make_config(), make_mappings(), frame_height=15))
 
 
-@given(parsers.parse('the filter already contains "{text}" with the cursor at offset {offset:d}'))
-def preload_filter(ctx, text, offset):
+@given(parsers.parse('the filter buffer already contains "{raw}" with the cursor at offset {offset:d}'))
+def preload_filter(ctx, raw, offset):
+    # filter.raw is the editable source of truth; derive collision_only/text.
+    collision_only, text = parse_filter(raw)
     ctx.state = replace(
         ctx.state,
-        filter=replace(ctx.state.filter, text=text, cursor=offset, raw=text),
+        filter=replace(
+            ctx.state.filter,
+            raw=raw,
+            text=text,
+            collision_only=collision_only,
+            cursor=offset,
+        ),
     )
 
 
@@ -68,7 +88,8 @@ def press_right(ctx):
 @when(parsers.parse('the reviewer presses "{alias}"'))
 def press_alias(ctx, alias):
     action = key_to_action(_ALIASES[alias])
-    ctx.state = reduce(ctx.state, action)
+    if action is not None:
+        ctx.state = reduce(ctx.state, action)
 
 
 @when("the reviewer presses backspace")
@@ -81,9 +102,29 @@ def render_screen(ctx):
     return make_pyte_screen(render_lines(ctx.state))
 
 
+@then(parsers.parse('the filter buffer is "{raw}"'))
+def assert_raw(ctx, raw):
+    assert ctx.state.filter.raw == raw
+
+
 @then(parsers.parse('the filter text is "{text}"'))
 def assert_text(ctx, text):
     assert ctx.state.filter.text == text
+
+
+@then(parsers.parse('the filter buffer is empty'))
+def assert_raw_empty(ctx):
+    assert ctx.state.filter.raw == ""
+
+
+@then("the filter search text is empty")
+def assert_text_empty(ctx):
+    assert ctx.state.filter.text == ""
+
+
+@then("the collision-only metafilter is active")
+def assert_collision_only(ctx):
+    assert ctx.state.filter.collision_only is True
 
 
 @then(parsers.parse("the filter cursor is at offset {offset:d}"))

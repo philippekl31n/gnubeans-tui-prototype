@@ -90,23 +90,20 @@ def render_lines(state: AppState) -> list[str]:
 
     # ── prompt ────────────────────────────────────────────────────────────────
     prompt_content = select_filter_prompt(state, unresolved_count)
-    if prompt_content.filter_text:
-        prefix = "!" if prompt_content.collision_only else ""
-        text = prompt_content.filter_text
+    raw = prompt_content.filter_raw
+    if raw:
+        # Render filter.raw literally (including any leading `!`) with the
+        # reverse-video cursor block at filter.cursor within raw (§3.3 / §6.5).
         cursor = prompt_content.filter_cursor
-        if cursor >= len(text):
-            # Cursor at end: reverse-video space after the visible query (§6.5).
-            query = f"{text}{_REV} {_RESET}"
+        if cursor >= len(raw):
+            query = f"{raw}{_REV} {_RESET}"
         else:
-            # Cursor covers the character at the offset (§6.5); the leading
-            # metafilter `!` is not part of filter.text and is not counted.
-            query = f"{text[:cursor]}{_REV}{text[cursor]}{_RESET}{text[cursor + 1:]}"
-        prompt = f"  Filter: {prefix}{query}"
+            query = f"{raw[:cursor]}{_REV}{raw[cursor]}{_RESET}{raw[cursor + 1:]}"
+        prompt = f"  Filter: {query}"
     else:
-        prefix = "!" if prompt_content.collision_only else ""
         hint_text = "Tab to view collisions" if prompt_content.collision_hint_visible else "Type to filter"
         first, rest = hint_text[0], hint_text[1:]
-        prompt = f"  Filter: {prefix}{_REV}{first}{_RESET}{_DIM}{rest}{_RESET}"
+        prompt = f"  Filter: {_REV}{first}{_RESET}{_DIM}{rest}{_RESET}"
 
     # ── table header ──────────────────────────────────────────────────────────
     max_token_length = config.target_policy.max_token_length
