@@ -1,7 +1,7 @@
 # sprint-status.yaml
 # Epic 2 — Browse, Filter, and Navigate Mappings
 # Drop into: docs/sprint-status.yaml
-# Updated: 2026-06-25
+# Updated: 2026-06-26
 #
 # NOTE (2026-06-25): aligned with the reworked render layout contract
 # (tui_architecture_spec.md S6.1/S6.2/S6.7, S8). The frame is a variable-height
@@ -10,6 +10,18 @@
 # host terminal. Golden snapshots for the under-full browsing frames referenced
 # below (frame_2, frame_3, frame_8, frame_13, frame_esc_clear) MUST be captured
 # against this contract.
+#
+# NOTE (2026-06-26): aligned with the bang-autocomplete filter contract
+# (tui_architecture_spec.md S3.2/S3.3/S4.2/S5/S5.1/S6.5/S6.6/S10). filter.raw is
+# now the single editable buffer and the source of truth; collisionOnly (raw
+# begins with "!") and text (raw minus a single leading "!") are DERIVED after
+# every mutation. There is no collisionOnly toggle: "!" is an ordinary editable
+# character, and Tab / ctrl+i autocompletes a leading "!" into filter.raw only
+# when the "Tab to view collisions" ghost is visible (filter.raw empty with at
+# least one unresolved collision); it is otherwise a no-op (a second Tab does
+# NOT clear the "!"). Backspace at cursor 0 is a no-op; the leading "!" deletes
+# like any other character. filter.cursor indexes filter.raw, including any
+# leading "!".
 
 schema_version: 1
 
@@ -42,8 +54,10 @@ tasks:
       with no input handling.
     acceptance_criteria:
       - "actions.py defines action dataclasses for all browsing-mode filter
-        operations: character insertion, cursor movement (left/right),
-        collision-only toggle, and filter clear"
+        operations: character insertion (including a literal !), cursor
+        movement (left/right), Tab-autocomplete of a leading ! collision
+        metafilter (guarded by the ghost), backspace delete, and filter clear
+        (Esc). There is no collision-only toggle action"
       - "reducer.py exposes a reduce(state: AppState, action) -> AppState
         dispatch function that delegates to per-action handlers and returns
         a new immutable state"
@@ -58,9 +72,10 @@ tasks:
         mutation"
       - "Readline alias normalisation (e.g. ctrl+b → cursor-left) belongs in
         the input layer before the action is constructed (FR29)"
-      - "FilterState.raw must be kept in sync with collision_only + text on
-        every mutation; select_filter_prompt already reads it for the leading
-        ! rendering"
+      - "FilterState.raw is the single editable buffer and the source of
+        truth; collision_only (raw begins with !) and text (raw minus a single
+        leading !) are DERIVED from raw after every mutation. select_filter_prompt
+        renders filter.raw literally, including any leading !"
       - "This task is a prerequisite for all three Epic 2 stories; implement
         first or in parallel with writing the BDD step stubs"
 
@@ -84,26 +99,27 @@ tasks:
       review list without source values creating false matches.
     acceptance_criteria:
       - "Typing a printable character in BROWSING mode inserts it into
-        filter.text at the cursor position and advances the cursor by 1"
+        filter.raw at filter.cursor and advances the cursor by 1"
       - "Left/right arrow (and readline aliases ctrl+b / ctrl+f) move
-        filter.cursor within filter.text, clamped to [0, len(filter.text)]"
-      - "Backspace / ctrl+h removes the character before the cursor when
-        filter.text is non-empty and the cursor is > 0"
+        filter.cursor within filter.raw, clamped to [0, len(filter.raw)]"
+      - "Backspace / ctrl+h removes the character before the cursor in
+        filter.raw when filter.cursor > 0, and is a no-op at cursor 0"
       - "Home / ctrl+a moves filter.cursor to 0; End / ctrl+e moves it to
-        len(filter.text) (readline beginning-of-line / end-of-line) — the
+        len(filter.raw) (readline beginning-of-line / end-of-line) — the
         line-editing portion of FR9"
       - "Delete / ctrl+d removes the character at filter.cursor (forward
         delete-char) and is a no-op when the cursor is at the end of
-        filter.text"
-      - "ctrl+k deletes from filter.cursor through the end of filter.text
-        (kill-line); ctrl+u deletes from the start of filter.text through the
+        filter.raw"
+      - "ctrl+k deletes from filter.cursor through the end of filter.raw
+        (kill-line); ctrl+u deletes from the start of filter.raw through the
         cursor and resets filter.cursor to 0 (unix-line-discard)"
       - "ctrl+w / meta+backspace deletes the previous word before the cursor
         and meta+d deletes the next word from the cursor, using ASCII word
         boundaries wordChar = [A-Za-z0-9_-] (spec S5.1)"
       - "Every line-editing mutation re-runs the post-mutation sequence: clamp
-        filter.cursor to [0, len(filter.text)], re-sync filter.raw, re-derive
-        visible rows, and clamp selection (spec S5.1)"
+        filter.cursor to [0, len(filter.raw)], re-derive collision_only and
+        text from filter.raw, re-derive visible rows, and clamp selection
+        (spec S5.1)"
       - "The input layer normalises the readline aliases ctrl+a, ctrl+e,
         ctrl+d, ctrl+k, ctrl+u, ctrl+w (and meta+d / meta+backspace) to these
         actions before dispatch (FR29), completing the browsing-filter
@@ -140,39 +156,54 @@ tasks:
 
   - key: TASK-003
     type: story
-    title: Collision-only metafilter toggle and filter clear
+    title: Collision metafilter via bang autocomplete and filter clear
     status: todo
     assignee: null
-    depends_on: [TASK-001]
     functional_requirements: [FR10]
+    depends_on: [TASK-001]
     files:
+      - mapping_resolution_tui/actions.py
       - mapping_resolution_tui/reducer.py
+      - mapping_resolution_tui/loop.py
       - mapping_resolution_tui/renderer.py
     golden_frames:
-      - frame_2         # Tab pressed from 1a; collision-only active; rows 2 and 3 visible
+      - frame_2         # Tab autocompletes leading ! from 1a; filter.raw="!"; collision-only derived; rows 2 and 3 visible
       - frame_esc_clear # Esc from filtered state; all rows restored; identical to frame_1a
     user_story: >
-      As a reviewer, I want to quickly switch to collision-only rows and
-      clear all active filters, so that I can focus on what needs resolving
-      without manual scrolling or re-typing.
+      As a reviewer, I want to engage the collision metafilter with a single
+      Tab and clear all active filters with Esc, so that I can focus on what
+      needs resolving without manual scrolling or re-typing.
     acceptance_criteria:
-      - "Pressing Tab toggles filter.collision_only from False to True (and
-        back); no character is inserted into filter.text"
-      - "Typing ! in BROWSING mode toggles filter.collision_only without
-        inserting a literal ! into filter.text"
-      - "When collision_only is True, the filter prompt renders a leading !
-        before the ghost text (frame 2: Filter: !*T*__ype to filter__)"
-      - "Pressing Esc in BROWSING mode clears both filter.collision_only and
-        filter.text, resetting filter.cursor to 0"
-      - "When filter.text is empty and filter.cursor is 0, pressing Backspace
-        (or ctrl+h alias) toggles filter.collision_only to False rather than
-        attempting to delete a character"
-      - "When both collision_only and filter.text are active, only unresolved
-        collision rows matching the text are shown (storyboard frame 3)"
-      - "FilterState.raw is kept in sync: ! prefix when collision_only,
-        followed by filter.text"
-      - "Golden frame frame_2 committed: Tab from frame_1a, collision-only
-        active, rows 2 and 3 visible"
+      - "Pressing Tab / ctrl+i autocompletes a leading ! into filter.raw and
+        sets filter.cursor = 1, but ONLY when the 'Tab to view collisions'
+        ghost is visible (filter.raw is empty and at least one unresolved
+        collision exists); collision_only is then True by derivation"
+      - "Tab / ctrl+i is a no-op in every other situation: a second Tab does
+        NOT clear the inserted !, Tab does NOT autocomplete when filter.raw is
+        non-empty, and Tab does NOT autocomplete when no unresolved collisions
+        exist"
+      - "Typing ! inserts a literal ! into filter.raw at filter.cursor like any
+        other printable character; a ! at index 0 becomes the collision
+        metafilter (collision_only derived True), a ! elsewhere is ordinary
+        search text"
+      - "When filter.raw == '!' (metafilter only), the prompt renders the
+        leading ! followed by the dim 'Type to filter' ghost with only T
+        reverse-video (frame 2: Filter: !*T*__ype to filter__)"
+      - "Pressing Esc in BROWSING mode clears filter.raw when it is non-empty
+        (clearing both the derived metafilter and the search text) and resets
+        filter.cursor to 0"
+      - "Backspace / ctrl+h at filter.cursor 0 is a no-op; a leading ! is
+        deleted like any other character by backspacing when filter.cursor is
+        1, which clears the derived metafilter"
+      - "When filter.raw begins with ! and carries trailing search text (e.g.
+        '!3'), only unresolved collision rows matching the text are shown
+        (storyboard frame 3)"
+      - "filter.raw is the source of truth; collision_only (raw begins with !)
+        and text (raw minus a single leading !) are DERIVED after every
+        mutation — the reducer never stores them independently"
+      - "Golden frame frame_2 committed: Tab autocompletes a leading ! from
+        frame_1a (filter.raw='!', filter.cursor=1, collision-only derived),
+        rows 2 and 3 visible"
       - "Golden frame frame_esc_clear committed: filter fully cleared, all
         rows restored, output identical to frame_1a"
       - "frame_2 is an under-full state (2 rows): the rendered frame ends at
@@ -182,7 +213,9 @@ tasks:
       - "All existing golden tests continue to pass"
     definition_of_done:
       - "Feature is implemented and tested"
-      - "BDD scenario for collision-only toggle and Esc clear passes"
+      - "BDD scenario for bang autocomplete (Tab inserts a leading ! only when
+        the ghost is visible; second Tab and no-collision Tab are no-ops; ! is
+        ordinary editable text) and Esc clear passes"
       - "Golden frames frame_2 and frame_esc_clear committed and passing
         under uv run pytest"
 
@@ -200,7 +233,7 @@ tasks:
       - mapping_resolution_tui/renderer.py
       - mapping_resolution_tui/loop.py
     golden_frames:
-      - frame_3    # collision-only + text "3"; ordinal 3 selected and highlighted
+      - frame_3    # filter.raw="!3" (collision-only derived + text "3"); ordinal 3 selected and highlighted
       - frame_13   # no-match state; single blank body row; error footer; frame ends at footer, no filler rows
     user_story: >
       As a reviewer, I want selection to remain predictable when filters
@@ -211,9 +244,10 @@ tasks:
         selectedOrdinal is unchanged"
       - "When a filter change removes the selected ordinal but other rows
         remain, selectedOrdinal clamps to the first visible row's ordinal"
-      - "When collision-only is toggled on from frame_1a (ordinal 1 selected),
-        selectedOrdinal becomes 2 (first collision row), not 1"
-      - "When collision-only is active and filter.text becomes 3,
+      - "When the collision metafilter is engaged from frame_1a (Tab
+        autocompletes a leading !; ordinal 1 selected), selectedOrdinal
+        becomes 2 (first collision row), not 1"
+      - "When filter.raw becomes '!3' (collision-only derived, text '3'),
         selectedOrdinal becomes 3; only ordinal 3 is visible (frame 3)"
       - "Up / down arrows (and readline aliases ctrl+p / ctrl+n) move
         selectedOrdinal by -1 / +1 within visibleRows, clamped at the first
@@ -237,8 +271,8 @@ tasks:
         is the single blank body row, the separator, and the footer with NO
         blank filler rows padded below the footer or to the terminal bottom
         (reworked spec S6.1/S6.2; frame_13 no longer renders trailing blanks)"
-      - "filter.cursor is clamped to a valid insertion offset after any
-        filter.text mutation; reset to 0 only when text is cleared by Esc"
+      - "filter.cursor is clamped to [0, len(filter.raw)] after any filter.raw
+        mutation; reset to 0 only when filter.raw is cleared by Esc"
       - "Golden frame frame_3 committed: collision-only + text filter 3
         active, ordinal 3 selected and highlighted"
       - "Golden frame frame_13 committed: no-match state, blank body row,

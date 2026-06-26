@@ -17,6 +17,27 @@ Any key that `key_to_action` does not recognise returns `None`; the loop then
 skips dispatch (FR30), leaving root state and rendered output unchanged. This is
 how the spec's mandated **no-op families** are satisfied today — by default.
 
+## Bang-autocomplete reconciliation (spec §3.2/§3.3/§5.1)
+
+The filter contract was reworked so that `filter.raw` is the single editable
+buffer and the source of truth; `collisionOnly` (raw begins with `!`) and `text`
+(raw minus a single leading `!`) are **derived** after every mutation. This
+changes the rows below relative to the original toggle model:
+
+- **`Tab` / `ctrl+i`** no longer toggles a metafilter. The spec now requires it to
+  *autocomplete a leading `!`* into `filter.raw` (cursor → 1) **only** when the
+  `Tab to view collisions` ghost is visible, and to be a **no-op** otherwise (a
+  second `Tab` must not clear the `!`). The existing `ToggleCollisionOnly`
+  reducer action is therefore **non-compliant** and must be replaced — counted
+  below as an open gap (🔴), not an implemented binding.
+- **`!`** is an ordinary printable character handled by `InsertCharacter`; it is
+  no longer a metafilter toggle. A `!` inserted at index 0 *is* the collision
+  metafilter by derivation.
+- **`Backspace` / `ctrl+h` / DEL** at `filter.cursor == 0` is a **no-op**; the
+  leading `!` deletes like any other character once the cursor sits at index 1.
+  The old "clear metafilter at cursor 0" branch is removed, so `DeleteBackward`
+  is now **partial** (🟠) until its cursor-0 behavior is verified to no-op.
+
 ## Status legend
 
 | Symbol | Meaning |
@@ -36,13 +57,13 @@ how the spec's mandated **no-op families** are satisfied today — by default.
 | `\x02` | ctrl+b | `backward-char` | Cursor left, clamp at 0 | `MoveCursorLeft` | ✅ |
 | `\x03` | ctrl+c | *(app)* interrupt | Enter EXIT confirmation; arm 2nd-ctrl+c SIGINT | Quits loop cleanly via `is_quit_key` | 🟠 |
 | `\x04` | ctrl+d | `delete-char` | Delete char **at** cursor; no-op at end | `None` | 🔴 |
-| `\x05` | ctrl+e | `end-of-line` | Set `filter.cursor = len(text)` | `None` | 🔴 |
-| `\x06` | ctrl+f | `forward-char` | Cursor right, clamp at `len(text)` | `MoveCursorRight` | ✅ |
+| `\x05` | ctrl+e | `end-of-line` | Set `filter.cursor = len(filter.raw)` | `None` | 🔴 |
+| `\x06` | ctrl+f | `forward-char` | Cursor right, clamp at `len(filter.raw)` | `MoveCursorRight` | ✅ |
 | `\x07` | ctrl+g | `abort` | No-op (must NOT act like Esc/ctrl+c) | `None` | 🟡 |
-| `\x08` | ctrl+h | `backward-delete-char` | Delete before cursor / clear metafilter | `DeleteBackward` | ✅ |
-| `\x09` | ctrl+i / Tab | `complete` → *(app)* | Toggle `filter.collision_only` | `ToggleCollisionOnly` | ✅ |
+| `\x08` | ctrl+h | `backward-delete-char` | Delete before cursor in `filter.raw`; no-op at cursor 0 (leading `!` deletes as ordinary char) | `DeleteBackward` (clears metafilter at cursor 0) | 🟠 |
+| `\x09` | ctrl+i / Tab | `complete` → *(app)* | Autocomplete a leading `!` into `filter.raw` (cursor → 1) only when the `Tab to view collisions` ghost is visible; else no-op | `ToggleCollisionOnly` (non-compliant) | 🔴 |
 | `\x0a` | ctrl+j | `accept-line` (Enter) | Dispatch as Enter (edit selected row) | `None` | 🔴 |
-| `\x0b` | ctrl+k | `kill-line` | Delete from cursor through end of text | `None` | 🔴 |
+| `\x0b` | ctrl+k | `kill-line` | Delete from cursor through end of `filter.raw` | `None` | 🔴 |
 | `\x0c` | ctrl+l | `clear-screen` / `redraw-current-line` | Re-render only; MUST NOT mutate state | `None` (no forced redraw) | 🟠 |
 | `\x0d` | ctrl+m | `accept-line` (Enter) | Dispatch as Enter (edit selected row) | `None` | 🔴 |
 | `\x0e` | ctrl+n | `next-history` → *(app)* | Move selection down | `None` | 🔴 |
@@ -58,12 +79,12 @@ how the spec's mandated **no-op families** are satisfied today — by default.
 | `\x18` | ctrl+x | command prefix (`ctrl+x ctrl+?` = `backward-kill-line`, `ctrl+x ctrl+u` = `undo`) | `backward-kill-line` = `unix-line-discard`; `undo` = no-op | `None` | 🔴 / 🟡 |
 | `\x19` | ctrl+y | `yank` | No-op (paste arrives as printable text) | `None` | 🟡 |
 | `\x1a` | ctrl+z | *(terminal suspend)* | — (not named) | `None` | ⚪ |
-| `\x1b` | ctrl+[ / Esc | *(app)* + meta prefix | Clear active filter + metafilter; cursor 0 | `ClearFilter` | ✅ |
+| `\x1b` | ctrl+[ / Esc | *(app)* + meta prefix | Clear `filter.raw` (clears derived metafilter + text); cursor 0 | `ClearFilter` | ✅ |
 | `\x1c` | ctrl+\ | *(terminal SIGQUIT)* | — (not named) | `None` | ⚪ |
 | `\x1d` | ctrl+] | — | — (not named) | `None` | ⚪ |
 | `\x1e` | ctrl+^ | — | — (not named) | `None` | ⚪ |
 | `\x1f` | ctrl+_ | `undo` / `revert-line` | No-op (undo out of scope) | `None` | 🟡 |
-| `\x7f` | ctrl+? / DEL | `backward-delete-char` | Delete before cursor / clear metafilter | `DeleteBackward` | ✅ |
+| `\x7f` | ctrl+? / DEL | `backward-delete-char` | Delete before cursor in `filter.raw`; no-op at cursor 0 (leading `!` deletes as ordinary char) | `DeleteBackward` (clears metafilter at cursor 0) | 🟠 |
 
 ## B. Meta / Alt functions named by the spec
 
@@ -88,14 +109,14 @@ are recognised by `key_to_action` today, so all return `None`.
 |---|---|---|---|---|---|
 | `KEY_LEFT` | ← | `backward-char` | Cursor left | `MoveCursorLeft` | ✅ |
 | `KEY_RIGHT` | → | `forward-char` | Cursor right | `MoveCursorRight` | ✅ |
-| `KEY_BACKSPACE` | Backspace | `backward-delete-char` | Delete before cursor / clear metafilter | `DeleteBackward` | ✅ |
-| `KEY_ESCAPE` | Esc | *(app)* | Clear active filter | `ClearFilter` | ✅ |
-| `KEY_TAB` | Tab | `complete` → *(app)* | Toggle metafilter | `ToggleCollisionOnly` | ✅ |
+| `KEY_BACKSPACE` | Backspace | `backward-delete-char` | Delete before cursor in `filter.raw`; no-op at cursor 0 | `DeleteBackward` (clears metafilter at cursor 0) | 🟠 |
+| `KEY_ESCAPE` | Esc | *(app)* | Clear `filter.raw` (clears derived metafilter + text) | `ClearFilter` | ✅ |
+| `KEY_TAB` | Tab | `complete` → *(app)* | Autocomplete leading `!` when `Tab to view collisions` ghost visible; else no-op | `ToggleCollisionOnly` (non-compliant) | 🔴 |
 | `KEY_ENTER` | Enter | `accept-line` | Edit selected row | `None` | 🔴 |
 | `KEY_UP` | ↑ | *(app)* | Move selection up | `None` | 🔴 |
 | `KEY_DOWN` | ↓ | *(app)* | Move selection down | `None` | 🔴 |
 | `KEY_HOME` | Home | `beginning-of-line` | Set cursor 0 | `None` | 🔴 |
-| `KEY_END` | End | `end-of-line` | Set cursor `len(text)` | `None` | 🔴 |
+| `KEY_END` | End | `end-of-line` | Set cursor `len(filter.raw)` | `None` | 🔴 |
 | `KEY_DELETE` | Delete | `delete-char` | Delete at cursor | `None` | 🔴 |
 | `KEY_SUP` / `KEY_PGUP` | Shift+↑ / PgUp | *(app)* | Page up; select first visible | `None` | 🔴 |
 | `KEY_SDOWN` / `KEY_PGDOWN` | Shift+↓ / PgDn | *(app)* | Page down; select first visible | `None` | 🔴 |
@@ -105,10 +126,10 @@ are recognised by `key_to_action` today, so all return `None`.
 
 | Status | Count (approx.) | Meaning |
 |---|---|---|
-| ✅ Implemented | 7 control + 5 named = **12 bindings** | Filter cursor move, delete, metafilter toggle, clear, insert. |
+| ✅ Implemented | 3 control + 3 named = **6 bindings** | Filter cursor move (left/right), Esc clear, printable insert. |
 | 🟡 No-op (compliant) | **~14 families** | abort, quoted-insert, undo, transpose, yank, search/history, completion variants, case transforms, macro/shell/vi. |
-| 🔴 Gap (planned) | **~16 bindings** | Line-edit aliases, accept-line, navigation, page, submit. |
-| 🟠 Partial | **2** | `ctrl+c` (simple quit vs EXIT confirmation), `ctrl+l` (no forced redraw). |
+| 🔴 Gap (planned) | **~18 bindings** | Bang autocomplete (Tab/ctrl+i replacing the toggle), line-edit aliases, accept-line, navigation, page, submit. |
+| 🟠 Partial | **5** | `ctrl+c` (simple quit vs EXIT confirmation), `ctrl+l` (no forced redraw), and `backward-delete-char` (`ctrl+h` / DEL / Backspace) pending the cursor-0 no-op under the bang model. |
 | ⚪ Out of scope | **~7** | Control bytes the spec never names. |
 
 ### Spec-mandated "supported aliases" coverage (§5.1)
@@ -117,8 +138,8 @@ The spec requires tests for these 14 aliases. Current state:
 
 | Alias | Function | Status |
 |---|---|---|
-| ctrl+i | complete → toggle | ✅ |
-| ctrl+? | backward-delete-char | ✅ |
+| ctrl+i | complete → autocomplete `!` | 🔴 (was toggle; `ToggleCollisionOnly` non-compliant) |
+| ctrl+? | backward-delete-char | 🟠 (cursor-0 no-op pending) |
 | ctrl+b | backward-char | ✅ |
 | ctrl+f | forward-char | ✅ |
 | ctrl+j | accept-line | 🔴 |
@@ -132,17 +153,27 @@ The spec requires tests for these 14 aliases. Current state:
 | ctrl+u | unix-line-discard | 🔴 |
 | ctrl+w | backward-kill-word | 🔴 |
 
-**4 of 14** supported today. (`ctrl+h` and `DEL`, also supported, are
-`backward-delete-char` aliases not on the spec's must-test list.)
+**3 of 14** supported today (the bang-autocomplete rework reclassified `ctrl+i`
+from ✅ to 🔴). (`ctrl+h` and `DEL`, partially supported, are
+`backward-delete-char` aliases not on the spec's must-test list; both await the
+cursor-0 no-op under the bang model.)
 
 ## Closing the gaps — what needs to be built
 
 The existing reducer has six actions: `InsertCharacter`, `MoveCursorLeft`,
-`MoveCursorRight`, `ToggleCollisionOnly`, `DeleteBackward`, `ClearFilter`. Full
-readline coverage for the **filter input** needs new actions + reducer handlers
-plus `key_to_action` normalisation (each followed by the §5.1 post-mutation
-sequence: clamp cursor → sync `filter.raw` → re-filter → clamp selection):
+`MoveCursorRight`, `ToggleCollisionOnly`, `DeleteBackward`, `ClearFilter`. The
+bang-autocomplete rework makes `ToggleCollisionOnly` obsolete (a leading `!` is
+now ordinary editable text) and tightens `DeleteBackward` to no-op at cursor 0.
+Full readline coverage for the **filter input** needs new actions + reducer
+handlers plus `key_to_action` normalisation (each followed by the §5.1
+post-mutation sequence: clamp cursor → derive `collisionOnly`/`text` from
+`filter.raw` → re-filter → clamp selection):
 
+0. **Bang autocomplete** — replace `ToggleCollisionOnly` with `TabAutocomplete`
+   (Tab, ctrl+i): insert a leading `!` and set cursor 1 only when the `Tab to
+   view collisions` ghost is visible; otherwise no-op. Make `!` insertion an
+   ordinary `InsertCharacter`, and drop the `DeleteBackward` cursor-0 metafilter
+   branch so it no-ops there.
 1. **Cursor jumps** — `MoveCursorHome` (ctrl+a, Home), `MoveCursorEnd` (ctrl+e, End).
 2. **Forward delete** — `DeleteForward` (ctrl+d, Delete); no-op at end.
 3. **Line kills** — `KillLine` (ctrl+k), `KillToLineStart` (ctrl+u, plus `ctrl+x ctrl+?`).
