@@ -164,6 +164,19 @@ def parse_filter(raw: str) -> tuple[bool, str]:
     return collision_only, text
 
 
+def select_collision_ghost_visible(state: "AppState") -> bool:
+    """Return True when the ``Tab to view collisions`` ghost is visible.
+
+    The ghost — and therefore the ``Tab`` / ``ctrl+i`` bang autocomplete it gates
+    (spec §3.3 / §6.6) — renders only when ``filter.raw`` is empty and at least
+    one unresolved collision exists.
+    """
+    return (
+        state.filter.raw == ""
+        and select_unresolved_collision_count(state.mappings) > 0
+    )
+
+
 def select_visible_rows(state: "AppState") -> list[Mapping]:
     rows: list[Mapping] = list(state.mappings)
 

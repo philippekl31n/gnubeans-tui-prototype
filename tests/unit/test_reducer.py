@@ -11,6 +11,7 @@ from dataclasses import replace
 import pytest
 
 from mapping_resolution_tui.actions import (
+    AutocompleteBang,
     ClearFilter,
     DeleteBackward,
     DeleteForward,
@@ -25,7 +26,7 @@ from mapping_resolution_tui.actions import (
     MoveCursorRight,
 )
 from mapping_resolution_tui.reducer import make_initial_state, reduce
-from mapping_resolution_tui.selectors import parse_filter
+from mapping_resolution_tui.selectors import parse_filter, select_visible_rows
 from mapping_resolution_tui.state import FilterState
 
 
@@ -244,6 +245,70 @@ def test_clear_filter_resets_raw_and_cursor(state):
 
 def test_clear_filter_on_empty_is_noop(state):
     assert reduce(state, ClearFilter()) is state
+
+
+# ── Tab bang autocomplete (spec §3.3) ───────────────────────────────────────────
+
+def test_autocomplete_bang_inserts_leading_bang_when_ghost_visible(state):
+    # Fresh state: empty filter with one unresolved collision -> ghost visible.
+    new_state = reduce(state, AutocompleteBang())
+    assert new_state.filter.raw == "!"
+    assert new_state.filter.cursor == 1
+    assert new_state.filter.collision_only is True
+    assert new_state.filter.text == ""
+
+
+def test_autocomplete_bang_clamps_selection_to_first_collision_row(state):
+    # Selection starts on ordinal 1, which the metafilter hides; it clamps to the
+    # first visible collision row (ordinal 2).
+    assert state.selection.selected_ordinal == 1
+    new_state = reduce(state, AutocompleteBang())
+    assert new_state.selection.selected_ordinal == 2
+
+
+def test_second_autocomplete_bang_does_not_clear_the_bang(state):
+    once = reduce(state, AutocompleteBang())
+    twice = reduce(once, AutocompleteBang())
+    assert twice.filter.raw == "!"
+    assert twice is once  # ghost no longer visible -> no-op identity
+
+
+def test_autocomplete_bang_is_noop_when_filter_has_text(state):
+    state = _raw(state, "a", 1)
+    assert reduce(state, AutocompleteBang()) is state
+
+
+def test_autocomplete_bang_is_noop_when_no_unresolved_collisions(state):
+    # Resolve the AT-T collision so the ghost (and the autocomplete) disappears.
+    mappings = [
+        replace(m, target_value="ATT") if m.ordinal == 3 else m
+        for m in state.mappings
+    ]
+    state = replace(state, mappings=mappings)
+    assert reduce(state, AutocompleteBang()) is state
+
+
+# ── selection clamp after filter mutations (spec §3.4) ──────────────────────────
+
+def test_metafilter_hides_selected_row_and_clamps_selection(state):
+    new_state = reduce(state, InsertCharacter("!"))
+    assert [m.ordinal for m in select_visible_rows(new_state)] == [2, 3]
+    assert new_state.selection.selected_ordinal == 2
+
+
+def test_selection_unchanged_when_selected_row_stays_visible(state):
+    # Ordinal 1 (APPLE) matches "1"; the selection stays put.
+    new_state = reduce(state, InsertCharacter("1"))
+    assert new_state.selection.selected_ordinal == 1
+
+
+def test_empty_result_clears_selection_then_clear_restores_first_row(state):
+    state = reduce(state, InsertCharacter("!"))
+    state = reduce(state, InsertCharacter("1"))  # "!1": no collision row matches
+    assert select_visible_rows(state) == []
+    assert state.selection.selected_ordinal is None
+    state = reduce(state, ClearFilter())
+    assert state.selection.selected_ordinal == 1
 
 
 # ── immutability and dispatch contract ─────────────────────────────────────────

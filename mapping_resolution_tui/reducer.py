@@ -10,6 +10,7 @@ import shutil
 
 from mapping_resolution_tui.actions import (
     Action,
+    AutocompleteBang,
     ClearFilter,
     DeleteBackward,
     DeleteForward,
@@ -23,7 +24,12 @@ from mapping_resolution_tui.actions import (
     MoveCursorLeft,
     MoveCursorRight,
 )
-from mapping_resolution_tui.selectors import parse_filter, sort_mappings_for_initial_display
+from mapping_resolution_tui.selectors import (
+    parse_filter,
+    select_collision_ghost_visible,
+    select_visible_rows,
+    sort_mappings_for_initial_display,
+)
 from mapping_resolution_tui.state import (
     AppConfig,
     AppState,
@@ -109,6 +115,8 @@ def reduce(state: AppState, action: Action) -> AppState:
         return _delete_word_forward(state)
     if isinstance(action, ClearFilter):
         return _clear_filter(state)
+    if isinstance(action, AutocompleteBang):
+        return _autocomplete_bang(state)
     return state
 
 
@@ -122,7 +130,8 @@ def _with_raw(state: AppState, raw: str, cursor: int) -> AppState:
 
     ``filter.raw`` is the single editable buffer (spec §3.3): ``cursor`` is
     clamped to ``[0, len(raw)]`` and ``collision_only`` / ``text`` are re-derived
-    from ``raw`` on every mutation.
+    from ``raw`` on every mutation. Selection is then clamped so it never points
+    at a row the new filter hides (spec §3.4 / §5.1).
     """
     cursor = max(0, min(cursor, len(raw)))
     collision_only, text = parse_filter(raw)
@@ -132,7 +141,39 @@ def _with_raw(state: AppState, raw: str, cursor: int) -> AppState:
         text=text,
         cursor=cursor,
     )
-    return replace(state, filter=new_filter)
+    return _clamp_selection(replace(state, filter=new_filter))
+
+
+def _clamp_selection(state: AppState) -> AppState:
+    """Clamp ``selection.selected_ordinal`` to the rows the filter leaves visible.
+
+    Per spec §3.4: an empty result clears the selection; otherwise a selected
+    ordinal that the filter has hidden clamps to the first visible row, while a
+    still-visible selection is left untouched.
+    """
+    visible = select_visible_rows(state)
+    if not visible:
+        selected = None
+    elif state.selection.selected_ordinal in {m.ordinal for m in visible}:
+        selected = state.selection.selected_ordinal
+    else:
+        selected = visible[0].ordinal
+
+    if selected == state.selection.selected_ordinal:
+        return state
+    return replace(state, selection=replace(state.selection, selected_ordinal=selected))
+
+
+def _autocomplete_bang(state: AppState) -> AppState:
+    """Autocomplete a leading ``!`` collision metafilter (``Tab`` / ``ctrl+i``).
+
+    A no-op unless the ``Tab to view collisions`` ghost is visible — that is,
+    ``filter.raw`` is empty and at least one unresolved collision exists. When it
+    fires it inserts ``!`` at index 0 and sets ``filter.cursor = 1`` (spec §3.3).
+    """
+    if not select_collision_ghost_visible(state):
+        return state
+    return _with_raw(state, "!", 1)
 
 
 def _insert_character(state: AppState, char: str) -> AppState:

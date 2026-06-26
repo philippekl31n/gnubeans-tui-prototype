@@ -91,7 +91,12 @@ def render_lines(state: AppState) -> list[str]:
     # ── prompt ────────────────────────────────────────────────────────────────
     prompt_content = select_filter_prompt(state, unresolved_count)
     raw = prompt_content.filter_raw
-    if raw:
+    if raw == "!":
+        # Metafilter only: the literal `!` followed by the `Type to filter` ghost,
+        # only its first character reverse-video and the remainder dim (§6.5).
+        first, rest = "T", "ype to filter"
+        prompt = f"  Filter: !{_REV}{first}{_RESET}{_DIM}{rest}{_RESET}"
+    elif raw:
         # Render filter.raw literally (including any leading `!`) with the
         # reverse-video cursor block at filter.cursor within raw (§3.3 / §6.5).
         cursor = prompt_content.filter_cursor

@@ -86,6 +86,18 @@ class ClearFilter:
     """Clear ``filter.raw`` entirely and reset the caret to 0 (``Esc``)."""
 
 
+@dataclass(frozen=True)
+class AutocompleteBang:
+    """Autocomplete a leading ``!`` collision metafilter into ``filter.raw``.
+
+    Dispatched by ``Tab`` / ``ctrl+i`` in BROWSING. The reducer inserts ``!`` at
+    index 0 and sets ``filter.cursor = 1`` only when the ``Tab to view
+    collisions`` ghost is visible (``filter.raw`` empty with at least one
+    unresolved collision); in every other situation it is a no-op — a second
+    ``Tab`` does NOT clear the inserted ``!`` (spec §3.3).
+    """
+
+
 Action = (
     InsertCharacter
     | MoveCursorLeft
@@ -99,4 +111,5 @@ Action = (
     | DeleteWordBackward
     | DeleteWordForward
     | ClearFilter
+    | AutocompleteBang
 )

@@ -1,0 +1,15 @@
+❯ Reviewing 11 commodity mappings. 1 unresolved collision. ctrl+c cancel
+  Filter: Tab to view collisions
+
+    #   Beancount Token           GnuCash Source
+▸   1   APPLE                     APPLE
+    2  !AT-T                      AT&T
+    3  !AT-T                      AT-T
+    4   C100-F                    100-F
+    5   GOOGL                     GOOGL
+    6   MSFT                      MSFT
+    7   NVDA                      NVDA
+    8   QQQ                       QQQ
+    9   SPY                       SPY
+
+  shift+↑↓ pageup/dn  ·  ↵ edit selected

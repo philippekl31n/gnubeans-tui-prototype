@@ -25,9 +25,10 @@ Feature: Text filter input with cursor and match highlights
     And the filter search text is empty
     And the collision-only metafilter is active
 
-  Scenario: Tab is a no-op in browsing (reserved for bang autocomplete)
+  Scenario: Tab does not autocomplete once the filter already has text
+    Given the filter buffer already contains "a" with the cursor at offset 1
     When the reviewer presses "tab"
-    Then the filter buffer is empty
+    Then the filter buffer is "a"
 
   Scenario: Arrow keys move the cursor within the buffer, clamped to both ends
     Given the filter buffer already contains "abc" with the cursor at offset 3

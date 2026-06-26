@@ -39,6 +39,54 @@ def frame_1a_screen(frame_1a_lines):
 
 
 @pytest.fixture
+def frame_2_lines():
+    """Frame 2: Tab autocompletes a leading ``!`` collision metafilter from 1a.
+
+    From the initial browsing state the reviewer presses Tab; the ``Tab to view
+    collisions`` ghost is visible, so the bang autocompletes (``filter.raw='!'``,
+    ``filter.cursor=1``, ``collision_only`` derived True). Visible rows narrow to
+    the AT-T collision pair (ordinals 2 and 3) and selection clamps to row 2.
+    """
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.actions import AutocompleteBang
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    state = reduce(state, AutocompleteBang())
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_2_screen(frame_2_lines):
+    return make_pyte_screen(frame_2_lines)
+
+
+@pytest.fixture
+def frame_esc_clear_lines():
+    """Esc-clear frame: pressing Esc from a filtered state restores frame 1a.
+
+    The reviewer types a ``1`` text filter (row 1 stays selected and visible)
+    and then presses Esc; ``filter.raw`` is cleared, the cursor resets to 0, and
+    all rows are restored, so the frame is bit-identical to frame 1a.
+    """
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.actions import ClearFilter, InsertCharacter
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    state = reduce(state, InsertCharacter("1"))
+    state = reduce(state, ClearFilter())
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_esc_clear_screen(frame_esc_clear_lines):
+    return make_pyte_screen(frame_esc_clear_lines)
+
+
+@pytest.fixture
 def frame_8_lines():
     """Frame 8: single-character text filter '1' over a collision-free dataset.
 

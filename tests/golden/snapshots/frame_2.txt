@@ -1,0 +1,8 @@
+❯ Reviewing 11 commodity mappings. 1 unresolved collision. ctrl+c cancel
+  Filter: !Type to filter
+
+    #   Beancount Token           GnuCash Source
+▸   2  !AT-T                      AT&T
+    3  !AT-T                      AT-T
+
+  shift+↑↓ pageup/dn  ·  ↵ edit selected  ·  esc clear filter

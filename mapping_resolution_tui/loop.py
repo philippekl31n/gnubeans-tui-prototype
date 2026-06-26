@@ -14,6 +14,7 @@ import blessed
 
 from mapping_resolution_tui.actions import (
     Action,
+    AutocompleteBang,
     ClearFilter,
     DeleteBackward,
     DeleteForward,
@@ -45,6 +46,7 @@ _CTRL_H = "\x08"  # backward-delete-char -> backspace
 _CTRL_K = "\x0b"  # kill-line            -> delete to end of line
 _CTRL_U = "\x15"  # unix-line-discard    -> delete to start of line
 _CTRL_W = "\x17"  # unix-word-rubout     -> delete word backward
+_TAB = "\t"       # complete / ctrl+i    -> bang autocomplete (\x09)
 _ESC = "\x1b"     # abort filter         -> clear filter
 _DEL = "\x7f"     # DEL / ctrl+?         -> backspace
 # Meta/Alt word operations arrive as an ESC prefix; matched before the lone ESC.
@@ -53,8 +55,6 @@ _META_BS = "\x1b\x7f"  # backward-kill-word -> delete word backward
 _META_BS_ALT = "\x1b\x08"
 
 # Names reported by blessed for multi-byte escape sequences (arrows, named keys).
-# `Tab` / `KEY_TAB` is intentionally NOT mapped here: in BROWSING it is reserved
-# for the bang-autocomplete metafilter (TASK-003) and is a no-op until then.
 _CURSOR_LEFT_NAMES = frozenset({"KEY_LEFT"})
 _CURSOR_RIGHT_NAMES = frozenset({"KEY_RIGHT"})
 _HOME_NAMES = frozenset({"KEY_HOME"})
@@ -62,6 +62,9 @@ _END_NAMES = frozenset({"KEY_END"})
 _BACKSPACE_NAMES = frozenset({"KEY_BACKSPACE"})
 _DELETE_NAMES = frozenset({"KEY_DELETE"})
 _CLEAR_NAMES = frozenset({"KEY_ESCAPE"})
+# `Tab` / `ctrl+i` autocompletes a leading `!` collision metafilter; the reducer
+# no-ops unless the `Tab to view collisions` ghost is visible (spec §3.3 / §5.1).
+_TAB_NAMES = frozenset({"KEY_TAB"})
 
 
 def is_quit_key(key) -> bool:
@@ -95,6 +98,8 @@ def key_to_action(key) -> Action | None:
         return DeleteForward()
     if name in _CLEAR_NAMES:
         return ClearFilter()
+    if name in _TAB_NAMES:
+        return AutocompleteBang()
 
     # Meta/Alt word operations (ESC-prefixed); checked before the lone ESC below.
     if text == _META_D:
@@ -121,6 +126,8 @@ def key_to_action(key) -> Action | None:
         return KillToStart()
     if text == _CTRL_W:
         return DeleteWordBackward()
+    if text == _TAB:
+        return AutocompleteBang()
     if text == _ESC:
         return ClearFilter()
 

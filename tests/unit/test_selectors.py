@@ -382,6 +382,33 @@ def test_select_visible_rows_matches_ordinal_and_token_only_excluding_sources():
     assert select_visible_rows(state_src) == []
 
 
+def test_collision_ghost_visible_only_with_empty_filter_and_collisions():
+    from dataclasses import replace
+
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.reducer import make_initial_state
+    from mapping_resolution_tui.selectors import select_collision_ghost_visible
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+
+    # Empty filter with one unresolved collision: the ghost is visible.
+    assert select_collision_ghost_visible(state) is True
+
+    # Any filter text hides the ghost (and the Tab autocomplete it gates).
+    state_text = replace(state, filter=replace(state.filter, raw="a", text="a", cursor=1))
+    assert select_collision_ghost_visible(state_text) is False
+
+    # Resolving the only collision hides the ghost even with an empty filter.
+    resolved = replace(
+        state,
+        mappings=[
+            replace(m, target_value="ATT") if m.ordinal == 3 else m
+            for m in state.mappings
+        ],
+    )
+    assert select_collision_ghost_visible(resolved) is False
+
+
 def test_collision_selectors_are_repeatable_and_do_not_store_state_on_mappings():
     from mapping_resolution_tui.selectors import (
         select_collision_groups,

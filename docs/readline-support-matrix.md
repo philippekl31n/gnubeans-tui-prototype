@@ -24,12 +24,11 @@ buffer and the source of truth; `collisionOnly` (raw begins with `!`) and `text`
 (raw minus a single leading `!`) are **derived** after every mutation. This
 changes the rows below relative to the original toggle model:
 
-- **`Tab` / `ctrl+i`** no longer toggles a metafilter. The spec now requires it to
-  *autocomplete a leading `!`* into `filter.raw` (cursor → 1) **only** when the
-  `Tab to view collisions` ghost is visible, and to be a **no-op** otherwise (a
-  second `Tab` must not clear the `!`). The existing `ToggleCollisionOnly`
-  reducer action is therefore **non-compliant** and must be replaced — counted
-  below as an open gap (🔴), not an implemented binding.
+- **`Tab` / `ctrl+i`** no longer toggles a metafilter. It now *autocompletes a
+  leading `!`* into `filter.raw` (cursor → 1) **only** when the `Tab to view
+  collisions` ghost is visible, and is a **no-op** otherwise (a second `Tab` must
+  not clear the `!`). Implemented in TASK-003 as the `AutocompleteBang` action;
+  the old `ToggleCollisionOnly` reducer action was retired.
 - **`!`** is an ordinary printable character handled by `InsertCharacter`; it is
   no longer a metafilter toggle. A `!` inserted at index 0 *is* the collision
   metafilter by derivation.
@@ -61,7 +60,7 @@ changes the rows below relative to the original toggle model:
 | `\x06` | ctrl+f | `forward-char` | Cursor right, clamp at `len(filter.raw)` | `MoveCursorRight` | ✅ |
 | `\x07` | ctrl+g | `abort` | No-op (must NOT act like Esc/ctrl+c) | `None` | 🟡 |
 | `\x08` | ctrl+h | `backward-delete-char` | Delete before cursor in `filter.raw`; no-op at cursor 0 (leading `!` deletes as ordinary char) | `DeleteBackward` (no-op at cursor 0) | ✅ |
-| `\x09` | ctrl+i / Tab | `complete` → *(app)* | Autocomplete a leading `!` into `filter.raw` (cursor → 1) only when the `Tab to view collisions` ghost is visible; else no-op | `None` (no-op; autocomplete deferred to TASK-003) | 🔴 |
+| `\x09` | ctrl+i / Tab | `complete` → *(app)* | Autocomplete a leading `!` into `filter.raw` (cursor → 1) only when the `Tab to view collisions` ghost is visible; else no-op | `AutocompleteBang` (reducer no-ops unless ghost visible) | ✅ |
 | `\x0a` | ctrl+j | `accept-line` (Enter) | Dispatch as Enter (edit selected row) | `None` | 🔴 |
 | `\x0b` | ctrl+k | `kill-line` | Delete from cursor through end of `filter.raw` | `KillToEnd` | ✅ |
 | `\x0c` | ctrl+l | `clear-screen` / `redraw-current-line` | Re-render only; MUST NOT mutate state | `None` (no forced redraw) | 🟠 |
@@ -112,7 +111,7 @@ remaining meta functions are no-ops.
 | `KEY_RIGHT` | → | `forward-char` | Cursor right | `MoveCursorRight` | ✅ |
 | `KEY_BACKSPACE` | Backspace | `backward-delete-char` | Delete before cursor in `filter.raw`; no-op at cursor 0 | `DeleteBackward` (no-op at cursor 0) | ✅ |
 | `KEY_ESCAPE` | Esc | *(app)* | Clear `filter.raw` (clears derived metafilter + text) | `ClearFilter` | ✅ |
-| `KEY_TAB` | Tab | `complete` → *(app)* | Autocomplete leading `!` when `Tab to view collisions` ghost visible; else no-op | `None` (no-op; deferred to TASK-003) | 🔴 |
+| `KEY_TAB` | Tab | `complete` → *(app)* | Autocomplete leading `!` when `Tab to view collisions` ghost visible; else no-op | `AutocompleteBang` (reducer no-ops unless ghost visible) | ✅ |
 | `KEY_ENTER` | Enter | `accept-line` | Edit selected row | `None` | 🔴 |
 | `KEY_UP` | ↑ | *(app)* | Move selection up | `None` | 🔴 |
 | `KEY_DOWN` | ↓ | *(app)* | Move selection down | `None` | 🔴 |
@@ -127,17 +126,19 @@ remaining meta functions are no-ops.
 
 | Status | Count (approx.) | Meaning |
 |---|---|---|
-| ✅ Implemented | 11 control + 2 meta + 7 named = **~20 bindings** | Printable insert (incl. literal `!`), cursor move (left/right/home/end), backspace/forward-delete with cursor-0 no-op, kill-line, unix-line-discard, word kills (back/forward), Esc clear. |
+| ✅ Implemented | 12 control + 2 meta + 8 named = **~22 bindings** | Printable insert (incl. literal `!`), Tab/ctrl+i bang autocomplete, cursor move (left/right/home/end), backspace/forward-delete with cursor-0 no-op, kill-line, unix-line-discard, word kills (back/forward), Esc clear. |
 | 🟡 No-op (compliant) | **~14 families** | abort, quoted-insert, undo, transpose, yank, search/history, completion variants, case transforms, macro/shell/vi. |
-| 🔴 Gap (planned) | **~12 bindings** | Bang autocomplete (Tab/ctrl+i — currently a no-op), accept-line (Enter/ctrl+j/ctrl+m), navigation (↑↓/ctrl+p/ctrl+n), page keys, submit (ctrl+s), `ctrl+x` prefix. |
+| 🔴 Gap (planned) | **~10 bindings** | accept-line (Enter/ctrl+j/ctrl+m), navigation (↑↓/ctrl+p/ctrl+n), page keys, submit (ctrl+s), `ctrl+x` prefix. |
 | 🟠 Partial | **2** | `ctrl+c` (simple quit vs EXIT confirmation), `ctrl+l` (no forced redraw). |
 | ⚪ Out of scope | **~7** | Control bytes the spec never names. |
 
-> **Phase 1 (TASK-002) status:** the `filter.raw`-as-source migration and the
-> browsing line-editing aliases (`ctrl+a/e/d/k/u/w`, `meta+d`, `meta+backspace`,
-> Home/End/Delete) are implemented; `ToggleCollisionOnly` was retired and `!` is
-> now an ordinary printable insert. Tab/ctrl+i bang autocomplete remains a no-op
-> for TASK-003, and navigation/accept-line/submit follow in TASK-004 and the
+> **TASK-003 status:** the Tab/ctrl+i bang autocomplete is implemented via the
+> `AutocompleteBang` action (insert a leading `!` and set `filter.cursor = 1` only
+> when the `Tab to view collisions` ghost is visible; otherwise a no-op). It
+> builds on the Phase 1 (TASK-002) `filter.raw`-as-source migration and browsing
+> line-editing aliases (`ctrl+a/e/d/k/u/w`, `meta+d`, `meta+backspace`,
+> Home/End/Delete); `ToggleCollisionOnly` was retired and `!` is an ordinary
+> printable insert. Navigation/accept-line/submit follow in TASK-004 and the
 > editing/confirmation epics.
 
 ### Spec-mandated "supported aliases" coverage (§5.1)
@@ -146,7 +147,7 @@ The spec requires tests for these 14 aliases. Current state:
 
 | Alias | Function | Status |
 |---|---|---|
-| ctrl+i | complete → autocomplete `!` | 🔴 (no-op; autocomplete is TASK-003) |
+| ctrl+i | complete → autocomplete `!` | ✅ |
 | ctrl+? | backward-delete-char | ✅ |
 | ctrl+b | backward-char | ✅ |
 | ctrl+f | forward-char | ✅ |
@@ -161,34 +162,31 @@ The spec requires tests for these 14 aliases. Current state:
 | ctrl+u | unix-line-discard | ✅ |
 | ctrl+w | backward-kill-word | ✅ |
 
-**9 of 14** supported. The remaining five are `ctrl+i` (bang autocomplete →
-TASK-003), `ctrl+j`/`ctrl+m` (accept-line → editing epic), and `ctrl+p`/`ctrl+n`
-(selection navigation → TASK-004). (`ctrl+h` and `DEL`, also implemented, are
-`backward-delete-char` aliases not on the must-test list.)
+**10 of 14** supported. The remaining four are `ctrl+j`/`ctrl+m` (accept-line →
+editing epic) and `ctrl+p`/`ctrl+n` (selection navigation → TASK-004). (`ctrl+h`
+and `DEL`, also implemented, are `backward-delete-char` aliases not on the
+must-test list.)
 
 ## Closing the gaps — what needs to be built
 
 Phase 1 (TASK-002) landed the `filter.raw`-as-source model and the browsing
-line-editing aliases. The reducer's filter actions are now `InsertCharacter`,
-`MoveCursorLeft`, `MoveCursorRight`, `MoveCursorHome`, `MoveCursorEnd`,
-`DeleteBackward`, `DeleteForward`, `KillToEnd`, `KillToStart`,
-`DeleteWordBackward`, `DeleteWordForward`, and `ClearFilter`; each runs the §5.1
+line-editing aliases; TASK-003 added the Tab/ctrl+i `AutocompleteBang`. The
+reducer's filter actions are now `InsertCharacter`, `MoveCursorLeft`,
+`MoveCursorRight`, `MoveCursorHome`, `MoveCursorEnd`, `DeleteBackward`,
+`DeleteForward`, `KillToEnd`, `KillToStart`, `DeleteWordBackward`,
+`DeleteWordForward`, `ClearFilter`, and `AutocompleteBang`; each runs the §5.1
 post-mutation sequence (clamp cursor → derive `collisionOnly`/`text` from
 `filter.raw` → re-filter → clamp selection). `ToggleCollisionOnly` was removed.
 
 Remaining work, by owning task:
 
-1. **Bang autocomplete** (TASK-003) — Tab / ctrl+i inserts a leading `!` and sets
-   cursor 1 only when the `Tab to view collisions` ghost is visible; otherwise
-   no-op. (`!` literal insert and the `DeleteBackward` cursor-0 no-op already
-   landed in Phase 1.)
-2. **Navigation** (TASK-004, FR14) — up/down (↑/↓, ctrl+p/ctrl+n) and page
+1. **Navigation** (TASK-004, FR14) — up/down (↑/↓, ctrl+p/ctrl+n) and page
    (Shift+↑↓, PgUp/PgDn) for selection movement with anchored body allocation.
-3. **accept-line** — Enter / ctrl+j / ctrl+m → enter `EDITING` (editing epic).
-4. **submit** — ctrl+s → accept confirmation when collisions are zero (confirmation epic).
-5. **ctrl+c** — upgrade the clean-quit into the EXIT-confirmation contract
+2. **accept-line** — Enter / ctrl+j / ctrl+m → enter `EDITING` (editing epic).
+3. **submit** — ctrl+s → accept confirmation when collisions are zero (confirmation epic).
+4. **ctrl+c** — upgrade the clean-quit into the EXIT-confirmation contract
    (with second-ctrl+c SIGINT) once `CONFIRMING` exists.
-6. **clear-screen** — ctrl+l → trigger a redraw without mutating state.
+5. **clear-screen** — ctrl+l → trigger a redraw without mutating state.
 
 The active no-op families (🟡) require no new behavior — only explicit tests
 asserting state and render are unchanged, per §5.1's testing mandate (Phase 1

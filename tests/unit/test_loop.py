@@ -6,6 +6,7 @@ no-op families (spec §5.1), unsupported-key no-ops (FR30), and the quit key.
 from blessed.keyboard import Keystroke
 
 from mapping_resolution_tui.actions import (
+    AutocompleteBang,
     ClearFilter,
     DeleteBackward,
     DeleteForward,
@@ -31,7 +32,7 @@ def _initial_state():
     return make_initial_state(make_config(), make_mappings(), frame_height=15)
 
 
-# ── printable insertion; `!` is now ordinary text, Tab is a no-op ───────────────
+# ── printable insertion; `!` is ordinary text, Tab autocompletes the bang ───────
 
 def test_printable_character_maps_to_insert():
     assert key_to_action("a") == InsertCharacter("a")
@@ -50,10 +51,12 @@ def test_bang_maps_to_literal_insert_not_a_toggle():
     assert key_to_action("!") == InsertCharacter("!")
 
 
-def test_tab_is_a_noop_reserved_for_bang_autocomplete():
-    # Tab/ctrl+i is reserved for the TASK-003 bang-autocomplete; no-op until then.
-    assert key_to_action("\t") is None
-    assert key_to_action(Keystroke("\t", code=512, name="KEY_TAB")) is None
+def test_tab_maps_to_bang_autocomplete():
+    # Tab / ctrl+i (\x09) and KEY_TAB normalise to the bang autocomplete; the
+    # reducer decides whether the ghost makes it fire (spec §3.3 / §5.1).
+    assert key_to_action("\t") == AutocompleteBang()
+    assert key_to_action("\x09") == AutocompleteBang()
+    assert key_to_action(Keystroke("\t", code=512, name="KEY_TAB")) == AutocompleteBang()
 
 
 # ── readline line-editing aliases (FR29 / spec §5.1) ────────────────────────────
@@ -213,6 +216,18 @@ def test_bang_then_text_builds_metafiltered_query():
     assert state.filter.collision_only is True
     assert state.filter.text == "3"
     assert state.filter.raw == "!3"
+
+
+def test_tab_through_input_layer_autocompletes_the_bang():
+    state = _drive(_initial_state(), ["\t"])
+    assert state.filter.raw == "!"
+    assert state.filter.collision_only is True
+    assert state.filter.cursor == 1
+
+
+def test_second_tab_through_input_layer_is_a_noop():
+    state = _drive(_initial_state(), ["\t", "\t"])
+    assert state.filter.raw == "!"
 
 
 def test_ctrl_u_then_retype_via_input_layer():
