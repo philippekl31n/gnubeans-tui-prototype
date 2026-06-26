@@ -134,8 +134,32 @@ def select_visible_rows(state: "AppState") -> list[Mapping]:
     return rows
 
 
+def select_match_spans(needle: str, haystack: str) -> tuple[tuple[int, int], ...]:
+    """Non-overlapping ASCII case-insensitive match spans of ``needle`` in ``haystack``.
+
+    Returns ``(start, end)`` half-open index pairs into ``haystack`` (left to
+    right, non-overlapping). An empty ``needle`` matches nothing. The spans are
+    the bold-highlight metadata the renderer applies to the ordinal display and
+    target token cell (FR11).
+    """
+    if not needle:
+        return ()
+    lowered_needle = needle.lower()
+    lowered_haystack = haystack.lower()
+    spans: list[tuple[int, int]] = []
+    start = 0
+    while True:
+        idx = lowered_haystack.find(lowered_needle, start)
+        if idx == -1:
+            break
+        spans.append((idx, idx + len(lowered_needle)))
+        start = idx + len(lowered_needle)
+    return tuple(spans)
+
+
 def select_filter_prompt(state: "AppState", unresolved_count: int) -> FilterPromptContent:
     return FilterPromptContent(
+        filter_raw=state.filter.raw,
         filter_text=state.filter.text,
         filter_cursor=state.filter.cursor,
         collision_only=state.filter.collision_only,

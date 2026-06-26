@@ -22,11 +22,19 @@ import blessed
 
 from mapping_resolution_tui.actions import (
     Action,
+    Backspace,
+    BackwardKillWord,
     ClearFilter,
+    DeleteChar,
     InsertChar,
+    KillLine,
+    KillWord,
+    MoveCursorEnd,
+    MoveCursorHome,
     MoveCursorLeft,
     MoveCursorRight,
-    ToggleCollisionOnly,
+    Redraw,
+    UnixLineDiscard,
 )
 from mapping_resolution_tui.config import QUIT_KEY
 from mapping_resolution_tui.reducer import make_initial_state, reduce
@@ -34,12 +42,23 @@ from mapping_resolution_tui.renderer import render_lines
 from mapping_resolution_tui.state import AppConfig, Mapping
 
 # Readline-style aliases normalised onto canonical BROWSING events before an
-# action is built (spec 5.1). Tokens absent from this map pass through unchanged.
+# action is built (spec S5.1). Tokens absent from this map pass through
+# unchanged — including the no-op readline families (abort, quoted-insert,
+# undo, transpose, yank, reverse-search) that key_to_action then ignores.
 _READLINE_ALIASES = {
-    "ctrl+b": "left",   # backward-char
-    "ctrl+f": "right",  # forward-char
-    "ctrl+i": "tab",    # complete -> collision metafilter toggle
-    "ctrl+h": "backspace",
+    "ctrl+a": "home",              # beginning-of-line
+    "ctrl+e": "end",               # end-of-line
+    "ctrl+b": "left",              # backward-char
+    "ctrl+f": "right",             # forward-char
+    "ctrl+d": "delete",            # delete-char (forward)
+    "ctrl+h": "backspace",         # backward-delete-char
+    "ctrl+k": "killline",          # kill-line
+    "ctrl+u": "unixlinediscard",   # unix-line-discard
+    "ctrl+w": "backwardkillword",  # unix-word-rubout
+    "ctrl+i": "tab",               # complete (autocomplete is TASK-003)
+    "ctrl+l": "redraw",            # clear-screen / redraw only
+    "meta+d": "killword",          # kill-word (forward)
+    "meta+backspace": "backwardkillword",  # backward-kill-word
 }
 
 # blessed Keystroke.name values for the multi-byte escape sequences and named
@@ -49,10 +68,29 @@ _BLESSED_KEY_NAMES = {
     "KEY_RIGHT": "right",
     "KEY_UP": "up",
     "KEY_DOWN": "down",
+    "KEY_HOME": "home",
+    "KEY_END": "end",
+    "KEY_DELETE": "delete",
     "KEY_TAB": "tab",
     "KEY_ESCAPE": "esc",
     "KEY_BACKSPACE": "backspace",
     "KEY_ENTER": "enter",
+}
+
+# Normalised tokens that map directly to a zero-argument action.
+_KEY_ACTIONS = {
+    "left": MoveCursorLeft,
+    "right": MoveCursorRight,
+    "home": MoveCursorHome,
+    "end": MoveCursorEnd,
+    "backspace": Backspace,
+    "delete": DeleteChar,
+    "killline": KillLine,
+    "unixlinediscard": UnixLineDiscard,
+    "killword": KillWord,
+    "backwardkillword": BackwardKillWord,
+    "redraw": Redraw,
+    "esc": ClearFilter,
 }
 
 
@@ -65,17 +103,13 @@ def key_to_action(key: str) -> Optional[Action]:
     """Map a normalised BROWSING key token to an action, or ``None`` for a no-op.
 
     ``None`` covers every key not handled by the Epic-2 filter foundation —
-    including recognised-but-not-yet-wired keys such as Backspace — so the loop
-    leaves state and output unchanged (FR30).
+    including Tab (bang autocomplete is TASK-003) and the no-op readline
+    families — so the loop leaves state and output unchanged (FR30). A bare
+    ``!`` is an ordinary printable character and inserts literally.
     """
-    if key in ("tab", "!"):
-        return ToggleCollisionOnly()
-    if key == "left":
-        return MoveCursorLeft()
-    if key == "right":
-        return MoveCursorRight()
-    if key == "esc":
-        return ClearFilter()
+    factory = _KEY_ACTIONS.get(key)
+    if factory is not None:
+        return factory()
     if len(key) == 1 and key.isprintable():
         return InsertChar(key)
     return None

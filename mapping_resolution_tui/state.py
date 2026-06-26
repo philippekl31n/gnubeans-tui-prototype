@@ -123,6 +123,7 @@ class FooterContent:
 
 @dataclass(frozen=True)
 class FilterPromptContent:
+    filter_raw: str
     filter_text: str
     filter_cursor: int
     collision_only: bool

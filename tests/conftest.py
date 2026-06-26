@@ -39,6 +39,28 @@ def frame_1a_screen(frame_1a_lines):
 
 
 @pytest.fixture
+def frame_8_lines():
+    """Frame 8: filter text "1" active in the 15-row terminal (TASK-002).
+
+    Built by dispatching a single InsertChar("1") through the reducer, so the
+    frame exercises real single-character input rather than a hand-built state.
+    """
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.actions import InsertChar
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    state = reduce(state, InsertChar("1"))
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_8_screen(frame_8_lines):
+    return make_pyte_screen(frame_8_lines)
+
+
+@pytest.fixture
 def assert_snapshot(update_snapshots):
     def _check(screen: pyte.Screen, snapshot_path: Path):
         actual = "\n".join(row.rstrip() for row in screen.display) + "\n"

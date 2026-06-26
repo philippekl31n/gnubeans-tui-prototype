@@ -12,6 +12,7 @@ from mapping_resolution_tui.selectors import (
     select_default_source,
     select_filter_prompt,
     select_footer_content,
+    select_match_spans,
     select_unresolved_collision_count,
     select_unresolved_collision_ordinals,
     select_visible_rows,
@@ -43,6 +44,42 @@ def strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
+def _apply_bold_spans(text: str, spans: tuple[tuple[int, int], ...]) -> str:
+    """Wrap each ``(start, end)`` slice of ``text`` in bold SGR codes.
+
+    ANSI codes are zero-width, so the displayed column width is unchanged — the
+    highlight metadata only adds the bold attribute to the matched cells (FR11).
+    """
+    if not spans:
+        return text
+    out: list[str] = []
+    prev = 0
+    for start, end in spans:
+        out.append(text[prev:start])
+        out.append(f"{_BOLD}{text[start:end]}{_RESET}")
+        prev = end
+    out.append(text[prev:])
+    return "".join(out)
+
+
+def _render_filter_cursor(raw: str, cursor: int) -> str:
+    """Render ``raw`` with a reverse-video cursor block at ``cursor``.
+
+    The character under the cursor is shown in reverse video; when the cursor
+    sits past the last character a reverse-video space is appended so the block
+    is always visible at the correct offset (FR9).
+    """
+    out: list[str] = []
+    for i, ch in enumerate(raw):
+        if i == cursor:
+            out.append(f"{_REV}{ch}{_RESET}")
+        else:
+            out.append(ch)
+    if cursor >= len(raw):
+        out.append(f"{_REV} {_RESET}")
+    return "".join(out)
+
+
 def render_lines(state: AppState) -> list[str]:
     config = state.config
     mappings = state.mappings
@@ -70,13 +107,13 @@ def render_lines(state: AppState) -> list[str]:
 
     # ── prompt ────────────────────────────────────────────────────────────────
     prompt_content = select_filter_prompt(state, unresolved_count)
-    if prompt_content.filter_text:
-        prompt = f"  Filter: {prompt_content.filter_text}"
+    if prompt_content.filter_raw:
+        body = _render_filter_cursor(prompt_content.filter_raw, prompt_content.filter_cursor)
+        prompt = f"  Filter: {body}"
     else:
-        prefix = "!" if prompt_content.collision_only else ""
         hint_text = "Tab to view collisions" if prompt_content.collision_hint_visible else "Type to filter"
         first, rest = hint_text[0], hint_text[1:]
-        prompt = f"  Filter: {prefix}{_REV}{first}{_RESET}{_DIM}{rest}{_RESET}"
+        prompt = f"  Filter: {_REV}{first}{_RESET}{_DIM}{rest}{_RESET}"
 
     # ── table header ──────────────────────────────────────────────────────────
     max_token_length = config.target_policy.max_token_length
@@ -92,6 +129,7 @@ def render_lines(state: AppState) -> list[str]:
     scroll = state.selection.scroll_offset
     shown = visible[scroll : scroll + capacity]
 
+    filter_text = state.filter.text
     body_lines: list[str] = []
     for mapping in shown:
         is_selected = mapping.ordinal == state.selection.selected_ordinal
@@ -99,8 +137,21 @@ def render_lines(state: AppState) -> list[str]:
         cursor = "▸" if is_selected else " "
         target = select_current_target_value(mapping)
         source = select_default_source(mapping).original_value or ""
-        ordinal_str = f"{mapping.ordinal:>2}"
-        row = f"{cursor}  {ordinal_str}  {collision}{target:<{max_token_length}}  {source}"
+
+        # Bold the matched spans in the ordinal display and target token cell.
+        # The leading pad of a right-justified ordinal carries no match, so the
+        # spans are computed on the bare digits and bolded after the pad.
+        ordinal_digits = str(mapping.ordinal)
+        ordinal_pad = " " * max(0, 2 - len(ordinal_digits))
+        ordinal_cell = ordinal_pad + _apply_bold_spans(
+            ordinal_digits, select_match_spans(filter_text, ordinal_digits)
+        )
+        token_pad = " " * max(0, max_token_length - len(target))
+        token_cell = _apply_bold_spans(
+            target, select_match_spans(filter_text, target)
+        ) + token_pad
+
+        row = f"{cursor}  {ordinal_cell}  {collision}{token_cell}  {source}"
         body_lines.append(row)
 
 
