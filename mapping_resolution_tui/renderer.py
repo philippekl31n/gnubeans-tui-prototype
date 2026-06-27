@@ -36,7 +36,8 @@ _FOOTER_HINT_DISPLAY: dict[FooterHint, tuple[str, str]] = {
     FooterHint.CANCEL:        ("esc",      "cancel"),
 }
 
-_TOKEN_START_COL = 9   # cursor(1) + 2sp + ordinal:2 + 2sp + collision(1) = 8 prefix chars
+_TOKEN_START_COL = 9   # cursor(1) + 1sp + ordinal:2 + 3sp + collision(1) = 8 prefix chars
+                       # (ordinal field left-aligned at col 2, tens digit under "Reviewing")
 _SOURCE_GAP = 2        # blank columns between the token field and the source value
 
 
@@ -121,7 +122,7 @@ def render_lines(state: AppState) -> list[str]:
     target_label = config.target_column_label
     source_label = config.source_column_label
     padding = " " * max(1, source_col - 9 - len(target_label))
-    table_header = f"    #   {target_label}{padding}{source_label}"
+    table_header = f"   #    {target_label}{padding}{source_label}"
 
     # ── body rows ─────────────────────────────────────────────────────────────
     capacity = select_body_capacity(height)
@@ -151,7 +152,7 @@ def render_lines(state: AppState) -> list[str]:
             target, select_match_spans(filter_text, target)
         ) + token_pad
 
-        row = f"{cursor}  {ordinal_cell}  {collision}{token_cell}  {source}"
+        row = f"{cursor} {ordinal_cell}   {collision}{token_cell}  {source}"
         body_lines.append(row)
 
 

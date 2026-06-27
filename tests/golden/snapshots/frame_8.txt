@@ -1,10 +1,10 @@
 ❯ Reviewing 11 commodity mappings. 1 unresolved collision. ctrl+c cancel
   Filter: 1
 
-    #   Beancount Token           GnuCash Source
-▸   1   APPLE                     APPLE
-    4   C100-F                    100-F
-   10   VTSAX                     VTSAX
-   11   VWUSX                     VWUSX
+   #    Beancount Token           GnuCash Source
+▸  1    APPLE                     APPLE
+   4    C100-F                    100-F
+  10    VTSAX                     VTSAX
+  11    VWUSX                     VWUSX
 
   shift+↑↓ pageup/dn  ·  ↵ edit selected  ·  esc clear filter
