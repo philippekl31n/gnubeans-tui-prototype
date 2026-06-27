@@ -101,6 +101,25 @@ tasks:
         collision marker (!), target token, edit cursor (reverse-video),
         validation icons (✓/✗), source divider (┃), source text, source
         pointer (▸)"
+      - "Ordinal field is left-anchored at column 3 (aligned with the
+        header/prompt/footer text indent) and right-aligned within a width
+        equal to the digit count of the mapping total; for the storyboard's
+        11 mappings the field occupies columns 3..4 with the tens digit at
+        column 3. The # table heading right-aligns over the ordinal units
+        digit (column 4) and moves with the field, not at a fixed offset
+        (spec §6.3 'Ordinal field anchoring'). frame_geometry_browsing
+        asserts the two-digit ordinals 10/11 with the tens digit at column 3
+        and the # heading at column 4"
+      - "Ordinal-width column tests cover all three regimes from the spec
+        §6.3 relative grid, each asserting the column-3 left anchor and the
+        # heading over the ordinal units digit (column 2+W): (a) < 10
+        mappings -> W=1, field at column 3, # at column 3; (b) 10–99
+        mappings -> W=2, field at columns 3..4, # at column 4; (c) 100–999
+        mappings -> W=3, field at columns 3..5, # at column 5. Because every
+        later column is relative to the ordinal, each regime also asserts the
+        downstream columns shift with W per §6.3: collision marker at 6+W,
+        token start at 7+W, source value at 9+W+M (e.g. W=1 -> collision 7 /
+        token 8; W=3 -> collision 9 / token 10)"
       - "All render templates produced (FR35): header, filter prompt, table
         header, browsing body row, edit row (expanded), source rows,
         confirmation prompt, empty-result row, layout-blocked row,
