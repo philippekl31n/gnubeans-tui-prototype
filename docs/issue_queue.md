@@ -93,3 +93,11 @@ The arch spec prompt table now covers all three states:
 ~~BROWSING footer in all frames shows only `shift+↑↓ pageup/dn`. But transition 7b → 7c uses plain `↑` (no shift) to move `▸` up one row.~~
 
 Plain `↑↓` is intentionally absent from the footer — it is an undocumented power-user shortcut. The keyboard routing matrix specifies the behaviour; the footer template deliberately omits it to keep the hint line minimal.
+
+---
+
+### ~~18. Ordinal column right-aligned one column too far from the left edge~~ (resolved in spec and storyboard)
+
+~~Arch spec §6.3 pinned the ordinal field to columns 4..5 (right-aligned, width 2), placing a two-digit ordinal's tens digit at column 4 — one column right of the header/prompt/footer text, which all indent to column 3. The misalignment was invisible in `frame_1a` because the 15-row frame only shows single-digit ordinals (1–9); it surfaced once `frame_8` rendered ordinals 10/11.~~
+
+§6.3 was rewritten to express the table grid in **relative** terms: the ordinal field's left edge is anchored at column 3, its width `W` is the digit count of the mapping total, and every later column (the `#` heading, collision marker, token, source) is defined relative to the ordinal — so a wider ordinal shifts them all right together rather than columns being pinned at fixed absolute numbers. For the width-2 storyboard the instantiation is `#`/ordinal-units at column 4, collision at 8, token at 9, source at 35; the `#` shifted from column 5 to column 4 alongside the body ordinals. The storyboard ordinal-column note is updated to match. The renderer and the `frame_1a`/`frame_8` goldens render the width-2 instantiation; the canonical, variable-`W` column-position enforcement (regimes `W = 1`, `2`, `3`) remains EPIC-005 TASK-014's responsibility (FR34).

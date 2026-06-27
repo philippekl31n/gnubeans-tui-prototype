@@ -619,28 +619,44 @@ and the footer on row 15 — an instance of these rules, not a fixed grid.
 
 ### 6.3 Columns
 
-Columns are 1-based.
+Columns are 1-based and **flow left to right from the ordinal field**: every column after the
+ordinal is positioned relative to it, so a wider ordinal (more mappings) shifts all later columns
+right by the same amount. The ordinal field's left edge is fixed at column 3 — the same indent as
+the header, filter prompt, and footer text (`❯ Reviewing`, `  Filter:`, and `  shift+…` all begin
+their text at column 3); only the field's width, and therefore everything to its right, varies. Two
+parameters drive the grid:
 
-| Field | Columns | Contract |
-|---|---:|---|
-| Header start | 1 | Header begins with `❯`. |
-| Prompt indent | 1..2 | Two leading spaces before prompt text. |
-| Table header | 1..75 | `   #   {targetColumnLabel}{padding}{sourceColumnLabel}`. For the storyboard config this is exactly `   #   Beancount Token            GnuCash Source`. |
-| Row cursor | 1 | `▸` only in `BROWSING` selected row or `EDITING` token input focus. |
-| Ordinal | 4..5 | Right-aligned to width 2 for the 11-row storyboard dataset. |
-| Collision marker | 8 | `!` when unresolved, otherwise space. |
-| Token start | 9 | Current target or edit buffer starts here. |
-| Token max display | `9..(8 + config.targetPolicy.maxTokenLength)` | Storyboard commodity fixture: 24 display columns, columns 9..32. |
-| Edit cursor at offset L | `9 + L` | Reverse-video character at offset L, or reverse-video space when L is at end. In the storyboard commodity fixture, offset 24 is column 33. |
-| Validation icon normal | Cursor column + 2 | `✓` or `✗`, except max-length cap below. |
-| Validation icon max cap | `10 + config.targetPolicy.maxTokenLength` | In the storyboard commodity fixture, at 24 chars the icon MUST remain at column 34. |
-| Source divider | 36 | `┃` in expanded edit rows. |
-| Source text | 38 | Source display text begins after divider and one space. |
-| Source pointer | 34 | `▸` before the divider when source list has focus or exact match points at that source. |
+- `W` — ordinal width: the digit count of `total` (the mapping count). `W = 1` for ≤9 mappings,
+  `2` for 10–99, `3` for 100–999.
+- `M` — `config.targetPolicy.maxTokenLength` (the storyboard commodity fixture uses `M = 24`).
 
-The storyboard prose calls the max cursor and icon positions "column 32" and "column 33" using a
-zero-based mental model. This contract uses 1-based display columns; therefore they correspond to
-columns 33 and 34 here.
+| Field | Column(s) | Storyboard (`W=2`, `M=24`) | Contract |
+|---|---|---:|---|
+| Header start | 1 | 1 | Header begins with `❯`; text follows at column 3. |
+| Prompt indent | 1..2 | 3 | Two leading spaces; prompt text at column 3. |
+| Row cursor `▸` | 1 | 1 | `▸` only in `BROWSING` selected row / `EDITING` token focus, else space. |
+| Ordinal | 3 .. (2+W) | 3..4 | Left edge anchored at column 3; digits right-aligned within the field, so a value shorter than `W` is left-padded with spaces. |
+| `#` heading | 2+W | 4 | The table-header `#` right-aligns over the ordinal's units (rightmost) digit, so it moves with the field. |
+| Collision marker `!` | 6+W | 8 | `!` when unresolved, else space (three spaces follow the ordinal field). |
+| Token start | 7+W | 9 | Current target / edit buffer — and the `{targetColumnLabel}` header — begin here. |
+| Token field | (7+W) .. (6+W+M) | 9..32 | `M` display columns. |
+| Edit cursor at offset L | (7+W)+L | 9+L | Reverse-video char at offset L, or reverse-video space at the end. |
+| Validation icon (normal) | edit cursor + 2 | — | `✓`/`✗`, except the max-length cap below. |
+| Validation icon (max cap) | 8+W+M | 34 | At the token-field end + 2 when the buffer is at `M`. |
+| Source value / label | 9+W+M | 35 | Browsing default-source value, and the `{sourceColumnLabel}` header, begin here (two spaces after the token field). |
+| Source pointer `▸` | 8+W+M | 34 | Before the divider in expanded edit rows. |
+| Source divider `┃` | 10+W+M | 36 | In expanded edit rows. |
+| Source text | 12+W+M | 38 | After the divider and one space, in expanded edit rows. |
+
+A body row is therefore `{▸\|space} {ordinal} {3 spaces} {!\|space}{token}{2 spaces}{source}`, and
+the storyboard table header is exactly `   #    Beancount Token           GnuCash Source` (`#` at
+column 4, `Beancount Token` at column 9, `GnuCash Source` at column 35). The storyboard prose names
+the max edit-cursor and icon positions "column 32" and "column 33" using a zero-based model; in
+these 1-based columns they are 33 and 34.
+
+The current renderer fixes `W = 2` for the 11-mapping storyboard — the only dataset in TASK-002's
+scope. Generalising the grid to variable `W` (and asserting the `W = 1`, `2`, and `3` regimes) is
+EPIC-005 TASK-014's responsibility (FR34).
 
 ### 6.4 Header Templates
 
