@@ -66,6 +66,23 @@ def test_unknown_action_is_a_noop(state):
     assert reduce(state, sentinel) is state
 
 
+def test_action_union_lists_every_dispatched_action():
+    # Guard the PEP 604 `Action` union against drifting out of sync with the
+    # actions the reducer dispatches.
+    import typing
+
+    from mapping_resolution_tui import actions as actions_module
+    from mapping_resolution_tui.actions import Action
+
+    members = set(typing.get_args(Action))
+    declared = {
+        obj
+        for name, obj in vars(actions_module).items()
+        if isinstance(obj, type) and getattr(obj, "__dataclass_fields__", None) is not None
+    }
+    assert members == declared
+
+
 # ── character insertion ──────────────────────────────────────────────────────
 
 def test_insert_char_appends_and_advances_cursor(state):

@@ -18,7 +18,6 @@ action before dispatch. Keys that map to no action leave state unchanged (FR30).
 """
 
 from dataclasses import dataclass
-from typing import Union
 
 
 @dataclass(frozen=True)
@@ -88,19 +87,19 @@ class ClearFilter:
     """Clear ``filter.raw`` and reset ``filter.cursor`` to 0 (Esc)."""
 
 
-# Discriminated union of every action the reducer understands.
-Action = Union[
-    InsertChar,
-    MoveCursorLeft,
-    MoveCursorRight,
-    MoveCursorHome,
-    MoveCursorEnd,
-    Backspace,
-    DeleteChar,
-    KillLine,
-    UnixLineDiscard,
-    KillWord,
-    BackwardKillWord,
-    Redraw,
-    ClearFilter,
-]
+# Discriminated union of every action the reducer understands (PEP 604).
+Action = (
+    InsertChar
+    | MoveCursorLeft
+    | MoveCursorRight
+    | MoveCursorHome
+    | MoveCursorEnd
+    | Backspace
+    | DeleteChar
+    | KillLine
+    | UnixLineDiscard
+    | KillWord
+    | BackwardKillWord
+    | Redraw
+    | ClearFilter
+)
