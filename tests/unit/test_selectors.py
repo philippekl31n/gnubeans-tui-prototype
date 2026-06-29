@@ -346,3 +346,71 @@ def test_collision_selectors_are_repeatable_and_do_not_store_state_on_mappings()
     assert all(not hasattr(mapping, "collision_groups") for mapping in mappings)
     assert all(not hasattr(mapping, "unresolved_collisions") for mapping in mappings)
     assert all(not hasattr(mapping, "unresolved_collision_count") for mapping in mappings)
+
+
+# ── filter parse / highlight selectors (TASK-002, spec §3.3) ─────────────────
+
+
+def test_parse_filter_empty():
+    from mapping_resolution_tui.selectors import parse_filter
+
+    assert parse_filter("") == (False, "")
+
+
+def test_parse_filter_leading_bang_is_collision_only():
+    from mapping_resolution_tui.selectors import parse_filter
+
+    assert parse_filter("!") == (True, "")
+    assert parse_filter("!3") == (True, "3")
+
+
+def test_parse_filter_non_leading_bang_is_ordinary_text():
+    from mapping_resolution_tui.selectors import parse_filter
+
+    assert parse_filter("a!") == (False, "a!")
+
+
+def test_match_spans_finds_query_in_text():
+    # Signature is (text, query); the "1" inside the C100-F token.
+    from mapping_resolution_tui.selectors import select_match_spans
+
+    assert select_match_spans("C100-F", "1") == ((1, 2),)
+
+
+def test_match_spans_reports_every_non_overlapping_match():
+    from mapping_resolution_tui.selectors import select_match_spans
+
+    assert select_match_spans("11", "1") == ((0, 1), (1, 2))
+
+
+def test_match_spans_is_case_insensitive():
+    from mapping_resolution_tui.selectors import select_match_spans
+
+    assert select_match_spans("APPLE", "appl") == ((0, 4),)
+
+
+def test_match_spans_empty_query_matches_nothing():
+    from mapping_resolution_tui.selectors import select_match_spans
+
+    assert select_match_spans("APPLE", "") == ()
+
+
+def test_ordinal_spans_shift_by_the_right_align_pad():
+    # "1" right-justified in width 2 is " 1"; the digit match (0,1) shifts to (1,2).
+    from mapping_resolution_tui.selectors import select_ordinal_match_spans
+
+    assert select_ordinal_match_spans(1, "1", 2) == ((1, 2),)
+
+
+def test_ordinal_spans_two_digit_no_pad():
+    from mapping_resolution_tui.selectors import select_ordinal_match_spans
+
+    assert select_ordinal_match_spans(10, "1", 2) == ((0, 1),)
+    assert select_ordinal_match_spans(11, "1", 2) == ((0, 1), (1, 2))
+
+
+def test_ordinal_spans_no_match_or_empty_query():
+    from mapping_resolution_tui.selectors import select_ordinal_match_spans
+
+    assert select_ordinal_match_spans(4, "1", 2) == ()
+    assert select_ordinal_match_spans(1, "", 2) == ()

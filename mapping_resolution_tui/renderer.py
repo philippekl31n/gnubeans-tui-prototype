@@ -13,6 +13,7 @@ from mapping_resolution_tui.selectors import (
     select_filter_prompt,
     select_footer_content,
     select_match_spans,
+    select_ordinal_match_spans,
     select_unresolved_collision_count,
     select_unresolved_collision_ordinals,
     select_visible_rows,
@@ -150,16 +151,16 @@ def render_lines(state: AppState) -> list[str]:
         source = select_default_source(mapping).original_value or ""
 
         # Bold the matched spans in the ordinal display and target token cell.
-        # The leading pad of a right-justified ordinal carries no match, so the
-        # spans are computed on the bare digits and bolded after the pad.
-        ordinal_digits = str(mapping.ordinal)
-        ordinal_pad = " " * max(0, ordinal_width - len(ordinal_digits))
-        ordinal_cell = ordinal_pad + _apply_bold_spans(
-            ordinal_digits, select_match_spans(filter_text, ordinal_digits)
+        # Both span computations live in selectors; the ordinal spans are already
+        # shifted into the right-aligned field, so they apply to the padded cell.
+        ordinal_display = str(mapping.ordinal).rjust(ordinal_width)
+        ordinal_cell = _apply_bold_spans(
+            ordinal_display,
+            select_ordinal_match_spans(mapping.ordinal, filter_text, ordinal_width),
         )
         token_pad = " " * max(0, max_token_length - len(target))
         token_cell = _apply_bold_spans(
-            target, select_match_spans(filter_text, target)
+            target, select_match_spans(target, filter_text)
         ) + token_pad
 
         row = f"{cursor} {ordinal_cell}   {collision}{token_cell}  {source}"

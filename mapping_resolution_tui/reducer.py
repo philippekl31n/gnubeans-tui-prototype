@@ -24,7 +24,7 @@ from mapping_resolution_tui.actions import (
     Redraw,
     UnixLineDiscard,
 )
-from mapping_resolution_tui.selectors import sort_mappings_for_initial_display
+from mapping_resolution_tui.selectors import parse_filter, sort_mappings_for_initial_display
 from mapping_resolution_tui.state import (
     AppConfig,
     AppState,
@@ -100,8 +100,7 @@ def _derive_filter(*, raw: str, cursor: int) -> FilterState:
     stores ``collision_only`` or ``text`` independently of ``raw``.
     """
     cursor = max(0, min(cursor, len(raw)))
-    collision_only = raw.startswith("!")
-    text = raw[1:] if collision_only else raw
+    collision_only, text = parse_filter(raw)
     return FilterState(
         raw=raw,
         collision_only=collision_only,

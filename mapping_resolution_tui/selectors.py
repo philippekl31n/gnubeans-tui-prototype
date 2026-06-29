@@ -134,27 +134,57 @@ def select_visible_rows(state: "AppState") -> list[Mapping]:
     return rows
 
 
-def select_match_spans(needle: str, haystack: str) -> tuple[tuple[int, int], ...]:
-    """Non-overlapping ASCII case-insensitive match spans of ``needle`` in ``haystack``.
+def parse_filter(raw: str) -> tuple[bool, str]:
+    """Derive ``(collision_only, text)`` from the editable ``filter.raw`` buffer.
 
-    Returns ``(start, end)`` half-open index pairs into ``haystack`` (left to
-    right, non-overlapping). An empty ``needle`` matches nothing. The spans are
-    the bold-highlight metadata the renderer applies to the ordinal display and
+    ``collision_only`` is True when ``raw`` begins with ``!``; ``text`` is ``raw``
+    with a single leading ``!`` removed — the search portion used by matching
+    (spec §3.3). A non-leading ``!`` is ordinary search text. This is the single
+    source of truth for the derivation; the reducer and renderer both use it.
+    """
+    collision_only = raw.startswith("!")
+    text = raw[1:] if collision_only else raw
+    return collision_only, text
+
+
+def select_match_spans(text: str, query: str) -> tuple[tuple[int, int], ...]:
+    """Non-overlapping ASCII case-insensitive spans of ``query`` within ``text``.
+
+    Returns ``(start, end)`` half-open index pairs into ``text`` (left to right,
+    non-overlapping). An empty ``query`` matches nothing. The spans are the
+    bold-highlight metadata the renderer applies to the ordinal display and
     target token cell (FR11).
     """
-    if not needle:
+    if not query:
         return ()
-    lowered_needle = needle.lower()
-    lowered_haystack = haystack.lower()
+    haystack = text.lower()
+    needle = query.lower()
     spans: list[tuple[int, int]] = []
     start = 0
     while True:
-        idx = lowered_haystack.find(lowered_needle, start)
+        idx = haystack.find(needle, start)
         if idx == -1:
             break
-        spans.append((idx, idx + len(lowered_needle)))
-        start = idx + len(lowered_needle)
+        spans.append((idx, idx + len(needle)))
+        start = idx + len(needle)
     return tuple(spans)
+
+
+def select_ordinal_match_spans(
+    ordinal: int, query: str, display_width: int
+) -> tuple[tuple[int, int], ...]:
+    """Bold spans for an ordinal rendered right-aligned to ``display_width``.
+
+    Matching is on the bare decimal ordinal string (no left padding), so the
+    alignment spaces never match; each span is then shifted by the pad width to
+    address the right-aligned display cell (spec §3.3).
+    """
+    ordinal_str = str(ordinal)
+    pad = display_width - len(ordinal_str)
+    return tuple(
+        (start + pad, end + pad)
+        for start, end in select_match_spans(ordinal_str, query)
+    )
 
 
 def select_filter_prompt(state: "AppState", unresolved_count: int) -> FilterPromptContent:
