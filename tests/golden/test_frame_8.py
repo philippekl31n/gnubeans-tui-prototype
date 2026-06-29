@@ -4,8 +4,11 @@ TASK-002 — golden render test for frame 8 (text filter "1" active).
 Proves single-character text input, row narrowing to ordinals 1/4/10/11, bold
 match-highlight metadata on the ordinal display and target token cells, the
 filter cursor block, and the variable-height layout contract (the under-full
-4-row frame ends at the footer with no trailing blank padding). Geometry uses
-pyte screen.display; style assertions use pyte cell attributes.
+4-row frame ends at the footer with no trailing blank padding). The frame is
+taken over a collision-free dataset (the AT-T collision on ordinal 3 is resolved
+before the filter is typed, per the storyboard), so the header shows the
+collision-free submit affordance. Geometry uses pyte screen.display; style
+assertions use pyte cell attributes.
 """
 from pathlib import Path
 import pytest
@@ -69,8 +72,12 @@ def test_filter_cursor_block_follows_the_typed_character(frame_8_screen):
 
 # ── header / footer ──────────────────────────────────────────────────────────
 
-def test_header_still_reports_the_unresolved_collision(display):
-    assert "1 unresolved collision" in display[0]
+def test_header_is_collision_free(display):
+    # frame_8 is taken over a collision-free dataset (the storyboard resolves the
+    # AT-T collision before this frame), so the header shows the collision-free
+    # submit affordance and never reports an unresolved collision (spec §3.2).
+    assert "ctrl+s submit" in display[0]
+    assert "unresolved collision" not in display[0]
 
 
 def test_footer_offers_clear_filter_while_filtering(display):

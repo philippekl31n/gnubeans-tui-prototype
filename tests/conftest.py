@@ -40,17 +40,27 @@ def frame_1a_screen(frame_1a_lines):
 
 @pytest.fixture
 def frame_8_lines():
-    """Frame 8: filter text "1" active in the 15-row terminal (TASK-002).
+    """Frame 8: single-character text filter '1' over a collision-free dataset.
 
-    Built by dispatching a single InsertChar("1") through the reducer, so the
-    frame exercises real single-character input rather than a hand-built state.
+    The AT-T collision on ordinal 3 is resolved to 'ATT' first — as the
+    storyboard does before frame 8 — so the dataset is collision-free and the
+    header shows the submit affordance (spec §3.2). The reviewer then types '1'
+    via a real InsertChar dispatch; visible rows narrow to ordinals 1, 4 (token
+    C100-F), 10, and 11.
     """
+    from dataclasses import replace
+
     from tests.fixtures.storyboard import make_config, make_mappings
     from mapping_resolution_tui.actions import InsertChar
     from mapping_resolution_tui.reducer import make_initial_state, reduce
     from mapping_resolution_tui.renderer import render_lines
 
     state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    mappings = [
+        replace(m, target_value="ATT") if m.ordinal == 3 else m
+        for m in state.mappings
+    ]
+    state = replace(state, mappings=mappings)
     state = reduce(state, InsertChar("1"))
     return render_lines(state)
 

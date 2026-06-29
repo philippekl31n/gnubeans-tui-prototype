@@ -1,4 +1,4 @@
-❯ Reviewing 11 commodity mappings. 1 unresolved collision. ctrl+c cancel
+❯ Reviewing 11 commodity mappings. ctrl+s submit  ·  ctrl+c cancel
   Filter: 1
 
    #    Beancount Token           GnuCash Source
