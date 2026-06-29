@@ -1,12 +1,12 @@
 """
-Unit tests for the BROWSING-mode action dispatch reducer (TASK-001/TASK-002).
+Unit tests for the BROWSING-mode action dispatch reducer (TASK-001/002/003).
 
 ``filter.raw`` is the single editable buffer and source of truth; the reducer
 re-derives ``collision_only`` (raw begins with ``!``) and ``text`` (raw minus a
 single leading ``!``) after every mutation, clamps ``filter.cursor`` into
-``[0, len(raw)]``, and never moves the selection (selection re-clamping is
-TASK-004's concern). Uses the canonical 11-row storyboard dataset so the
-ordinal/collision shape matches the golden frames:
+``[0, len(raw)]``, and runs the post-mutation selection clamp so the row cursor
+stays on a visible row (spec §3.4). Uses the canonical 11-row storyboard dataset
+so the ordinal/collision shape matches the golden frames:
 
     1 APPLE   2 AT-T(!)  3 AT-T(!)  4 C100-F  5 GOOGL  6 MSFT
     7 NVDA    8 QQQ      9 SPY      10 VTSAX  11 VWUSX
@@ -15,6 +15,7 @@ ordinal/collision shape matches the golden frames:
 import pytest
 
 from mapping_resolution_tui.actions import (
+    AutocompleteBang,
     Backspace,
     BackwardKillWord,
     ClearFilter,
@@ -128,13 +129,28 @@ def test_collision_only_limits_visible_rows_to_collision_group(state):
     assert visible_ordinals(s) == [2, 3]
 
 
-def test_collision_only_does_not_move_selection(state):
-    # The reducer narrows the visible rows but does not move the selection;
-    # re-clamping selection onto a visible row is TASK-004's responsibility.
+def test_collision_metafilter_clamps_selection_to_first_collision_row(state):
+    # Engaging the metafilter hides row 1, so the post-mutation clamp snaps the
+    # selection onto the first visible (collision) row 2 — frame 2 (spec §3.4).
     assert state.selection.selected_ordinal == 1
     s = reduce(state, InsertChar("!"))
     assert visible_ordinals(s) == [2, 3]
+    assert s.selection.selected_ordinal == 2
+
+
+def test_filter_leaves_selection_when_selected_row_stays_visible(state):
+    # Text "1" keeps ordinal 1 visible, so the selection does not move.
+    assert state.selection.selected_ordinal == 1
+    s = reduce(state, InsertChar("1"))
+    assert visible_ordinals(s) == [1, 4, 10, 11]
     assert s.selection.selected_ordinal == 1
+
+
+def test_empty_result_clears_selection(state):
+    # No matching rows -> selected_ordinal becomes None (spec §3.4).
+    s = type_text(state, "zzz")
+    assert visible_ordinals(s) == []
+    assert s.selection.selected_ordinal is None
 
 
 def test_text_filter_narrows_visible_rows(state):
@@ -276,6 +292,39 @@ def test_word_boundary_treats_hyphen_and_underscore_as_word_chars(state):
     s = type_text(state, "a-b_c")
     s = reduce(s, BackwardKillWord())
     assert s.filter.raw == ""  # the whole token is one word
+
+
+# ── Tab bang autocomplete (gated on the visible ghost) ───────────────────────
+
+def test_autocomplete_bang_inserts_leading_bang_when_ghost_visible(state):
+    # Fresh state: empty filter + one unresolved collision -> ghost visible.
+    s = reduce(state, AutocompleteBang())
+    assert s.filter.raw == "!"
+    assert s.filter.cursor == 1
+    assert s.filter.collision_only is True
+    assert visible_ordinals(s) == [2, 3]
+    assert s.selection.selected_ordinal == 2  # clamps to first collision row
+
+
+def test_autocomplete_bang_is_a_noop_when_filter_is_non_empty(state):
+    # A second Tab (or Tab after typing) must not clear or duplicate the !.
+    s = reduce(state, InsertChar("!"))
+    same = reduce(s, AutocompleteBang())
+    assert same is s
+
+
+def test_autocomplete_bang_is_a_noop_with_no_unresolved_collisions(state):
+    # Resolve the AT-T collision (ordinal 3 -> ATT) so no collisions remain; the
+    # ghost is not visible and Tab is a no-op even with an empty filter.
+    from dataclasses import replace
+
+    mappings = [
+        replace(m, target_value="ATT") if m.ordinal == 3 else m
+        for m in state.mappings
+    ]
+    collision_free = replace(state, mappings=mappings)
+    same = reduce(collision_free, AutocompleteBang())
+    assert same is collision_free
 
 
 # ── redraw / clear ───────────────────────────────────────────────────────────

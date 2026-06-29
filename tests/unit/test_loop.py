@@ -13,6 +13,7 @@ import pytest
 
 from mapping_resolution_tui import loop
 from mapping_resolution_tui.actions import (
+    AutocompleteBang,
     Backspace,
     BackwardKillWord,
     ClearFilter,
@@ -105,6 +106,9 @@ def test_is_quit_key_accepts_raw_ctrl_c_and_readable_token():
         # meta / Alt word kills
         (META_D, KillWord()),
         (META_BS, BackwardKillWord()),
+        # Tab / ctrl+i -> bang autocomplete (the reducer applies the ghost gate)
+        (Key(name="KEY_TAB"), AutocompleteBang()),
+        (TAB, AutocompleteBang()),
         # printable insertion (incl. a literal bang)
         ("a", InsertChar("a")),
         ("3", InsertChar("3")),
@@ -123,8 +127,6 @@ def test_key_to_action_maps_supported_keys(key, expected):
         Key(name="KEY_ENTER"),
         CTRL_X,
         CTRL_C,                  # quit is handled by is_quit_key, not key_to_action
-        Key(name="KEY_TAB"),     # bang autocomplete is TASK-003; Tab is a no-op
-        TAB,                     # the raw \t form is likewise a no-op
         # no-op readline families:
         CTRL_G, CTRL_Q, CTRL_V, CTRL_US, CTRL_T, CTRL_Y, CTRL_R,
     ],
@@ -173,19 +175,45 @@ def test_named_arrow_key_moves_cursor_via_loop():
 
 def test_unsupported_keys_do_not_rerender():
     # FR30: an unsupported key produces no new frame and no state change.
-    _, frames = run_keys([Key(name="KEY_UP"), CTRL_X, Key(name="KEY_TAB")])
+    _, frames = run_keys([Key(name="KEY_UP"), CTRL_X, Key(name="KEY_DOWN")])
     assert len(frames) == 1  # only the initial frame
 
 
 @pytest.mark.parametrize(
     "family_key",
-    [CTRL_G, CTRL_Q, CTRL_V, CTRL_US, CTRL_T, CTRL_Y, CTRL_R, TAB],
+    [CTRL_G, CTRL_Q, CTRL_V, CTRL_US, CTRL_T, CTRL_Y, CTRL_R],
 )
 def test_noop_readline_families_leave_state_and_output_unchanged(family_key):
     # Establish a non-trivial filter, then fire the no-op key: no new frame.
     _, frames = run_keys(["a", "b", family_key])
     assert len(frames) == 3  # initial + 2 inserts; the no-op adds none
     assert "Filter: ab" in filter_line(frames[-1])
+
+
+# ── Tab / ctrl+i bang autocomplete (gated by the reducer) ────────────────────
+
+@pytest.mark.parametrize("tab_key", [Key(name="KEY_TAB"), TAB])
+def test_tab_autocompletes_the_metafilter_when_the_ghost_is_visible(tab_key):
+    # Fresh storyboard: empty filter, one unresolved collision -> the ghost is
+    # visible, so Tab (and ctrl+i, the same \t byte) autocompletes a leading !.
+    _, frames = run_keys([tab_key])
+    assert len(frames) == 2  # initial + the autocomplete repaint
+    assert "Filter: !" in filter_line(frames[-1])
+
+
+def test_second_tab_does_not_clear_the_inserted_bang():
+    # The first Tab inserts !; the second is a no-op against the now-non-empty
+    # buffer and must not clear it (no extra frame).
+    _, frames = run_keys([TAB, TAB])
+    assert len(frames) == 2  # initial + first Tab only
+    assert "Filter: !" in filter_line(frames[-1])
+
+
+def test_tab_does_not_autocomplete_when_the_filter_is_non_empty():
+    # With text already typed the ghost is gone, so Tab is a no-op: no new frame.
+    _, frames = run_keys(["a", TAB])
+    assert len(frames) == 2  # initial + the "a" insert; Tab adds none
+    assert "Filter: a" in filter_line(frames[-1])
 
 
 def test_ctrl_l_rerenders_only_without_mutating_state():

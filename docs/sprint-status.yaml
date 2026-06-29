@@ -141,8 +141,8 @@ tasks:
   - key: TASK-003
     type: story
     title: Collision-only metafilter toggle and filter clear
-    status: todo
-    assignee: null
+    status: done
+    assignee: philippekl31n
     depends_on: [TASK-001]
     functional_requirements: [FR10]
     files:

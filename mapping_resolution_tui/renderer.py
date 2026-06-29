@@ -121,7 +121,12 @@ def render_lines(state: AppState) -> list[str]:
 
     # ── prompt ────────────────────────────────────────────────────────────────
     prompt_content = select_filter_prompt(state, unresolved_count)
-    if prompt_content.filter_raw:
+    if prompt_content.filter_raw == "!":
+        # Metafilter only (spec §6.5): the literal ! is followed by the dim
+        # "Type to filter" ghost, the caret shown as its reverse-video first
+        # character — never a trailing cursor block after the ! itself.
+        prompt = f"  Filter: !{_REV}T{_RESET}{_DIM}ype to filter{_RESET}"
+    elif prompt_content.filter_raw:
         body = _render_filter_cursor(prompt_content.filter_raw, prompt_content.filter_cursor)
         prompt = f"  Filter: {body}"
     else:

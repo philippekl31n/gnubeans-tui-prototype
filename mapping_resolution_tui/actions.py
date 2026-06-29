@@ -78,6 +78,19 @@ class BackwardKillWord:
 
 
 @dataclass(frozen=True)
+class AutocompleteBang:
+    """Autocomplete a leading ``!`` into ``filter.raw`` (Tab / ctrl+i).
+
+    The reducer applies this only when the ``Tab to view collisions`` ghost is
+    visible — ``filter.raw`` is empty and at least one unresolved collision
+    exists — inserting ``!`` at index 0 and setting ``filter.cursor = 1``. In
+    every other situation it is a no-op; in particular a second Tab never clears
+    the inserted ``!`` (spec §3.3). The gate lives in the reducer, against
+    application state, not in the input layer.
+    """
+
+
+@dataclass(frozen=True)
 class Redraw:
     """Re-render the current state without mutating it (ctrl+l)."""
 
@@ -100,6 +113,7 @@ Action = (
     | UnixLineDiscard
     | KillWord
     | BackwardKillWord
+    | AutocompleteBang
     | Redraw
     | ClearFilter
 )

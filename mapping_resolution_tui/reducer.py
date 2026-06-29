@@ -10,6 +10,7 @@ import shutil
 
 from mapping_resolution_tui.actions import (
     Action,
+    AutocompleteBang,
     Backspace,
     BackwardKillWord,
     ClearFilter,
@@ -24,7 +25,13 @@ from mapping_resolution_tui.actions import (
     Redraw,
     UnixLineDiscard,
 )
-from mapping_resolution_tui.selectors import parse_filter, sort_mappings_for_initial_display
+from mapping_resolution_tui.selectors import (
+    parse_filter,
+    select_body_capacity,
+    select_unresolved_collision_count,
+    select_visible_rows,
+    sort_mappings_for_initial_display,
+)
 from mapping_resolution_tui.state import (
     AppConfig,
     AppState,
@@ -112,12 +119,46 @@ def _derive_filter(*, raw: str, cursor: int) -> FilterState:
 def _with_filter(state: AppState, *, raw: str, cursor: int) -> AppState:
     """Return a new state whose filter is re-derived from ``raw`` and ``cursor``.
 
-    Selection re-clamping (keeping ``selection.selected_ordinal`` on a visible
-    row when a filter change hides it) is deliberately *not* done here: that is
-    TASK-004's responsibility. TASK-002 keeps the reducer scoped to filter
-    line-editing so the dispatch foundation carries no selection policy.
+    This runs the full post-mutation sequence (spec §3.4 / S5.1): the filter is
+    re-derived (clamping ``filter.cursor`` and re-deriving ``collision_only`` /
+    ``text``), the visible rows are recomputed, and the selection is clamped so
+    it never points at a row the new filter hides — keeping the row cursor on a
+    visible row (e.g. engaging the collision metafilter from frame 1a moves the
+    selection to the first collision row, frame 2).
     """
-    return replace(state, filter=_derive_filter(raw=raw, cursor=cursor))
+    interim = replace(state, filter=_derive_filter(raw=raw, cursor=cursor))
+    selection = _clamp_selection(interim)
+    if selection is interim.selection:
+        return interim
+    return replace(interim, selection=selection)
+
+
+def _clamp_selection(state: AppState) -> SelectionState:
+    """Clamp the selection onto the visible rows for ``state`` (spec §3.4).
+
+    ``selected_ordinal`` is left unchanged when it is still visible; otherwise it
+    snaps to the first visible row, or to ``None`` when no rows match.
+    ``scroll_offset`` is clamped into ``[0, max(0, len(visible) - capacity)]``.
+    Returns the existing :class:`SelectionState` object unchanged when nothing
+    moves, so the loop's identity-based no-op check still holds.
+    """
+    selection = state.selection
+    visible = select_visible_rows(state)
+
+    if not visible:
+        selected = None
+    elif any(m.ordinal == selection.selected_ordinal for m in visible):
+        selected = selection.selected_ordinal
+    else:
+        selected = visible[0].ordinal
+
+    capacity = select_body_capacity(state.terminal.height)
+    max_offset = max(0, len(visible) - capacity)
+    scroll = min(selection.scroll_offset, max_offset)
+
+    if selected == selection.selected_ordinal and scroll == selection.scroll_offset:
+        return selection
+    return replace(selection, selected_ordinal=selected, scroll_offset=scroll)
 
 
 def _backward_word_start(raw: str, cursor: int) -> int:
@@ -219,6 +260,18 @@ def _reduce_backward_kill_word(state: AppState, action: BackwardKillWord) -> App
     return _with_filter(state, raw=new_raw, cursor=start)
 
 
+def _reduce_autocomplete_bang(state: AppState, action: AutocompleteBang) -> AppState:
+    # Tab / ctrl+i autocompletes a leading ! only while the "Tab to view
+    # collisions" ghost is visible: filter.raw empty and at least one unresolved
+    # collision exists. Otherwise it is a no-op — a non-empty buffer (incl. a !
+    # already inserted by a prior Tab) or a collision-free dataset (spec §3.3).
+    if state.filter.raw != "":
+        return state
+    if select_unresolved_collision_count(state.mappings) == 0:
+        return state
+    return _with_filter(state, raw="!", cursor=1)
+
+
 def _reduce_redraw(state: AppState, action: Redraw) -> AppState:
     return state  # ctrl+l re-renders only; never mutates state (spec S5.1)
 
@@ -241,6 +294,7 @@ _HANDLERS = {
     UnixLineDiscard: _reduce_unix_line_discard,
     KillWord: _reduce_kill_word,
     BackwardKillWord: _reduce_backward_kill_word,
+    AutocompleteBang: _reduce_autocomplete_bang,
     Redraw: _reduce_redraw,
     ClearFilter: _reduce_clear_filter,
 }

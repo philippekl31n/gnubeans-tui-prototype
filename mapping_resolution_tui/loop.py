@@ -21,6 +21,7 @@ import blessed
 
 from mapping_resolution_tui.actions import (
     Action,
+    AutocompleteBang,
     Backspace,
     BackwardKillWord,
     ClearFilter,
@@ -45,8 +46,8 @@ from mapping_resolution_tui.state import AppConfig, Mapping
 _CTRL_C = "\x03"
 
 # blessed Keystroke.name → action (multi-byte named escape sequences). Tab
-# (KEY_TAB) is intentionally absent: in BROWSING it is reserved for the TASK-003
-# bang-autocomplete metafilter and is a no-op until then.
+# (KEY_TAB) is handled separately below: it maps to AutocompleteBang, whose
+# ghost-visibility gate is enforced by the reducer against application state.
 _NAME_ACTIONS: dict[str, type] = {
     "KEY_LEFT": MoveCursorLeft,
     "KEY_RIGHT": MoveCursorRight,
@@ -80,7 +81,9 @@ _CTRL_ACTIONS: dict[str, type] = {
     "\x1b": ClearFilter,       # ESC     clear filter
 }
 
-# Tab / ctrl+i: reserved for TASK-003 bang autocomplete, a no-op for now.
+# Tab / ctrl+i: bang-autocomplete the collision metafilter (the reducer decides
+# whether the ghost is visible; otherwise the action is a no-op). ctrl+i arrives
+# as the same "\t" byte.
 _TAB_TEXT = "\t"
 
 
@@ -101,8 +104,9 @@ def key_to_action(key) -> Optional[Action]:
     escape sequences such as the arrow keys) or any string-like value, so the one
     function serves both the live loop and headless tests. Named keys resolve via
     ``.name``; control chords and meta sequences via the raw key text; a single
-    printable character — including a literal ``!`` (spec §3.3) — inserts. Tab,
-    the quit key, the no-op readline families, and anything unrecognised return
+    printable character — including a literal ``!`` (spec §3.3) — inserts. Tab /
+    ctrl+i maps to :class:`AutocompleteBang` (the reducer applies the ghost gate).
+    The quit key, the no-op readline families, and anything unrecognised return
     ``None``.
     """
     name = getattr(key, "name", None)
@@ -111,9 +115,9 @@ def key_to_action(key) -> Optional[Action]:
     if name in _NAME_ACTIONS:
         return _NAME_ACTIONS[name]()
 
-    # Tab is reserved (TASK-003); never inserts or acts here.
+    # Tab / ctrl+i: autocomplete the leading ! (gated in the reducer, §3.3).
     if name == "KEY_TAB" or text == _TAB_TEXT:
-        return None
+        return AutocompleteBang()
 
     if text in _META_ACTIONS:
         return _META_ACTIONS[text]()

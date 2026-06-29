@@ -71,6 +71,56 @@ def frame_8_screen(frame_8_lines):
 
 
 @pytest.fixture
+def frame_2_lines():
+    """Frame 2: collision metafilter engaged via Tab from frame 1a (TASK-003).
+
+    Drives the real input layer: a Tab keystroke is normalised by
+    ``key_to_action`` into ``AutocompleteBang`` and dispatched, autocompleting a
+    leading ``!`` (``filter.raw='!'``, ``filter.cursor=1``, collision-only
+    derived). Only the two collision rows 2 and 3 remain; the post-mutation clamp
+    moves the selection onto row 2. The under-full 2-row frame ends at the footer.
+    """
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.loop import key_to_action
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    state = reduce(state, key_to_action("\t"))
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_2_screen(frame_2_lines):
+    return make_pyte_screen(frame_2_lines)
+
+
+@pytest.fixture
+def frame_esc_clear_lines():
+    """Frame esc-clear: Esc from a filtered state restores every row (TASK-003).
+
+    A text filter ``1`` is typed (keeping ordinal 1 selected and visible), then
+    Esc clears ``filter.raw`` and resets ``filter.cursor`` to 0. The result is
+    byte-identical to frame 1a: all 11 rows restored, the ``Tab to view
+    collisions`` ghost, and row 1 selected.
+    """
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.loop import key_to_action
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    state = reduce(state, key_to_action("1"))
+    state = reduce(state, key_to_action("\x1b"))
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_esc_clear_screen(frame_esc_clear_lines):
+    return make_pyte_screen(frame_esc_clear_lines)
+
+
+@pytest.fixture
 def assert_snapshot(update_snapshots):
     def _check(screen: pyte.Screen, snapshot_path: Path):
         actual = "\n".join(row.rstrip() for row in screen.display) + "\n"

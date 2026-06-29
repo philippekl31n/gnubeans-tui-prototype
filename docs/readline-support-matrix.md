@@ -24,12 +24,12 @@ and the source of truth; `collisionOnly` (raw begins with `!`) and `text` (raw
 minus a single leading `!`) are **derived** after every mutation. Relative to the
 original toggle model this means:
 
-- **`Tab` / `ctrl+i`** does not toggle a metafilter. The spec requires it to
-  *autocomplete a leading `!`* into `filter.raw` (cursor → 1) **only** when the
-  `Tab to view collisions` ghost is visible, and to be a **no-op** otherwise (a
-  second `Tab` must not clear the `!`). There is no `ToggleCollisionOnly` action;
-  Tab/ctrl+i is the reserved entry point for that TASK-003 successor and is a
-  no-op (🔴) today.
+- **`Tab` / `ctrl+i`** does not toggle a metafilter. It *autocompletes a leading
+  `!`* into `filter.raw` (cursor → 1) **only** when the `Tab to view collisions`
+  ghost is visible, and is a **no-op** otherwise (a second `Tab` must not clear
+  the `!`). There is no `ToggleCollisionOnly` action; Tab/ctrl+i maps to the
+  `AutocompleteBang` action and the ghost gate is enforced in the reducer
+  (shipped in TASK-003, ✅).
 - **`!`** is an ordinary printable character handled by `InsertChar`; it is not a
   metafilter toggle. A `!` inserted at index 0 *is* the collision metafilter by
   derivation.
@@ -61,7 +61,7 @@ original toggle model this means:
 | `\x06` | ctrl+f | `forward-char` | Cursor right, clamp at `len(filter.raw)` | `MoveCursorRight` | ✅ |
 | `\x07` | ctrl+g | `abort` | No-op (must NOT act like Esc/ctrl+c) | `None` | 🟡 |
 | `\x08` | ctrl+h | `backward-delete-char` | Delete before cursor in `filter.raw`; no-op at cursor 0 (leading `!` deletes as ordinary char) | `Backspace` (no-op at cursor 0) | ✅ |
-| `\x09` | ctrl+i / Tab | `complete` → *(app)* | Autocomplete a leading `!` into `filter.raw` (cursor → 1) only when the `Tab to view collisions` ghost is visible; else no-op | `None` (no-op; autocomplete deferred to TASK-003) | 🔴 |
+| `\x09` | ctrl+i / Tab | `complete` → *(app)* | Autocomplete a leading `!` into `filter.raw` (cursor → 1) only when the `Tab to view collisions` ghost is visible; else no-op | `AutocompleteBang` (reducer-gated; no-op when ghost hidden) | ✅ |
 | `\x0a` | ctrl+j | `accept-line` (Enter) | Dispatch as Enter (edit selected row) | `None` | 🔴 |
 | `\x0b` | ctrl+k | `kill-line` | Delete from cursor through end of `filter.raw` | `KillLine` | ✅ |
 | `\x0c` | ctrl+l | `clear-screen` / `redraw-current-line` | Re-render only; MUST NOT mutate state | `Redraw` (re-render only; no mutation) | ✅ |
@@ -112,7 +112,7 @@ remaining meta functions are no-ops.
 | `KEY_RIGHT` | → | `forward-char` | Cursor right | `MoveCursorRight` | ✅ |
 | `KEY_BACKSPACE` | Backspace | `backward-delete-char` | Delete before cursor in `filter.raw`; no-op at cursor 0 | `Backspace` (no-op at cursor 0) | ✅ |
 | `KEY_ESCAPE` | Esc | *(app)* | Clear `filter.raw` (clears derived metafilter + text) | `ClearFilter` | ✅ |
-| `KEY_TAB` | Tab | `complete` → *(app)* | Autocomplete leading `!` when `Tab to view collisions` ghost visible; else no-op | `None` (no-op; deferred to TASK-003) | 🔴 |
+| `KEY_TAB` | Tab | `complete` → *(app)* | Autocomplete leading `!` when `Tab to view collisions` ghost visible; else no-op | `AutocompleteBang` (reducer-gated; no-op when ghost hidden) | ✅ |
 | `KEY_ENTER` | Enter | `accept-line` | Edit selected row | `None` | 🔴 |
 | `KEY_UP` | ↑ | *(app)* | Move selection up | `None` | 🔴 |
 | `KEY_DOWN` | ↓ | *(app)* | Move selection down | `None` | 🔴 |
@@ -127,9 +127,9 @@ remaining meta functions are no-ops.
 
 | Status | Count (approx.) | Meaning |
 |---|---|---|
-| ✅ Implemented | 12 control + 2 meta + 7 named = **~21 bindings** | Printable insert (incl. literal `!`), cursor move (left/right/home/end), backspace/forward-delete with cursor-0 no-op, kill-line, unix-line-discard, word kills (back/forward), clear-screen redraw (ctrl+l), Esc clear. |
+| ✅ Implemented | 13 control + 2 meta + 8 named = **~23 bindings** | Printable insert (incl. literal `!`), bang autocomplete (Tab/ctrl+i → `AutocompleteBang`), cursor move (left/right/home/end), backspace/forward-delete with cursor-0 no-op, kill-line, unix-line-discard, word kills (back/forward), clear-screen redraw (ctrl+l), Esc clear. |
 | 🟡 No-op (compliant) | **~14 families** | abort, quoted-insert, undo, transpose, yank, search/history, completion variants, case transforms, macro/shell/vi. |
-| 🔴 Gap (planned) | **~11 bindings** | Bang autocomplete (Tab/ctrl+i — currently a no-op), accept-line (Enter/ctrl+j/ctrl+m), navigation (↑↓/ctrl+p/ctrl+n), page keys, submit (ctrl+s), `ctrl+x` prefix. |
+| 🔴 Gap (planned) | **~9 bindings** | accept-line (Enter/ctrl+j/ctrl+m), navigation (↑↓/ctrl+p/ctrl+n), page keys, submit (ctrl+s), `ctrl+x` prefix. |
 | 🟠 Partial | **1** | `ctrl+c` (simple quit vs EXIT confirmation). |
 | ⚪ Out of scope | **~7** | Control bytes the spec never names. |
 
