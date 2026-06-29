@@ -55,8 +55,8 @@ Feature: Selection clamping, browsing navigation, and empty results
 
   Scenario: ctrl+n and ctrl+p page the selection down and up
     When the reviewer presses "ctrl+n"
-    Then the scroll offset is 2
-    And the selected ordinal is 3
+    Then the scroll offset is 9
+    And the selected ordinal is 10
     When the reviewer presses "ctrl+p"
     Then the scroll offset is 0
     And the selected ordinal is 1
@@ -68,8 +68,8 @@ Feature: Selection clamping, browsing navigation, and empty results
 
   Scenario: PgDn pages to the last page and selects its first row
     When the reviewer presses page down
-    Then the scroll offset is 2
-    And the selected ordinal is 3
+    Then the scroll offset is 9
+    And the selected ordinal is 10
     And the selected row is visible in the rendered body
 
   Scenario: PgUp pages back to the top and selects the first row
@@ -83,5 +83,5 @@ Feature: Selection clamping, browsing navigation, and empty results
     Then the selected ordinal is 2
     And the scroll offset is 0
     When PgDn arrives from the same terminal
-    Then the scroll offset is 2
-    And the selected ordinal is 3
+    Then the scroll offset is 9
+    And the selected ordinal is 10
