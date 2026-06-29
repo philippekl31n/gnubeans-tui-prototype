@@ -44,9 +44,10 @@ Feature: Collision metafilter via bang autocomplete and filter clear
     And the visible ordinals are 3
     And the selected ordinal is 3
 
-  Scenario: Esc clears the metafilter and restores every row
+  Scenario: Esc clears the metafilter and returns to the top of the list
     When the reviewer presses Tab
     And the reviewer presses esc
     Then all 11 rows are visible
     And the filter prompt is empty
     And the collision metafilter is not active
+    And the selected ordinal is 1

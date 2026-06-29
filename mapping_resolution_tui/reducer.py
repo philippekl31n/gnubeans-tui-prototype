@@ -134,13 +134,16 @@ def _with_filter(state: AppState, *, raw: str, cursor: int) -> AppState:
 
 
 def _clamp_selection(state: AppState) -> SelectionState:
-    """Clamp the selection onto the visible rows for ``state`` (spec §3.4).
+    """Clamp the selection onto the visible rows for ``state`` (spec §3.4 / S8.2).
 
     ``selected_ordinal`` is left unchanged when it is still visible; otherwise it
-    snaps to the first visible row, or to ``None`` when no rows match.
-    ``scroll_offset`` is clamped into ``[0, max(0, len(visible) - capacity)]``.
-    Returns the existing :class:`SelectionState` object unchanged when nothing
-    moves, so the loop's identity-based no-op check still holds.
+    snaps to the first visible row, or to ``None`` when no rows match. The scroll
+    window is then *anchored* so the selected row is always rendered (S8.2): a
+    selection above the window pulls ``scroll_offset`` up to it, one below pushes
+    it down to the last visible line. Finally ``scroll_offset`` is clamped into
+    ``[0, max(0, len(visible) - capacity)]``. Returns the existing
+    :class:`SelectionState` object unchanged when nothing moves, so the loop's
+    identity-based no-op check still holds.
     """
     selection = state.selection
     visible = select_visible_rows(state)
@@ -153,8 +156,16 @@ def _clamp_selection(state: AppState) -> SelectionState:
         selected = visible[0].ordinal
 
     capacity = select_body_capacity(state.terminal.height)
-    max_offset = max(0, len(visible) - capacity)
-    scroll = min(selection.scroll_offset, max_offset)
+    scroll = selection.scroll_offset
+    if selected is not None and capacity > 0:
+        # Anchored body allocation: keep the selected row inside the window so
+        # widening the result set never scrolls the row cursor off-screen.
+        index = next(i for i, m in enumerate(visible) if m.ordinal == selected)
+        if index < scroll:
+            scroll = index
+        elif index >= scroll + capacity:
+            scroll = index - capacity + 1
+    scroll = min(max(0, scroll), max(0, len(visible) - capacity))
 
     if selected == selection.selected_ordinal and scroll == selection.scroll_offset:
         return selection
@@ -279,7 +290,17 @@ def _reduce_redraw(state: AppState, action: Redraw) -> AppState:
 def _reduce_clear_filter(state: AppState, action: ClearFilter) -> AppState:
     if state.filter.raw == "":
         return state  # no-op: filter already empty (cursor is clamped to 0)
-    return _with_filter(state, raw="", cursor=0)
+    # Esc clears the filter AND returns the browse view to the top: selection to
+    # the first restored row, scroll to 0. This is the deliberate "clear filter"
+    # gesture, distinct from incremental backspacing which preserves the place
+    # via the anchored clamp in _with_filter.
+    cleared = replace(state, filter=_derive_filter(raw="", cursor=0))
+    visible = select_visible_rows(cleared)
+    first_ordinal = visible[0].ordinal if visible else None
+    return replace(
+        cleared,
+        selection=SelectionState(selected_ordinal=first_ordinal, scroll_offset=0),
+    )
 
 
 _HANDLERS = {

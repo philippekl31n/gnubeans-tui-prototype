@@ -347,6 +347,38 @@ def test_clear_filter_resets_raw_and_cursor(state):
     assert visible_ordinals(s) == list(range(1, 12))
 
 
+# ── selection visibility on filter changes (spec §3.4 / S8.2) ────────────────
+# A small terminal (height 8 -> body capacity 2) makes the anchored window
+# observable with the 11-row storyboard dataset.
+
+@pytest.fixture
+def short_state():
+    return make_initial_state(make_config(), make_mappings(), frame_height=8)
+
+
+def test_clear_filter_returns_selection_and_scroll_to_the_top(short_state):
+    # Filter to a deep row (ordinal 9 selected), then Esc: the view returns to
+    # the top — first row selected, scroll 0 — so the row cursor is on screen.
+    # Regression for the demo bug where Esc left the selection scrolled off-view.
+    s = reduce(short_state, InsertChar("9"))
+    assert s.selection.selected_ordinal == 9
+    s = reduce(s, ClearFilter())
+    assert visible_ordinals(s) == list(range(1, 12))
+    assert s.selection.selected_ordinal == 1
+    assert s.selection.scroll_offset == 0
+
+
+def test_widening_the_filter_anchors_the_selected_row_into_view(short_state):
+    # Backspacing the filter to empty keeps the place (ordinal 9) rather than
+    # resetting; the anchored clamp scrolls so the selected row stays rendered.
+    s = reduce(short_state, InsertChar("9"))  # visible [9], selected 9
+    s = reduce(s, Backspace())                # raw "" via edit (not Esc)
+    assert visible_ordinals(s) == list(range(1, 12))
+    assert s.selection.selected_ordinal == 9
+    # capacity 2, index of ordinal 9 is 8 -> scroll = 8 - 2 + 1 = 7.
+    assert s.selection.scroll_offset == 7
+
+
 # ── identity-preserving no-ops (a true no-op returns the same state object) ───
 # The loop uses object identity to decide whether a repaint is needed, so a
 # mutation that changes nothing must return the input state unchanged.
