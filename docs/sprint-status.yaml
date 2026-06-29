@@ -213,13 +213,12 @@ tasks:
         selectedOrdinal becomes 2 (first collision row), not 1"
       - "When collision-only is active and filter.text becomes 3,
         selectedOrdinal becomes 3; only ordinal 3 is visible (frame 3)"
-      - "Up / down arrows (and readline aliases ctrl+p / ctrl+n) move
-        selectedOrdinal by -1 / +1 within visibleRows, clamped at the first
-        and last visible row (FR14 row movement)"
-      - "Shift+up / Shift+down and PgUp / PgDn page the view by the current
-        non-editing body capacity; PgDn clamps scrollOffset to maxOffset and
-        PgUp clamps to 0, and after paging the selected row becomes the first
-        visible row (FR14 page movement; spec S8.3/S8.5)"
+      - "Up / down arrows move selectedOrdinal by -1 / +1 within visibleRows,
+        clamped at the first and last visible row (FR14 row movement)"
+      - "Shift+up / Shift+down, PgUp / PgDn, and readline aliases ctrl+p / ctrl+n
+        page the view by the current non-editing body capacity; PgDn/ctrl+n clamps
+        scrollOffset to maxOffset and PgUp/ctrl+p clamps to 0, and after paging the
+        selected row becomes the first visible row (FR14 page movement; spec S8.3/S8.5)"
       - "Browsing row movement uses standard viewport scrolling: the row cursor
         moves within the scrollOffset window and the window scrolls only enough
         to keep the selected row visible (no anchor-high pinning) (spec S8.2/S8.3)"
