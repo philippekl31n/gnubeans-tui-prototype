@@ -218,8 +218,9 @@ tasks:
       - "Shift+up / Shift+down, PgUp / PgDn, and readline aliases ctrl+p / ctrl+n
         page the view by the current non-editing body capacity; PgDn/ctrl+n clamps
         scrollOffset to maxScrollOffset = max(0, len(visibleRows) - 1) and PgUp/ctrl+p
-        clamps to 0, and after paging the selected row becomes the first visible row
-        (FR14 page movement; spec S8.5)"
+        clamps to 0. If already on the first/last page, paging moves the selected
+        row to the first/last row without scrolling further (FR14 page movement;
+        spec S8.5)"
       - "Browsing row movement uses standard viewport scrolling: the row cursor
         moves within the scrollOffset window and the window scrolls only enough
         to keep the selected row visible (no anchor-high pinning) (spec S8.2/S8.3)"

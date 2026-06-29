@@ -1092,11 +1092,10 @@ row alone; `Enter` then exits confirmation with `selectedOrdinal = visibleRows[1
 - Page size MUST equal current non-editing body capacity.
 - `maxScrollOffset = max(0, visibleRows.length - 1)` — the last row may anchor the top of a partial
   window, so page movement clamps to `maxScrollOffset`, NOT to `maxFillOffset`.
-- `PgDn`/`Shift+↓` MUST set `scrollOffset = min(scrollOffset + pageSize, maxScrollOffset)`.
-- `PgUp`/`Shift+↑` MUST set `scrollOffset = max(scrollOffset - pageSize, 0)`.
-- In `BROWSING`, the selected row MUST become the first visible row after paging:
-  `selectedOrdinal = visibleRows[scrollOffset]`. When `scrollOffset` lands within `bodyCapacity` of the
-  end, the window is intentionally partially full and MAY show only the selected row (frame 7b).
+- When NOT on the last page of results, `PgDn`/`Shift+↓` MUST set `scrollOffset = min(scrollOffset + pageSize, maxScrollOffset)` and `selectedOrdinal = visibleRows[scrollOffset]`.
+- When ALREADY on the last page of results (the last row is visible), `PgDn`/`Shift+↓` MUST leave `scrollOffset` unchanged and move the selection to the last row.
+- When NOT on the first page of results, `PgUp`/`Shift+↑` MUST set `scrollOffset = max(scrollOffset - pageSize, 0)` and `selectedOrdinal = visibleRows[scrollOffset]`.
+- When ALREADY on the first page of results (`scrollOffset == 0`), `PgUp`/`Shift+↑` MUST leave `scrollOffset` unchanged and move the selection to the first row.
 - In `CONFIRMING`, selection MUST NOT change.
 
 ### 8.6 Keeping Edited Row Visible
