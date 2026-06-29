@@ -58,6 +58,10 @@ _NAME_ACTIONS: dict[str, type] = {
     "KEY_ESCAPE": ClearFilter,
 }
 
+# `Tab` / `ctrl+i` autocompletes a leading `!` collision metafilter; the reducer
+# no-ops unless the `Tab to view collisions` ghost is visible (spec §3.3 / §5.1).
+_TAB_NAMES = frozenset({"KEY_TAB"})
+
 # ESC-prefixed meta sequences → action (checked before the lone ESC below).
 _META_ACTIONS: dict[str, type] = {
     "\x1bd": KillWord,        # meta+d         -> kill-word (forward)
@@ -115,14 +119,16 @@ def key_to_action(key) -> Optional[Action]:
     if name in _NAME_ACTIONS:
         return _NAME_ACTIONS[name]()
 
-    # Tab / ctrl+i: autocomplete the leading ! (gated in the reducer, §3.3).
-    if name == "KEY_TAB" or text == _TAB_TEXT:
+    if name in _TAB_NAMES:
         return AutocompleteBang()
 
     if text in _META_ACTIONS:
         return _META_ACTIONS[text]()
     if text in _CTRL_ACTIONS:
         return _CTRL_ACTIONS[text]()
+
+    if text == _TAB_TEXT:
+        return AutocompleteBang()
 
     if len(text) == 1 and " " <= text <= "~":
         return InsertChar(text)

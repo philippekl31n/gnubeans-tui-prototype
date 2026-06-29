@@ -28,6 +28,7 @@ from mapping_resolution_tui.actions import (
 from mapping_resolution_tui.selectors import (
     parse_filter,
     select_body_capacity,
+    select_collision_ghost_visible,
     select_unresolved_collision_count,
     select_visible_rows,
     sort_mappings_for_initial_display,
@@ -263,9 +264,7 @@ def _reduce_autocomplete_bang(state: AppState, action: AutocompleteBang) -> AppS
     # collisions" ghost is visible: filter.raw empty and at least one unresolved
     # collision exists. Otherwise it is a no-op — a non-empty buffer (incl. a !
     # already inserted by a prior Tab) or a collision-free dataset (spec §3.3).
-    if state.filter.raw != "":
-        return state
-    if select_unresolved_collision_count(state.mappings) == 0:
+    if not select_collision_ghost_visible(state):
         return state
     return _with_filter(state, raw="!", cursor=1)
 

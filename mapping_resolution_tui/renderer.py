@@ -125,7 +125,8 @@ def render_lines(state: AppState) -> list[str]:
         # Metafilter only (spec §6.5): the literal ! is followed by the dim
         # "Type to filter" ghost, the caret shown as its reverse-video first
         # character — never a trailing cursor block after the ! itself.
-        prompt = f"  Filter: !{_REV}T{_RESET}{_DIM}ype to filter{_RESET}"
+        first, rest = "T", "ype to filter"
+        prompt = f"  Filter: !{_REV}{first}{_RESET}{_DIM}{rest}{_RESET}"
     elif prompt_content.filter_raw:
         body = _render_filter_cursor(prompt_content.filter_raw, prompt_content.filter_cursor)
         prompt = f"  Filter: {body}"
