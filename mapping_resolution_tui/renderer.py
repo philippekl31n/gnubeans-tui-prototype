@@ -37,7 +37,8 @@ _FOOTER_HINT_DISPLAY: dict[FooterHint, tuple[str, str]] = {
     FooterHint.CANCEL:        ("esc",      "cancel"),
 }
 
-_SOURCE_GAP = 2        # blank columns between the token field and the source value
+_ORDINAL_GAP = 2       # blank columns between the ordinal field and the collision marker
+_SOURCE_GAP = 3        # blank columns between the token field and the source value
 
 
 def strip_ansi(text: str) -> str:
@@ -89,14 +90,17 @@ def render_lines(state: AppState) -> list[str]:
     collision_ordinals = select_unresolved_collision_ordinals(mappings)
     total = len(mappings)
 
-    # Variable-width ordinal grid (spec §6.3): the ordinal field is right-aligned
-    # to W = digit count of the mapping count, left edge anchored at column 3
-    # (1-based). Every later column is derived from W, so a wider ordinal (more
-    # mappings) shifts the `#` heading, collision marker, token, and source all
-    # right together. W = 1 for ≤9, 2 for 10–99, 3 for 100–999.
+    # Variable-width table grid (spec §6.3), driven by two parameters: the
+    # ordinal width W = digit count of the mapping count (left edge fixed at
+    # column 3), and M = the token field width. Every column after the ordinal
+    # follows it, and every column after the token follows it, so a wider ordinal
+    # or token shifts everything to its right by the same amount.
+    # W = 1 for ≤9, 2 for 10–99, 3 for 100–999.
     ordinal_width = len(str(total)) if total else 1
-    token_start = 7 + ordinal_width   # 1-based column where the token field begins
-    hash_col = 2 + ordinal_width      # 1-based column of the `#` heading (units digit)
+    max_token_length = config.target_policy.max_token_length
+    hash_col = 2 + ordinal_width       # 1-based column of the `#` heading (units digit)
+    token_start = 6 + ordinal_width    # 1-based column where the token field begins
+    source_col = token_start + max_token_length + _SOURCE_GAP  # 1-based: 9 + W + M
 
     # ── header ────────────────────────────────────────────────────────────────
     noun = config.mapping_noun_plural
@@ -125,12 +129,14 @@ def render_lines(state: AppState) -> list[str]:
         prompt = f"  Filter: {_REV}{first}{_RESET}{_DIM}{rest}{_RESET}"
 
     # ── table header ──────────────────────────────────────────────────────────
-    max_token_length = config.target_policy.max_token_length
-    source_col = token_start + max_token_length + _SOURCE_GAP
-    target_label = config.target_column_label
     source_label = config.source_column_label
-    # `#` right-aligns over the ordinal units digit; the target label begins at the
-    # token column. Both follow the ordinal width (spec §6.3).
+    # `#` right-aligns over the ordinal units digit; the target label begins at
+    # the token column. A label longer than M is truncated with a trailing
+    # ellipsis so it stays within the M-wide token field and the source column
+    # remains at 9+W+M, aligned with the body source values (spec §6.3).
+    target_label = config.target_column_label
+    if len(target_label) > max_token_length:
+        target_label = target_label[: max_token_length - 1] + "…"
     header_prefix = " " * (hash_col - 1) + "#" + " " * (token_start - hash_col - 1)
     padding = " " * max(1, source_col - token_start - len(target_label))
     table_header = f"{header_prefix}{target_label}{padding}{source_label}"
@@ -163,7 +169,10 @@ def render_lines(state: AppState) -> list[str]:
             target, select_match_spans(target, filter_text)
         ) + token_pad
 
-        row = f"{cursor} {ordinal_cell}   {collision}{token_cell}  {source}"
+        row = (
+            f"{cursor} {ordinal_cell}{' ' * _ORDINAL_GAP}"
+            f"{collision}{token_cell}{' ' * _SOURCE_GAP}{source}"
+        )
         body_lines.append(row)
 
 
