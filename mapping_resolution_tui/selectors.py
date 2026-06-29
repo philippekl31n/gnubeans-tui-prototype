@@ -30,6 +30,22 @@ def select_source_effective_value(source: Source) -> str | None:
     return source.sanitized_value if source.sanitized_value is not None else source.original_value
 
 
+def select_source_display(source: Source) -> str:
+    """Render a source cell per the storyboard source-column format.
+
+    ``label: "original"`` for a plain value, ``label: "original" → "sanitized"``
+    when sanitization occurred (sanitized value present and differing), and
+    ``label: (not set)`` when the source has no value.
+    """
+    original = source.original_value
+    if original is None:
+        return f"{source.label}: (not set)"
+    display = f'{source.label}: "{original}"'
+    if source.sanitized_value is not None and source.sanitized_value != original:
+        display += f' → "{source.sanitized_value}"'
+    return display
+
+
 def select_default_source(mapping: Mapping) -> Source:
     for source in mapping.sources:
         if source.label == mapping.default_source_label:

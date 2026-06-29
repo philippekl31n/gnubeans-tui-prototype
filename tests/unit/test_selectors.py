@@ -73,6 +73,42 @@ def test_effective_source_value_falls_back_to_original_value():
     assert select_source_effective_value(source) == "AAPL"
 
 
+def test_source_display_shows_label_and_arrow_when_sanitized():
+    from mapping_resolution_tui.selectors import select_source_display
+
+    source = Source(
+        label="cmdty_id",
+        original_value="100-F",
+        sanitized_value="C100-F",
+    )
+
+    assert select_source_display(source) == 'cmdty_id: "100-F" → "C100-F"'
+
+
+def test_source_display_shows_label_and_single_value_when_unsanitized():
+    from mapping_resolution_tui.selectors import select_source_display
+
+    source = Source(
+        label="cmdty_id",
+        original_value="GOOGL",
+        sanitized_value=None,
+    )
+
+    assert select_source_display(source) == 'cmdty_id: "GOOGL"'
+
+
+def test_source_display_marks_missing_value_as_not_set():
+    from mapping_resolution_tui.selectors import select_source_display
+
+    source = Source(
+        label="cmdty_id",
+        original_value=None,
+        sanitized_value=None,
+    )
+
+    assert select_source_display(source) == "cmdty_id: (not set)"
+
+
 def test_default_source_and_default_source_value_are_derived_from_label():
     from mapping_resolution_tui.selectors import (
         select_default_source,

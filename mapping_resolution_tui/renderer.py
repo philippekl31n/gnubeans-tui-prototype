@@ -14,6 +14,7 @@ from mapping_resolution_tui.selectors import (
     select_footer_content,
     select_match_spans,
     select_ordinal_match_spans,
+    select_source_display,
     select_unresolved_collision_count,
     select_unresolved_collision_ordinals,
     select_visible_rows,
@@ -154,7 +155,7 @@ def render_lines(state: AppState) -> list[str]:
         collision = "!" if mapping.ordinal in collision_ordinals else " "
         cursor = "▸" if is_selected else " "
         target = select_current_target_value(mapping)
-        source = select_default_source(mapping).original_value or ""
+        source = select_source_display(select_default_source(mapping))
 
         # Bold the matched spans in the ordinal display and target token cell.
         # Both span computations live in selectors; the ordinal spans are already
