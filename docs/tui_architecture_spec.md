@@ -394,8 +394,25 @@ if visibleRows is empty:
   selectedOrdinal = null
 else if selectedOrdinal is null or not in visibleRows:
   selectedOrdinal = first visible row ordinal
-scrollOffset = clamp(scrollOffset, 0, max(0, visibleRows.length - bodyCapacity))
+
+# scrollOffset addresses the FIRST visible row, so it ranges over every row.
+# A position within bodyCapacity of the end yields a partially-full window
+# (e.g. the last row alone). Row movement keeps the window full (§8.3); page
+# movement may leave it partially full (§8.5).
+maxScrollOffset = max(0, visibleRows.length - 1)
+scrollOffset = clamp(scrollOffset, 0, maxScrollOffset)
+# then keep the selected row inside the [scrollOffset, scrollOffset + bodyCapacity) window
+if selectedOrdinal != null:
+  i = indexOf(selectedOrdinal, visibleRows)
+  scrollOffset = clamp(scrollOffset, max(0, i - bodyCapacity + 1), i)
 ```
+
+The rendered body is `visibleRows[scrollOffset : scrollOffset + bodyCapacity]` and MAY be shorter than
+`bodyCapacity` when `scrollOffset` is within `bodyCapacity` of the end of the list. `scrollOffset` is
+therefore valid over `[0, maxScrollOffset]` where `maxScrollOffset = max(0, visibleRows.length - 1)`; the
+tighter `maxFillOffset = max(0, visibleRows.length - bodyCapacity)` is the largest offset that still
+fills the window and is the bound row movement respects (§8.3), while page movement may scroll up to
+`maxScrollOffset` (§8.5).
 
 When a filter change removes the previously selected row, selection MUST clamp to the first visible row.
 Frame 2 selects row 2 after applying the collision metafilter. Frame 3 selects row 3 after typing `3`.
@@ -979,26 +996,38 @@ On terminal resize:
   header, footer. Body rows render only when `bodyCapacity > 0`.
 - Width changes MUST NOT wrap lines.
 
-### 8.2 Anchored Table Body Allocation
+### 8.2 Table Body Allocation
 
-`BROWSING` and `EDITING` MUST render the table body around a non-optional anchor block. Context rows
-before and after the anchor are optional and MUST be allocated deterministically.
+`EDITING` renders the table body around a non-optional anchor block; `BROWSING` and `CONFIRMING` render
+a `scrollOffset` window. Context rows around the edit anchor are optional and MUST be allocated
+deterministically.
 
-Anchor definitions:
+#### Browsing and confirming: scroll-offset window
+
+`BROWSING` and `CONFIRMING` render the body as the window
 
 ```text
-if mode == BROWSING:
-  anchorBlock = [selected mapping row]
-if mode == EDITING:
-  anchorBlock = expanded edit display rows for selectedOrdinal
-  anchorBlock.length = max(1, activeSources.length)
+visibleBody = visibleRows[scrollOffset : scrollOffset + bodyCapacity]
+```
+
+The row cursor (`BROWSING` only) renders on the selected row wherever it falls within this window; the
+window MUST NOT re-anchor the selected row to the top of the body. `scrollOffset` is maintained by row
+movement (§8.3) and page movement (§8.5) and clamped per §3.4. The window MAY be shorter than
+`bodyCapacity` when `scrollOffset` is within `bodyCapacity` of the end of `visibleRows` — a
+partially-full window, produced by page movement and shown in frame 7b.
+
+#### Editing: anchored edit block
+
+`EDITING` MUST render the body around a non-optional anchor block:
+
+```text
+anchorBlock = expanded edit display rows for selectedOrdinal
+anchorBlock.length = max(1, activeSources.length)
 ```
 
 In `EDITING`, the active mapping/input row and the first source row share one display row. Each
 remaining source consumes one additional display row. The edit anchor therefore contains all
 non-optional edit display rows, not `1 + activeSources.length` rows.
-
-`CONFIRMING` has no selected anchor; it uses `scrollOffset` as a normal list window.
 
 When `bodyCapacity >= anchorBlock.length`, allocate table body rows using an anchor-high, fill-below-first
 policy:
@@ -1015,29 +1044,45 @@ visibleBody =
   + head(contextAfter, afterCount)
 ```
 
-This keeps the anchor block as high as possible while preserving nearby following context first. It also
-means a page may render fewer than `bodyCapacity` rows when the selected or edited row is near the end
-of `visibleRows`; implementations MUST NOT backfill preceding rows above the anchor in this policy.
+This keeps the edit block as high as possible while preserving nearby following context first. It also
+means the edit page may render fewer than `bodyCapacity` rows when the edited row is near the end of
+`visibleRows`; implementations MUST NOT backfill preceding rows above the edit anchor in this policy.
 
-When anchored allocation renders fewer than `bodyCapacity` rows, the footer separator and footer MUST
-follow the last rendered body row. The renderer MUST NOT insert filler body rows to push the footer to
-the terminal bottom, and MUST NOT pad blank lines below the footer. Any lines a previous, taller frame
-drew below the new footer MUST be cleared (see §6.2).
+#### Common allocation rules
+
+When the body renders fewer than `bodyCapacity` rows (a partially-full browsing/confirming window or a
+short edit anchor), the footer separator and footer MUST follow the last rendered body row. The renderer
+MUST NOT insert filler body rows to push the footer to the terminal bottom, and MUST NOT pad blank lines
+below the footer. Any lines a previous, taller frame drew below the new footer MUST be cleared (see §6.2).
 
 When `bodyCapacity < anchorBlock.length`, the anchor cannot fully fit:
 
 - In `EDITING`, render `LAYOUT_BLOCKED`.
-- In `BROWSING`, render `LAYOUT_BLOCKED` only when `bodyCapacity < 1`; otherwise the selected row fits.
+- In `BROWSING`, render `LAYOUT_BLOCKED` only when `bodyCapacity < 1`; otherwise the selected row fits
+  within the scroll-offset window.
 
-`scrollOffset` remains the persisted scroll position for unanchored `CONFIRMING` mode and for page
-commands. The anchored body selector may derive visible rows that do not start exactly at
+`scrollOffset` is the persisted first-visible-row index for `BROWSING` and `CONFIRMING` and for page
+commands. In `EDITING` the anchored body selector may derive visible rows that do not start exactly at
 `scrollOffset`; implementations MUST treat the selector output as authoritative for rendering.
 
 ### 8.3 Browsing Scrolling
 
 - `↑` and `↓` move selection by one visible row.
 - Movement MUST clamp at first and last visible row.
-- Rendering MUST use the anchored body allocation rules so the selected row remains visible.
+- The row cursor moves *within* the scroll-offset window (§8.2); the body MUST NOT re-anchor the
+  selected row to the top on each move.
+- After moving, `scrollOffset` MUST be adjusted only the minimum needed to keep the selected row inside
+  the `[scrollOffset, scrollOffset + bodyCapacity)` window:
+
+```text
+i = indexOf(selectedOrdinal, visibleRows)
+if i < scrollOffset:                   scrollOffset = i
+elif i >= scrollOffset + bodyCapacity: scrollOffset = i - bodyCapacity + 1
+```
+
+- Row movement therefore keeps the window full and never scrolls past
+  `maxFillOffset = max(0, visibleRows.length - bodyCapacity)`; only page movement (§8.5) may scroll
+  further into a partially-full window.
 
 ### 8.4 Confirming Scrolling
 
@@ -1047,15 +1092,21 @@ commands. The anchored body selector may derive visible rows that do not start e
 - Leaving confirmation with "edit mappings" MUST restore `BROWSING`; selected row MUST become the
   first visible row at the current `scrollOffset`.
 
-This explains frame 7b: after frame 7a scrolls to rows 2..10 and a later page-down/enter exits
-confirmation, browsing is at the last page with row 11 selected.
+This explains frame 7b: from frame 7a (`scrollOffset = 1`, rows 2..10), `PgDn` sets
+`scrollOffset = min(1 + 9, maxScrollOffset = 10) = 10` (§8.5), so the window is the partially-full last
+row alone; `Enter` then exits confirmation with `selectedOrdinal = visibleRows[10]` = row 11. Frame 7c's
+`↑` moves selection to row 10, scrolling the window up by one to rows 10..11 (§8.3).
 
 ### 8.5 Page Movement
 
 - Page size MUST equal current non-editing body capacity.
-- `PgDn`/`Shift+↓` MUST set `scrollOffset = min(scrollOffset + pageSize, maxOffset)`.
+- `maxScrollOffset = max(0, visibleRows.length - 1)` — the last row may anchor the top of a partial
+  window, so page movement clamps to `maxScrollOffset`, NOT to `maxFillOffset`.
+- `PgDn`/`Shift+↓` MUST set `scrollOffset = min(scrollOffset + pageSize, maxScrollOffset)`.
 - `PgUp`/`Shift+↑` MUST set `scrollOffset = max(scrollOffset - pageSize, 0)`.
-- In `BROWSING`, selected row MUST become the first visible row after paging.
+- In `BROWSING`, the selected row MUST become the first visible row after paging:
+  `selectedOrdinal = visibleRows[scrollOffset]`. When `scrollOffset` lands within `bodyCapacity` of the
+  end, the window is intentionally partially full and MAY show only the selected row (frame 7b).
 - In `CONFIRMING`, selection MUST NOT change.
 
 ### 8.6 Keeping Edited Row Visible
