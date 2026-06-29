@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mapping-resolution-tui"
-version = "0.5.11"
+version = "0.5.12"
 description = "A reusable Python terminal component for resolving mapping collisions through keyboard-driven review, source-assisted editing, validation, and confirmation."
 requires-python = ">=3.11"
 dependencies = [
