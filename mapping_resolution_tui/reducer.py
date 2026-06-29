@@ -145,9 +145,8 @@ def _with_filter(state: AppState, *, raw: str, cursor: int) -> AppState:
 def _clamp_selection(state: AppState) -> SelectionState:
     """Clamp the selection onto the visible rows for ``state`` (spec §3.4 / S8.2).
 
-    If the previously selected row is no longer visible, snaps to the first visible
-    row, or to ``None`` when no rows match. scrollOffset is clamped to keep the
-    selected row within the visible window. Returns the existing :class:`SelectionState`
+    Snaps to the first visible row, or to ``None`` when no rows match. The scroll
+    window is always reset to 0. Returns the existing :class:`SelectionState`
     object unchanged when nothing moves.
     """
     selection = state.selection
@@ -155,24 +154,10 @@ def _clamp_selection(state: AppState) -> SelectionState:
 
     if not visible:
         selected = None
-        scroll = 0
     else:
-        # Keep currently selected ordinal if it's still visible
-        selected = selection.selected_ordinal
-        if selected is None or not any(m.ordinal == selected for m in visible):
-            selected = visible[0].ordinal
+        selected = visible[0].ordinal
 
-        max_scroll_offset = max(0, len(visible) - 1)
-        scroll = max(0, min(selection.scroll_offset, max_scroll_offset))
-        
-        # Keep selected row inside the [scrollOffset, scrollOffset + capacity) window
-        try:
-            i = next(idx for idx, m in enumerate(visible) if m.ordinal == selected)
-            capacity = select_body_capacity(state.terminal.height)
-            scroll = max(0, min(scroll, i))
-            scroll = max(scroll, max(0, i - capacity + 1))
-        except StopIteration:
-            pass
+    scroll = 0
 
     if selected == selection.selected_ordinal and scroll == selection.scroll_offset:
         return selection

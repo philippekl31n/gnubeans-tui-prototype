@@ -392,19 +392,9 @@ baseRows = stable sorted mappings
 visibleRows = baseRows filtered by collisionOnly and text
 if visibleRows is empty:
   selectedOrdinal = null
-else if selectedOrdinal is null or not in visibleRows:
+else:
   selectedOrdinal = first visible row ordinal
-
-# scrollOffset addresses the FIRST visible row, so it ranges over every row.
-# A position within bodyCapacity of the end yields a partially-full window
-# (e.g. the last row alone). Row movement keeps the window full (§8.3); page
-# movement may leave it partially full (§8.5).
-maxScrollOffset = max(0, visibleRows.length - 1)
-scrollOffset = clamp(scrollOffset, 0, maxScrollOffset)
-# then keep the selected row inside the [scrollOffset, scrollOffset + bodyCapacity) window
-if selectedOrdinal != null:
-  i = indexOf(selectedOrdinal, visibleRows)
-  scrollOffset = clamp(scrollOffset, max(0, i - bodyCapacity + 1), i)
+scrollOffset = 0
 ```
 
 The rendered body is `visibleRows[scrollOffset : scrollOffset + bodyCapacity]` and MAY be shorter than

@@ -368,14 +368,14 @@ def test_clear_filter_returns_selection_and_scroll_to_the_top(short_state):
     assert s.selection.scroll_offset == 0
 
 
-def test_widening_the_filter_keeps_selection_visible(short_state):
-    # Backspacing the filter to empty leaves the current selected row (ordinal 9) visible.
-    # The new clamp algorithm (spec §3.4) leaves the selection on 9 and clamps scroll.
+def test_widening_the_filter_resets_selection_and_scroll(short_state):
+    # Backspacing the filter to empty resets the place (ordinal 1) rather than
+    # anchoring; the simplified clamp snaps to the first visible row and scroll 0.
     s = reduce(short_state, InsertChar("9"))  # visible [9], selected 9
     s = reduce(s, Backspace())                # raw "" via edit (not Esc)
     assert visible_ordinals(s) == list(range(1, 12))
-    assert s.selection.selected_ordinal == 9
-    assert s.selection.scroll_offset == 7
+    assert s.selection.selected_ordinal == 1
+    assert s.selection.scroll_offset == 0
 
 
 # ── identity-preserving no-ops (a true no-op returns the same state object) ───
