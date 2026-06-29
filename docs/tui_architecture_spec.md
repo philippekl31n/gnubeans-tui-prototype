@@ -619,45 +619,47 @@ and the footer on row 15 — an instance of these rules, not a fixed grid.
 
 ### 6.3 Columns
 
-Columns are 1-based and **flow left to right from the ordinal field**: every column after the
-ordinal is positioned relative to it, so a wider ordinal (more mappings) shifts all later columns
-right by the same amount. The ordinal field's left edge is fixed at column 3 — the same indent as
-the header, filter prompt, and footer text (`❯ Reviewing`, `  Filter:`, and `  shift+…` all begin
-their text at column 3); only the field's width, and therefore everything to its right, varies. Two
-parameters drive the grid:
+Columns are 1-based and flow left to right without regard to the viewport width (no need to calculate
+word-wrap). The width of the central table display - consisting primarily of Ordinal, Target, and 
+Source columns - is variable; two parameters drive the grid:
 
 - `W` — ordinal width: the digit count of `total` (the mapping count). `W = 1` for ≤9 mappings,
   `2` for 10–99, `3` for 100–999.
 - `M` — `config.targetPolicy.maxTokenLength` (the storyboard commodity fixture uses `M = 24`).
 
+Every column after the Ordinal is positioned relative to it, so a wider max ordinal value (more
+mappings) shifts all later columns right by the same amount. The ordinal field's left edge is fixed at
+column 3; only the field's width, and therefore everything to its right, varies. Every column after
+the Target (Token field) is also positioned relative to it, so a wider max token length shifts all
+later columns right by the same amount.
+
 | Field | Column(s) | Storyboard (`W=2`, `M=24`) | Contract |
 |---|---|---:|---|
 | Header start | 1 | 1 | Header begins with `❯`; text follows at column 3. |
 | Prompt indent | 1..2 | 3 | Two leading spaces; prompt text at column 3. |
+| `#` heading | 2+W | 4 | The column-header `#` right-aligns over the ordinal's rightmost digit. |
+| `{targetColumnLabel}` heading | (6+W)..(5+W+M) | 8..31 | The column header left-aligns over the Token field, and a value longer than `M` is truncated with trailing ellipses. |
+| `{sourceColumnLabel}` heading | (9+W+M)... | 35..48 | The column header left-aligns over the Source field, and extends the entire length of sourceColumnLabel. |
 | Row cursor `▸` | 1 | 1 | `▸` only in `BROWSING` selected row / `EDITING` token focus, else space. |
-| Ordinal | 3 .. (2+W) | 3..4 | Left edge anchored at column 3; digits right-aligned within the field, so a value shorter than `W` is left-padded with spaces. |
-| `#` heading | 2+W | 4 | The table-header `#` right-aligns over the ordinal's units (rightmost) digit, so it moves with the field. |
-| Collision marker `!` | 6+W | 8 | `!` when unresolved, else space (three spaces follow the ordinal field). |
-| Token start | 7+W | 9 | Current target / edit buffer — and the `{targetColumnLabel}` header — begin here. |
-| Token field | (7+W) .. (6+W+M) | 9..32 | `M` display columns. |
-| Edit cursor at offset L | (7+W)+L | 9+L | Reverse-video char at offset L, or reverse-video space at the end. |
+| Ordinal | 3..(2+W) | 3..4 | Left edge anchored at column 3; digits right-aligned within the field, so a value shorter than `W` is left-padded with spaces. |
+| Collision marker `!` | 5+W | 7 | `!` when row Token value collides with another, else space. |
+| Token field | (6+W)..(5+W+M) | 8..31 | `M` display columns. |
+| Edit cursor at offset L | (6+W)+L | 8+L | Reverse-video char at offset L, or reverse-video space at the end. |
 | Validation icon (normal) | edit cursor + 2 | — | `✓`/`✗`, except the max-length cap below. |
-| Validation icon (max cap) | 8+W+M | 34 | At the token-field end + 2 when the buffer is at `M`. |
-| Source value / label | 9+W+M | 35 | Browsing default-source value, and the `{sourceColumnLabel}` header, begin here (two spaces after the token field). |
-| Source pointer `▸` | 8+W+M | 34 | Before the divider in expanded edit rows. |
-| Source divider `┃` | 10+W+M | 36 | In expanded edit rows. |
-| Source text | 12+W+M | 38 | After the divider and one space, in expanded edit rows. |
+| Validation icon (max cap) | 7+W+M | 33 | At the token-field end + 2 when the buffer is at `M`. |
+| Source pointer `▸` | 7+W+M | 33 | Before the divider in expanded edit rows; overwrites the validation icon when both appear in the same cell. |
+| Source label / value(s)  | 9+W+M | 35 | Browsing default-source value begins here (three spaces after the token field). |
+| Source divider `┃` | 9+W+M | 35 | In expanded edit rows. |
+| Source text (expanded) | 11+W+M | 37 | After the divider and one space, in expanded edit rows. |
 
-A body row is therefore `{▸\|space} {ordinal} {3 spaces} {!\|space}{token}{2 spaces}{source}`, and
-the rendered `W = 2` table header is `   #    Beancount Token           GnuCash Source` (`#` at
-column 4, `Beancount Token` at column 9, `GnuCash Source` at column 35). The storyboard prose names
-the max edit-cursor and icon positions "column 32" and "column 33" using a zero-based model; in
-these 1-based columns they are 33 and 34. The interaction storyboard's ASCII frames are schematic
-(they carry markdown emphasis markers and are not column-exact); this table is the authoritative
-grid.
+A body row is therefore `{▸\|space}{space}{ordinal}{2 spaces}{!\|space}{token}{cursor\|space}{▸\|icon\|space}{space}{source\|{divider}{space}{source}}`,
+and the rendered `W = 2` table header is `   #   Beancount Token            GnuCash Source` (`#` at
+column 4, `Beancount Token` at column 8, `GnuCash Source` at column 35). The interaction storyboard's
+ASCII frames are schematic (they carry markdown emphasis markers and are not column-exact); this table
+is the authoritative grid.
 
 The renderer derives `W` from the mapping count (`W = len(str(total))`) and positions every later
-column from it, so the `W = 1`, `2`, and `3` regimes all render correctly. `tests/unit/test_renderer.py`
+column from it, so `W = 1`, `2`, and `3` regimes all render correctly. `tests/unit/test_renderer.py`
 asserts the `#` heading and token columns and the right-aligned ordinal field across those regimes.
 
 ### 6.4 Header Templates
