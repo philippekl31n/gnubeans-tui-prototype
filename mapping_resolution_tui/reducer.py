@@ -207,13 +207,32 @@ def _page_selection(state: AppState, direction: int) -> AppState:
     capacity = select_body_capacity(state.terminal.height)
     max_scroll_offset = max(0, len(visible) - 1)
     
-    scroll = max(0, min(state.selection.scroll_offset + (direction * capacity), max_scroll_offset))
-    selected_ordinal = visible[scroll].ordinal
+    scroll = state.selection.scroll_offset
+    last_idx = len(visible) - 1
+
+    if direction == 1:
+        # PgDn: if already on the last page, just move cursor to last row
+        if scroll <= last_idx < scroll + capacity:
+            new_scroll = scroll
+            selected_idx = last_idx
+        else:
+            new_scroll = max(0, min(scroll + capacity, max_scroll_offset))
+            selected_idx = new_scroll
+    else:
+        # PgUp: if already on the first page, just move cursor to first row
+        if scroll == 0:
+            new_scroll = 0
+            selected_idx = 0
+        else:
+            new_scroll = max(0, scroll - capacity)
+            selected_idx = new_scroll
+
+    selected_ordinal = visible[selected_idx].ordinal
     
-    if selected_ordinal == state.selection.selected_ordinal and scroll == state.selection.scroll_offset:
+    if selected_ordinal == state.selection.selected_ordinal and new_scroll == state.selection.scroll_offset:
         return state
         
-    selection = replace(state.selection, selected_ordinal=selected_ordinal, scroll_offset=scroll)
+    selection = replace(state.selection, selected_ordinal=selected_ordinal, scroll_offset=new_scroll)
     return replace(state, selection=selection)
 
 

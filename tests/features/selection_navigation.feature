@@ -71,10 +71,17 @@ Feature: Selection clamping, browsing navigation, and empty results
     Then the scroll offset is 9
     And the selected ordinal is 10
     And the selected row is visible in the rendered body
+    When the reviewer presses page down
+    Then the scroll offset is 9
+    And the selected ordinal is 11
 
   Scenario: PgUp pages back to the top and selects the first row
-    When the reviewer presses page down
+    When the reviewer presses "ctrl+n"
     And the reviewer presses page up
+    Then the scroll offset is 0
+    And the selected ordinal is 1
+    And the selected row is visible in the rendered body
+    When the reviewer presses page up
     Then the scroll offset is 0
     And the selected ordinal is 1
 
