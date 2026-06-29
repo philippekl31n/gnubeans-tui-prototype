@@ -21,7 +21,7 @@ tasks:
   - key: TASK-005
     type: task
     title: Add edit-mode selectors for ghost text, concrete value, and source pointer
-    status: todo
+    status: done
     assignee: null
     depends_on: []
     files:

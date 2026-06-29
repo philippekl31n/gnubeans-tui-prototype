@@ -14,6 +14,7 @@ from mapping_resolution_tui.state import (
     Mapping,
     Mode,
     Source,
+    FocusRegion,
 )
 
 if TYPE_CHECKING:
@@ -24,6 +25,23 @@ if TYPE_CHECKING:
 class RowCollisionMetadata:
     ordinal: int
     is_unresolved: bool
+
+
+@dataclass(frozen=True)
+class VisibleSource:
+    source: Source
+    is_pointed: bool
+
+
+@dataclass(frozen=True)
+class EditRowContent:
+    buffer_text: str
+    ghost_suffix: str
+    cursor_offset: int
+    validation_icon: str | None
+    validation_error: str | None
+    focus_region: FocusRegion
+    visible_sources: tuple[VisibleSource, ...]
 
 
 def select_source_effective_value(source: Source) -> str | None:
@@ -76,6 +94,70 @@ def select_active_sources(mapping: Mapping) -> list[Source]:
         for source in mapping.sources
         if select_source_effective_value(source) is not None
     ]
+
+
+def select_ghost_suffix(state: "AppState", mapping: Mapping) -> str:
+    """Return the remaining suffix of the default source value when editing.
+    
+    Returns the suffix when: mapping.target_value is None, 
+    edit.cursor == len(edit.buffer), and edit.buffer is a case-sensitive 
+    prefix of the default source effective value; returns '' otherwise.
+    """
+    if mapping.target_value is not None:
+        return ""
+    if state.edit is None:
+        return ""
+    if state.edit.cursor != len(state.edit.buffer):
+        return ""
+    
+    default_value = select_default_source_value(mapping)
+    if default_value.startswith(state.edit.buffer):
+        return default_value[len(state.edit.buffer):]
+    return ""
+
+
+def select_concrete_value(state: "AppState", mapping: Mapping) -> str:
+    """Return edit.buffer if non-empty, else the default source effective value."""
+    if state.edit is not None and state.edit.buffer:
+        return state.edit.buffer
+    return select_default_source_value(mapping)
+
+
+def select_source_pointer_value(state: "AppState", mapping: Mapping) -> str | None:
+    """Return the effective value of the source at edit.source_pointer_index."""
+    if state.edit is None or state.edit.source_pointer_index is None:
+        return None
+    active_sources = select_active_sources(mapping)
+    index = state.edit.source_pointer_index
+    if 0 <= index < len(active_sources):
+        return select_source_effective_value(active_sources[index])
+    return None
+
+
+def select_edit_render_row(state: "AppState", mapping: Mapping) -> EditRowContent:
+    """Return everything the renderer needs for the expanded edit row."""
+    if state.edit is None:
+        raise ValueError("Cannot select edit render row when not editing")
+
+    ghost_suffix = select_ghost_suffix(state, mapping)
+    active_sources = select_active_sources(mapping)
+    visible_sources = tuple(
+        VisibleSource(
+            source=src,
+            is_pointed=(i == state.edit.source_pointer_index)
+        )
+        for i, src in enumerate(active_sources)
+    )
+    
+    return EditRowContent(
+        buffer_text=state.edit.buffer,
+        ghost_suffix=ghost_suffix,
+        cursor_offset=state.edit.cursor,
+        validation_icon=state.edit.validation.icon,
+        validation_error=state.edit.validation.error_message,
+        focus_region=state.edit.focus_region,
+        visible_sources=visible_sources,
+    )
 
 
 def sort_mappings_for_initial_display(mappings: list[Mapping]) -> tuple[Mapping, ...]:
