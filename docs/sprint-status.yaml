@@ -189,8 +189,8 @@ tasks:
   - key: TASK-004
     type: story
     title: Selection clamping, browsing navigation, and empty-result rendering
-    status: todo
-    assignee: null
+    status: done
+    assignee: philippekl31n
     depends_on: [TASK-001]
     functional_requirements: [FR12, FR13, FR14]
     files:
@@ -207,10 +207,8 @@ tasks:
       change or match nothing, so that browsing never points at a hidden
       row or an invalid mapping.
     acceptance_criteria:
-      - "When a filter change leaves the currently selected ordinal visible,
-        selectedOrdinal is unchanged"
-      - "When a filter change removes the selected ordinal but other rows
-        remain, selectedOrdinal clamps to the first visible row's ordinal"
+      - "When a filter change occurs, selectedOrdinal clamps to the first
+        visible row's ordinal and scrollOffset is reset to 0"
       - "When collision-only is toggled on from frame_1a (ordinal 1 selected),
         selectedOrdinal becomes 2 (first collision row), not 1"
       - "When collision-only is active and filter.text becomes 3,

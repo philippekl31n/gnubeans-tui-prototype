@@ -1,0 +1,1045 @@
+commit 13f627186c63b4ee8c6079e38da2a0a49a01104a
+Author: Claude <noreply@anthropic.com>
+Date:   Fri Jun 26 19:48:33 2026 +0000
+
+    TASK-003: collision metafilter via Tab bang autocomplete + filter clear
+    
+    Implement the collision metafilter on the bang-as-source model: Tab / ctrl+i
+    autocompletes a leading "!" into filter.raw (cursor -> 1) only when the
+    "Tab to view collisions" ghost is visible (empty filter with >= 1 unresolved
+    collision), and is a no-op otherwise (a second Tab does not clear it; no-op
+    with zero collisions). Esc clearing was already provided by Phase 1.
+    
+    - actions.py: add the AutocompleteBang action.
+    - selectors.py: add select_collision_ghost_visible predicate (gates Tab).
+    - reducer.py: add _autocomplete_bang handler; add a minimal §3.4 selection
+      clamp in the post-mutation sequence so a filter never points at a hidden
+      row (needed for frame_2 to select the first collision row).
+    - loop.py: normalise Tab / ctrl+i / KEY_TAB to AutocompleteBang.
+    - renderer.py: render the metafilter-only prompt "Filter: !Type to filter"
+      (literal !, reverse-video T caret, dim remainder) when filter.raw == "!".
+    
+    Tests:
+    - golden frame_2 (Tab from 1a -> "!", rows 2 & 3, selection clamps to 2) and
+      frame_esc_clear (type "1" then Esc -> bit-identical to frame_1a), with
+      committed snapshots.
+    - BDD collision_filter.feature + step defs covering bang autocomplete, second
+      Tab / no-collision no-ops, literal-bang editing, backspace, and Esc clear.
+    - reducer/selector/loop unit tests for the autocomplete and selection clamp.
+    - update the now-stale "Tab is a no-op" loop test and text_filter scenario.
+    
+    Docs: reconcile the readline-support-matrix Tab/ctrl+i rows to implemented.
+
+diff --git a/docs/readline-support-matrix.md b/docs/readline-support-matrix.md
+index 3dfd286..25858f3 100644
+--- a/docs/readline-support-matrix.md
++++ b/docs/readline-support-matrix.md
+@@ -24,12 +24,11 @@ buffer and the source of truth; `collisionOnly` (raw begins with `!`) and `text`
+ (raw minus a single leading `!`) are **derived** after every mutation. This
+ changes the rows below relative to the original toggle model:
+ 
+-- **`Tab` / `ctrl+i`** no longer toggles a metafilter. The spec now requires it to
+-  *autocomplete a leading `!`* into `filter.raw` (cursor → 1) **only** when the
+-  `Tab to view collisions` ghost is visible, and to be a **no-op** otherwise (a
+-  second `Tab` must not clear the `!`). The existing `ToggleCollisionOnly`
+-  reducer action is therefore **non-compliant** and must be replaced — counted
+-  below as an open gap (🔴), not an implemented binding.
++- **`Tab` / `ctrl+i`** no longer toggles a metafilter. It now *autocompletes a
++  leading `!`* into `filter.raw` (cursor → 1) **only** when the `Tab to view
++  collisions` ghost is visible, and is a **no-op** otherwise (a second `Tab` must
++  not clear the `!`). Implemented in TASK-003 as the `AutocompleteBang` action;
++  the old `ToggleCollisionOnly` reducer action was retired.
+ - **`!`** is an ordinary printable character handled by `InsertCharacter`; it is
+   no longer a metafilter toggle. A `!` inserted at index 0 *is* the collision
+   metafilter by derivation.
+@@ -61,7 +60,7 @@ changes the rows below relative to the original toggle model:
+ | `\x06` | ctrl+f | `forward-char` | Cursor right, clamp at `len(filter.raw)` | `MoveCursorRight` | ✅ |
+ | `\x07` | ctrl+g | `abort` | No-op (must NOT act like Esc/ctrl+c) | `None` | 🟡 |
+ | `\x08` | ctrl+h | `backward-delete-char` | Delete before cursor in `filter.raw`; no-op at cursor 0 (leading `!` deletes as ordinary char) | `DeleteBackward` (no-op at cursor 0) | ✅ |
+-| `\x09` | ctrl+i / Tab | `complete` → *(app)* | Autocomplete a leading `!` into `filter.raw` (cursor → 1) only when the `Tab to view collisions` ghost is visible; else no-op | `None` (no-op; autocomplete deferred to TASK-003) | 🔴 |
++| `\x09` | ctrl+i / Tab | `complete` → *(app)* | Autocomplete a leading `!` into `filter.raw` (cursor → 1) only when the `Tab to view collisions` ghost is visible; else no-op | `AutocompleteBang` (reducer no-ops unless ghost visible) | ✅ |
+ | `\x0a` | ctrl+j | `accept-line` (Enter) | Dispatch as Enter (edit selected row) | `None` | 🔴 |
+ | `\x0b` | ctrl+k | `kill-line` | Delete from cursor through end of `filter.raw` | `KillToEnd` | ✅ |
+ | `\x0c` | ctrl+l | `clear-screen` / `redraw-current-line` | Re-render only; MUST NOT mutate state | `None` (no forced redraw) | 🟠 |
+@@ -112,7 +111,7 @@ remaining meta functions are no-ops.
+ | `KEY_RIGHT` | → | `forward-char` | Cursor right | `MoveCursorRight` | ✅ |
+ | `KEY_BACKSPACE` | Backspace | `backward-delete-char` | Delete before cursor in `filter.raw`; no-op at cursor 0 | `DeleteBackward` (no-op at cursor 0) | ✅ |
+ | `KEY_ESCAPE` | Esc | *(app)* | Clear `filter.raw` (clears derived metafilter + text) | `ClearFilter` | ✅ |
+-| `KEY_TAB` | Tab | `complete` → *(app)* | Autocomplete leading `!` when `Tab to view collisions` ghost visible; else no-op | `None` (no-op; deferred to TASK-003) | 🔴 |
++| `KEY_TAB` | Tab | `complete` → *(app)* | Autocomplete leading `!` when `Tab to view collisions` ghost visible; else no-op | `AutocompleteBang` (reducer no-ops unless ghost visible) | ✅ |
+ | `KEY_ENTER` | Enter | `accept-line` | Edit selected row | `None` | 🔴 |
+ | `KEY_UP` | ↑ | *(app)* | Move selection up | `None` | 🔴 |
+ | `KEY_DOWN` | ↓ | *(app)* | Move selection down | `None` | 🔴 |
+@@ -127,17 +126,19 @@ remaining meta functions are no-ops.
+ 
+ | Status | Count (approx.) | Meaning |
+ |---|---|---|
+-| ✅ Implemented | 11 control + 2 meta + 7 named = **~20 bindings** | Printable insert (incl. literal `!`), cursor move (left/right/home/end), backspace/forward-delete with cursor-0 no-op, kill-line, unix-line-discard, word kills (back/forward), Esc clear. |
++| ✅ Implemented | 12 control + 2 meta + 8 named = **~22 bindings** | Printable insert (incl. literal `!`), Tab/ctrl+i bang autocomplete, cursor move (left/right/home/end), backspace/forward-delete with cursor-0 no-op, kill-line, unix-line-discard, word kills (back/forward), Esc clear. |
+ | 🟡 No-op (compliant) | **~14 families** | abort, quoted-insert, undo, transpose, yank, search/history, completion variants, case transforms, macro/shell/vi. |
+-| 🔴 Gap (planned) | **~12 bindings** | Bang autocomplete (Tab/ctrl+i — currently a no-op), accept-line (Enter/ctrl+j/ctrl+m), navigation (↑↓/ctrl+p/ctrl+n), page keys, submit (ctrl+s), `ctrl+x` prefix. |
++| 🔴 Gap (planned) | **~10 bindings** | accept-line (Enter/ctrl+j/ctrl+m), navigation (↑↓/ctrl+p/ctrl+n), page keys, submit (ctrl+s), `ctrl+x` prefix. |
+ | 🟠 Partial | **2** | `ctrl+c` (simple quit vs EXIT confirmation), `ctrl+l` (no forced redraw). |
+ | ⚪ Out of scope | **~7** | Control bytes the spec never names. |
+ 
+-> **Phase 1 (TASK-002) status:** the `filter.raw`-as-source migration and the
+-> browsing line-editing aliases (`ctrl+a/e/d/k/u/w`, `meta+d`, `meta+backspace`,
+-> Home/End/Delete) are implemented; `ToggleCollisionOnly` was retired and `!` is
+-> now an ordinary printable insert. Tab/ctrl+i bang autocomplete remains a no-op
+-> for TASK-003, and navigation/accept-line/submit follow in TASK-004 and the
++> **TASK-003 status:** the Tab/ctrl+i bang autocomplete is implemented via the
++> `AutocompleteBang` action (insert a leading `!` and set `filter.cursor = 1` only
++> when the `Tab to view collisions` ghost is visible; otherwise a no-op). It
++> builds on the Phase 1 (TASK-002) `filter.raw`-as-source migration and browsing
++> line-editing aliases (`ctrl+a/e/d/k/u/w`, `meta+d`, `meta+backspace`,
++> Home/End/Delete); `ToggleCollisionOnly` was retired and `!` is an ordinary
++> printable insert. Navigation/accept-line/submit follow in TASK-004 and the
+ > editing/confirmation epics.
+ 
+ ### Spec-mandated "supported aliases" coverage (§5.1)
+@@ -146,7 +147,7 @@ The spec requires tests for these 14 aliases. Current state:
+ 
+ | Alias | Function | Status |
+ |---|---|---|
+-| ctrl+i | complete → autocomplete `!` | 🔴 (no-op; autocomplete is TASK-003) |
++| ctrl+i | complete → autocomplete `!` | ✅ |
+ | ctrl+? | backward-delete-char | ✅ |
+ | ctrl+b | backward-char | ✅ |
+ | ctrl+f | forward-char | ✅ |
+@@ -161,34 +162,31 @@ The spec requires tests for these 14 aliases. Current state:
+ | ctrl+u | unix-line-discard | ✅ |
+ | ctrl+w | backward-kill-word | ✅ |
+ 
+-**9 of 14** supported. The remaining five are `ctrl+i` (bang autocomplete →
+-TASK-003), `ctrl+j`/`ctrl+m` (accept-line → editing epic), and `ctrl+p`/`ctrl+n`
+-(selection navigation → TASK-004). (`ctrl+h` and `DEL`, also implemented, are
+-`backward-delete-char` aliases not on the must-test list.)
++**10 of 14** supported. The remaining four are `ctrl+j`/`ctrl+m` (accept-line →
++editing epic) and `ctrl+p`/`ctrl+n` (selection navigation → TASK-004). (`ctrl+h`
++and `DEL`, also implemented, are `backward-delete-char` aliases not on the
++must-test list.)
+ 
+ ## Closing the gaps — what needs to be built
+ 
+ Phase 1 (TASK-002) landed the `filter.raw`-as-source model and the browsing
+-line-editing aliases. The reducer's filter actions are now `InsertCharacter`,
+-`MoveCursorLeft`, `MoveCursorRight`, `MoveCursorHome`, `MoveCursorEnd`,
+-`DeleteBackward`, `DeleteForward`, `KillToEnd`, `KillToStart`,
+-`DeleteWordBackward`, `DeleteWordForward`, and `ClearFilter`; each runs the §5.1
++line-editing aliases; TASK-003 added the Tab/ctrl+i `AutocompleteBang`. The
++reducer's filter actions are now `InsertCharacter`, `MoveCursorLeft`,
++`MoveCursorRight`, `MoveCursorHome`, `MoveCursorEnd`, `DeleteBackward`,
++`DeleteForward`, `KillToEnd`, `KillToStart`, `DeleteWordBackward`,
++`DeleteWordForward`, `ClearFilter`, and `AutocompleteBang`; each runs the §5.1
+ post-mutation sequence (clamp cursor → derive `collisionOnly`/`text` from
+ `filter.raw` → re-filter → clamp selection). `ToggleCollisionOnly` was removed.
+ 
+ Remaining work, by owning task:
+ 
+-1. **Bang autocomplete** (TASK-003) — Tab / ctrl+i inserts a leading `!` and sets
+-   cursor 1 only when the `Tab to view collisions` ghost is visible; otherwise
+-   no-op. (`!` literal insert and the `DeleteBackward` cursor-0 no-op already
+-   landed in Phase 1.)
+-2. **Navigation** (TASK-004, FR14) — up/down (↑/↓, ctrl+p/ctrl+n) and page
++1. **Navigation** (TASK-004, FR14) — up/down (↑/↓, ctrl+p/ctrl+n) and page
+    (Shift+↑↓, PgUp/PgDn) for selection movement with anchored body allocation.
+-3. **accept-line** — Enter / ctrl+j / ctrl+m → enter `EDITING` (editing epic).
+-4. **submit** — ctrl+s → accept confirmation when collisions are zero (confirmation epic).
+-5. **ctrl+c** — upgrade the clean-quit into the EXIT-confirmation contract
++2. **accept-line** — Enter / ctrl+j / ctrl+m → enter `EDITING` (editing epic).
++3. **submit** — ctrl+s → accept confirmation when collisions are zero (confirmation epic).
++4. **ctrl+c** — upgrade the clean-quit into the EXIT-confirmation contract
+    (with second-ctrl+c SIGINT) once `CONFIRMING` exists.
+-6. **clear-screen** — ctrl+l → trigger a redraw without mutating state.
++5. **clear-screen** — ctrl+l → trigger a redraw without mutating state.
+ 
+ The active no-op families (🟡) require no new behavior — only explicit tests
+ asserting state and render are unchanged, per §5.1's testing mandate (Phase 1
+diff --git a/mapping_resolution_tui/actions.py b/mapping_resolution_tui/actions.py
+index c3b5259..bb2a6a2 100644
+--- a/mapping_resolution_tui/actions.py
++++ b/mapping_resolution_tui/actions.py
+@@ -86,6 +86,18 @@ class ClearFilter:
+     """Clear ``filter.raw`` entirely and reset the caret to 0 (``Esc``)."""
+ 
+ 
++@dataclass(frozen=True)
++class AutocompleteBang:
++    """Autocomplete a leading ``!`` collision metafilter into ``filter.raw``.
++
++    Dispatched by ``Tab`` / ``ctrl+i`` in BROWSING. The reducer inserts ``!`` at
++    index 0 and sets ``filter.cursor = 1`` only when the ``Tab to view
++    collisions`` ghost is visible (``filter.raw`` empty with at least one
++    unresolved collision); in every other situation it is a no-op — a second
++    ``Tab`` does NOT clear the inserted ``!`` (spec §3.3).
++    """
++
++
+ Action = (
+     InsertCharacter
+     | MoveCursorLeft
+@@ -99,4 +111,5 @@ Action = (
+     | DeleteWordBackward
+     | DeleteWordForward
+     | ClearFilter
++    | AutocompleteBang
+ )
+diff --git a/mapping_resolution_tui/loop.py b/mapping_resolution_tui/loop.py
+index a7bc084..84d532e 100644
+--- a/mapping_resolution_tui/loop.py
++++ b/mapping_resolution_tui/loop.py
+@@ -14,6 +14,7 @@ import blessed
+ 
+ from mapping_resolution_tui.actions import (
+     Action,
++    AutocompleteBang,
+     ClearFilter,
+     DeleteBackward,
+     DeleteForward,
+@@ -45,6 +46,7 @@ _CTRL_H = "\x08"  # backward-delete-char -> backspace
+ _CTRL_K = "\x0b"  # kill-line            -> delete to end of line
+ _CTRL_U = "\x15"  # unix-line-discard    -> delete to start of line
+ _CTRL_W = "\x17"  # unix-word-rubout     -> delete word backward
++_TAB = "\t"       # complete / ctrl+i    -> bang autocomplete (\x09)
+ _ESC = "\x1b"     # abort filter         -> clear filter
+ _DEL = "\x7f"     # DEL / ctrl+?         -> backspace
+ # Meta/Alt word operations arrive as an ESC prefix; matched before the lone ESC.
+@@ -53,8 +55,6 @@ _META_BS = "\x1b\x7f"  # backward-kill-word -> delete word backward
+ _META_BS_ALT = "\x1b\x08"
+ 
+ # Names reported by blessed for multi-byte escape sequences (arrows, named keys).
+-# `Tab` / `KEY_TAB` is intentionally NOT mapped here: in BROWSING it is reserved
+-# for the bang-autocomplete metafilter (TASK-003) and is a no-op until then.
+ _CURSOR_LEFT_NAMES = frozenset({"KEY_LEFT"})
+ _CURSOR_RIGHT_NAMES = frozenset({"KEY_RIGHT"})
+ _HOME_NAMES = frozenset({"KEY_HOME"})
+@@ -62,6 +62,9 @@ _END_NAMES = frozenset({"KEY_END"})
+ _BACKSPACE_NAMES = frozenset({"KEY_BACKSPACE"})
+ _DELETE_NAMES = frozenset({"KEY_DELETE"})
+ _CLEAR_NAMES = frozenset({"KEY_ESCAPE"})
++# `Tab` / `ctrl+i` autocompletes a leading `!` collision metafilter; the reducer
++# no-ops unless the `Tab to view collisions` ghost is visible (spec §3.3 / §5.1).
++_TAB_NAMES = frozenset({"KEY_TAB"})
+ 
+ 
+ def is_quit_key(key) -> bool:
+@@ -95,6 +98,8 @@ def key_to_action(key) -> Action | None:
+         return DeleteForward()
+     if name in _CLEAR_NAMES:
+         return ClearFilter()
++    if name in _TAB_NAMES:
++        return AutocompleteBang()
+ 
+     # Meta/Alt word operations (ESC-prefixed); checked before the lone ESC below.
+     if text == _META_D:
+@@ -121,6 +126,8 @@ def key_to_action(key) -> Action | None:
+         return KillToStart()
+     if text == _CTRL_W:
+         return DeleteWordBackward()
++    if text == _TAB:
++        return AutocompleteBang()
+     if text == _ESC:
+         return ClearFilter()
+ 
+diff --git a/mapping_resolution_tui/reducer.py b/mapping_resolution_tui/reducer.py
+index ecafd88..ff4bc02 100644
+--- a/mapping_resolution_tui/reducer.py
++++ b/mapping_resolution_tui/reducer.py
+@@ -10,6 +10,7 @@ import shutil
+ 
+ from mapping_resolution_tui.actions import (
+     Action,
++    AutocompleteBang,
+     ClearFilter,
+     DeleteBackward,
+     DeleteForward,
+@@ -23,7 +24,12 @@ from mapping_resolution_tui.actions import (
+     MoveCursorLeft,
+     MoveCursorRight,
+ )
+-from mapping_resolution_tui.selectors import parse_filter, sort_mappings_for_initial_display
++from mapping_resolution_tui.selectors import (
++    parse_filter,
++    select_collision_ghost_visible,
++    select_visible_rows,
++    sort_mappings_for_initial_display,
++)
+ from mapping_resolution_tui.state import (
+     AppConfig,
+     AppState,
+@@ -109,6 +115,8 @@ def reduce(state: AppState, action: Action) -> AppState:
+         return _delete_word_forward(state)
+     if isinstance(action, ClearFilter):
+         return _clear_filter(state)
++    if isinstance(action, AutocompleteBang):
++        return _autocomplete_bang(state)
+     return state
+ 
+ 
+@@ -122,7 +130,8 @@ def _with_raw(state: AppState, raw: str, cursor: int) -> AppState:
+ 
+     ``filter.raw`` is the single editable buffer (spec §3.3): ``cursor`` is
+     clamped to ``[0, len(raw)]`` and ``collision_only`` / ``text`` are re-derived
+-    from ``raw`` on every mutation.
++    from ``raw`` on every mutation. Selection is then clamped so it never points
++    at a row the new filter hides (spec §3.4 / §5.1).
+     """
+     cursor = max(0, min(cursor, len(raw)))
+     collision_only, text = parse_filter(raw)
+@@ -132,7 +141,39 @@ def _with_raw(state: AppState, raw: str, cursor: int) -> AppState:
+         text=text,
+         cursor=cursor,
+     )
+-    return replace(state, filter=new_filter)
++    return _clamp_selection(replace(state, filter=new_filter))
++
++
++def _clamp_selection(state: AppState) -> AppState:
++    """Clamp ``selection.selected_ordinal`` to the rows the filter leaves visible.
++
++    Per spec §3.4: an empty result clears the selection; otherwise a selected
++    ordinal that the filter has hidden clamps to the first visible row, while a
++    still-visible selection is left untouched.
++    """
++    visible = select_visible_rows(state)
++    if not visible:
++        selected = None
++    elif state.selection.selected_ordinal in {m.ordinal for m in visible}:
++        selected = state.selection.selected_ordinal
++    else:
++        selected = visible[0].ordinal
++
++    if selected == state.selection.selected_ordinal:
++        return state
++    return replace(state, selection=replace(state.selection, selected_ordinal=selected))
++
++
++def _autocomplete_bang(state: AppState) -> AppState:
++    """Autocomplete a leading ``!`` collision metafilter (``Tab`` / ``ctrl+i``).
++
++    A no-op unless the ``Tab to view collisions`` ghost is visible — that is,
++    ``filter.raw`` is empty and at least one unresolved collision exists. When it
++    fires it inserts ``!`` at index 0 and sets ``filter.cursor = 1`` (spec §3.3).
++    """
++    if not select_collision_ghost_visible(state):
++        return state
++    return _with_raw(state, "!", 1)
+ 
+ 
+ def _insert_character(state: AppState, char: str) -> AppState:
+diff --git a/mapping_resolution_tui/renderer.py b/mapping_resolution_tui/renderer.py
+index 661a111..81f49af 100644
+--- a/mapping_resolution_tui/renderer.py
++++ b/mapping_resolution_tui/renderer.py
+@@ -91,7 +91,12 @@ def render_lines(state: AppState) -> list[str]:
+     # ── prompt ────────────────────────────────────────────────────────────────
+     prompt_content = select_filter_prompt(state, unresolved_count)
+     raw = prompt_content.filter_raw
+-    if raw:
++    if raw == "!":
++        # Metafilter only: the literal `!` followed by the `Type to filter` ghost,
++        # only its first character reverse-video and the remainder dim (§6.5).
++        first, rest = "T", "ype to filter"
++        prompt = f"  Filter: !{_REV}{first}{_RESET}{_DIM}{rest}{_RESET}"
++    elif raw:
+         # Render filter.raw literally (including any leading `!`) with the
+         # reverse-video cursor block at filter.cursor within raw (§3.3 / §6.5).
+         cursor = prompt_content.filter_cursor
+diff --git a/mapping_resolution_tui/selectors.py b/mapping_resolution_tui/selectors.py
+index 7aa80dc..6411ca9 100644
+--- a/mapping_resolution_tui/selectors.py
++++ b/mapping_resolution_tui/selectors.py
+@@ -164,6 +164,19 @@ def parse_filter(raw: str) -> tuple[bool, str]:
+     return collision_only, text
+ 
+ 
++def select_collision_ghost_visible(state: "AppState") -> bool:
++    """Return True when the ``Tab to view collisions`` ghost is visible.
++
++    The ghost — and therefore the ``Tab`` / ``ctrl+i`` bang autocomplete it gates
++    (spec §3.3 / §6.6) — renders only when ``filter.raw`` is empty and at least
++    one unresolved collision exists.
++    """
++    return (
++        state.filter.raw == ""
++        and select_unresolved_collision_count(state.mappings) > 0
++    )
++
++
+ def select_visible_rows(state: "AppState") -> list[Mapping]:
+     rows: list[Mapping] = list(state.mappings)
+ 
+diff --git a/tests/conftest.py b/tests/conftest.py
+index a12a44c..facf38b 100644
+--- a/tests/conftest.py
++++ b/tests/conftest.py
+@@ -38,6 +38,54 @@ def frame_1a_screen(frame_1a_lines):
+     return make_pyte_screen(frame_1a_lines)
+ 
+ 
++@pytest.fixture
++def frame_2_lines():
++    """Frame 2: Tab autocompletes a leading ``!`` collision metafilter from 1a.
++
++    From the initial browsing state the reviewer presses Tab; the ``Tab to view
++    collisions`` ghost is visible, so the bang autocompletes (``filter.raw='!'``,
++    ``filter.cursor=1``, ``collision_only`` derived True). Visible rows narrow to
++    the AT-T collision pair (ordinals 2 and 3) and selection clamps to row 2.
++    """
++    from tests.fixtures.storyboard import make_config, make_mappings
++    from mapping_resolution_tui.actions import AutocompleteBang
++    from mapping_resolution_tui.reducer import make_initial_state, reduce
++    from mapping_resolution_tui.renderer import render_lines
++
++    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
++    state = reduce(state, AutocompleteBang())
++    return render_lines(state)
++
++
++@pytest.fixture
++def frame_2_screen(frame_2_lines):
++    return make_pyte_screen(frame_2_lines)
++
++
++@pytest.fixture
++def frame_esc_clear_lines():
++    """Esc-clear frame: pressing Esc from a filtered state restores frame 1a.
++
++    The reviewer types a ``1`` text filter (row 1 stays selected and visible)
++    and then presses Esc; ``filter.raw`` is cleared, the cursor resets to 0, and
++    all rows are restored, so the frame is bit-identical to frame 1a.
++    """
++    from tests.fixtures.storyboard import make_config, make_mappings
++    from mapping_resolution_tui.actions import ClearFilter, InsertCharacter
++    from mapping_resolution_tui.reducer import make_initial_state, reduce
++    from mapping_resolution_tui.renderer import render_lines
++
++    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
++    state = reduce(state, InsertCharacter("1"))
++    state = reduce(state, ClearFilter())
++    return render_lines(state)
++
++
++@pytest.fixture
++def frame_esc_clear_screen(frame_esc_clear_lines):
++    return make_pyte_screen(frame_esc_clear_lines)
++
++
+ @pytest.fixture
+ def frame_8_lines():
+     """Frame 8: single-character text filter '1' over a collision-free dataset.
+diff --git a/tests/features/collision_filter.feature b/tests/features/collision_filter.feature
+new file mode 100644
+index 0000000..7c4e5b8
+--- /dev/null
++++ b/tests/features/collision_filter.feature
+@@ -0,0 +1,68 @@
++Feature: Collision metafilter via bang autocomplete and filter clear
++
++  As a reviewer, I want to engage the collision metafilter with a single Tab and
++  clear all active filters with Esc, so that I can focus on what needs resolving
++  without manual scrolling or re-typing. The filter is a single editable buffer
++  (filter.raw); collision_only and text are derived after every mutation (§3.3).
++
++  Background:
++    Given the storyboard fixture is loaded in a 15-row terminal
++
++  Scenario: Tab autocompletes the collision metafilter and clamps selection
++    When the reviewer presses "tab"
++    Then the filter buffer is "!"
++    And the filter cursor is at offset 1
++    And the collision-only metafilter is active
++    And the visible ordinals are 2, 3
++    And the selected ordinal is 2
++
++  Scenario: A second Tab does not clear the autocompleted bang
++    When the reviewer presses "tab"
++    Then the filter buffer is "!"
++    When the reviewer presses "tab"
++    Then the filter buffer is "!"
++    And the collision-only metafilter is active
++
++  Scenario: Tab does not autocomplete once the filter already has text
++    Given the filter buffer already contains "a" with the cursor at offset 1
++    When the reviewer presses "tab"
++    Then the filter buffer is "a"
++
++  Scenario: Tab does not autocomplete when no unresolved collisions remain
++    Given the collision is resolved so no unresolved collisions remain
++    When the reviewer presses "tab"
++    Then the filter buffer is empty
++
++  Scenario: Typing a bang inserts ordinary editable text that derives the metafilter
++    When the reviewer types "!" into the filter
++    Then the filter buffer is "!"
++    And the collision-only metafilter is active
++    And the filter search text is empty
++
++  Scenario: A bang prefix with text shows only matching collision rows
++    When the reviewer types "!" into the filter
++    And the reviewer types "3" into the filter
++    Then the collision-only metafilter is active
++    And the filter search text is "3"
++    And the visible ordinals are 3
++
++  Scenario: Backspacing the leading bang clears the derived metafilter
++    When the reviewer types "!" into the filter
++    Then the collision-only metafilter is active
++    When the reviewer presses backspace
++    Then the filter buffer is empty
++    And the collision-only metafilter is inactive
++
++  Scenario: Backspace at the start of the buffer is a no-op
++    Given the filter buffer already contains "!3" with the cursor at offset 0
++    When the reviewer presses backspace
++    Then the filter buffer is "!3"
++
++  Scenario: Esc clears both the metafilter and the search text
++    When the reviewer types "!" into the filter
++    And the reviewer types "3" into the filter
++    And the reviewer presses Esc
++    Then the filter buffer is empty
++    And the collision-only metafilter is inactive
++    And the filter search text is empty
++    And the filter cursor is at offset 0
+diff --git a/tests/features/text_filter.feature b/tests/features/text_filter.feature
+index 331dc1b..7f5bb9f 100644
+--- a/tests/features/text_filter.feature
++++ b/tests/features/text_filter.feature
+@@ -25,9 +25,10 @@ Feature: Text filter input with cursor and match highlights
+     And the filter search text is empty
+     And the collision-only metafilter is active
+ 
+-  Scenario: Tab is a no-op in browsing (reserved for bang autocomplete)
++  Scenario: Tab does not autocomplete once the filter already has text
++    Given the filter buffer already contains "a" with the cursor at offset 1
+     When the reviewer presses "tab"
+-    Then the filter buffer is empty
++    Then the filter buffer is "a"
+ 
+   Scenario: Arrow keys move the cursor within the buffer, clamped to both ends
+     Given the filter buffer already contains "abc" with the cursor at offset 3
+diff --git a/tests/golden/snapshots/frame_2.txt b/tests/golden/snapshots/frame_2.txt
+new file mode 100644
+index 0000000..3df5117
+--- /dev/null
++++ b/tests/golden/snapshots/frame_2.txt
+@@ -0,0 +1,8 @@
++❯ Reviewing 11 commodity mappings. 1 unresolved collision. ctrl+c cancel
++  Filter: !Type to filter
++
++    #   Beancount Token           GnuCash Source
++▸   2  !AT-T                      AT&T
++    3  !AT-T                      AT-T
++
++  shift+↑↓ pageup/dn  ·  ↵ edit selected  ·  esc clear filter
+diff --git a/tests/golden/snapshots/frame_esc_clear.txt b/tests/golden/snapshots/frame_esc_clear.txt
+new file mode 100644
+index 0000000..9a390fb
+--- /dev/null
++++ b/tests/golden/snapshots/frame_esc_clear.txt
+@@ -0,0 +1,15 @@
++❯ Reviewing 11 commodity mappings. 1 unresolved collision. ctrl+c cancel
++  Filter: Tab to view collisions
++
++    #   Beancount Token           GnuCash Source
++▸   1   APPLE                     APPLE
++    2  !AT-T                      AT&T
++    3  !AT-T                      AT-T
++    4   C100-F                    100-F
++    5   GOOGL                     GOOGL
++    6   MSFT                      MSFT
++    7   NVDA                      NVDA
++    8   QQQ                       QQQ
++    9   SPY                       SPY
++
++  shift+↑↓ pageup/dn  ·  ↵ edit selected
+diff --git a/tests/golden/test_frame_2.py b/tests/golden/test_frame_2.py
+new file mode 100644
+index 0000000..260c042
+--- /dev/null
++++ b/tests/golden/test_frame_2.py
+@@ -0,0 +1,92 @@
++"""
++TASK-003 — golden render test for frame 2 (Tab bang autocomplete).
++
++From the initial browsing state (frame 1a) the reviewer presses Tab. The
++``Tab to view collisions`` ghost is visible (empty filter with one unresolved
++collision), so the bang autocompletes: ``filter.raw`` becomes ``"!"``,
++``filter.cursor`` is 1, and ``collision_only`` derives True. Visible rows narrow
++to the AT-T collision pair (ordinals 2 and 3) and selection clamps to row 2.
++
++Geometry assertions use pyte ``screen.display``; reverse-video assertions use
++pyte cell attributes, and raw ANSI inspection covers SGR 2 (dim) which pyte does
++not track.
++"""
++from pathlib import Path
++import pytest
++
++
++@pytest.fixture
++def display(frame_2_screen):
++    return frame_2_screen.display
++
++
++# ── geometry ────────────────────────────────────────────────────────────────
++
++def test_frame_ends_at_footer_with_no_trailing_padding(frame_2_lines):
++    # Under-full frame (2 body rows): header, prompt, blank, table header,
++    # 2 body rows, blank separator, footer = 8 lines, ending at the footer with
++    # no blank padding below it (spec §6.1/§6.2).
++    assert len(frame_2_lines) == 8
++    assert "edit selected" in frame_2_lines[-1]
++    assert "clear filter" in frame_2_lines[-1]
++
++
++def test_header_still_reports_one_unresolved_collision(display):
++    assert "1 unresolved collision" in display[0]
++
++
++def test_prompt_shows_metafilter_only_ghost(display):
++    # The literal `!` precedes the dim `Type to filter` ghost (spec §6.5).
++    assert display[1].startswith("  Filter: !Type to filter")
++
++
++def test_only_collision_rows_are_visible(display):
++    body = [display[4], display[5]]
++    ordinals = [line.split()[0] if line.split()[0] != "▸" else line.split()[1] for line in body]
++    assert ordinals == ["2", "3"]
++    # No further body rows below the collision pair.
++    assert display[6].strip() == ""
++
++
++def test_selected_row_clamps_to_first_collision_row(display):
++    assert display[4].startswith("▸")
++    assert not display[5].startswith("▸")
++
++
++def test_both_collision_rows_keep_their_markers(display):
++    assert "!" in display[4]
++    assert "!" in display[5]
++
++
++def test_footer_offers_clear_filter(display):
++    assert "esc clear filter" in display[-1]
++
++
++# ── style spans ───────────────────────────────────────────────────────────────
++
++def test_metafilter_bang_is_literal_not_reverse_video(frame_2_screen):
++    # "  Filter: " spans cols 0–9; the literal `!` sits at col 10 with no reverse.
++    assert frame_2_screen.display[1][10] == "!"
++    assert frame_2_screen.buffer[1][10].reverse is False
++
++
++def test_ghost_caret_is_reverse_video_first_letter(frame_2_screen):
++    # Only the `T` of the ghost (col 11) is the reverse-video caret.
++    assert frame_2_screen.display[1][11] == "T"
++    assert frame_2_screen.buffer[1][11].reverse is True
++    assert frame_2_screen.buffer[1][12].reverse is False
++
++
++def test_ghost_remainder_uses_dim(frame_2_lines):
++    # pyte does not track SGR 2 (dim/faint); inspect raw ANSI output directly.
++    assert "\x1b[2m" in frame_2_lines[1]
++
++
++def test_header_shortcut_uses_dim(frame_2_lines):
++    assert "\x1b[2m" in frame_2_lines[0]
++
++
++# ── snapshot ──────────────────────────────────────────────────────────────────
++
++def test_frame_2_matches_snapshot(frame_2_screen, assert_snapshot):
++    assert_snapshot(frame_2_screen, Path(__file__).parent / "snapshots" / "frame_2.txt")
+diff --git a/tests/golden/test_frame_esc_clear.py b/tests/golden/test_frame_esc_clear.py
+new file mode 100644
+index 0000000..730698c
+--- /dev/null
++++ b/tests/golden/test_frame_esc_clear.py
+@@ -0,0 +1,58 @@
++"""
++TASK-003 — golden render test for the Esc-clear frame.
++
++Pressing Esc from a filtered browsing state clears ``filter.raw`` and resets the
++cursor to 0, restoring every row. The resulting frame MUST be bit-identical to
++frame 1a (spec §3.3 / §10.1 frame 2 row narrative; storyboard esc-clear).
++
++Geometry assertions use pyte ``screen.display``; the bit-identity check compares
++the raw rendered lines (ANSI included) against the frame 1a fixture.
++"""
++from pathlib import Path
++import pytest
++
++
++@pytest.fixture
++def display(frame_esc_clear_screen):
++    return frame_esc_clear_screen.display
++
++
++# ── identity with frame 1a ────────────────────────────────────────────────────
++
++def test_rendered_lines_are_bit_identical_to_frame_1a(frame_esc_clear_lines, frame_1a_lines):
++    # Including ANSI styling: clearing the filter restores the exact initial frame.
++    assert frame_esc_clear_lines == frame_1a_lines
++
++
++def test_frame_fills_the_15_row_terminal(frame_esc_clear_screen):
++    # All 11 rows restored; the 9-row body fills the 15-row terminal exactly.
++    assert frame_esc_clear_screen.lines == 15
++
++
++# ── restored browsing state geometry ──────────────────────────────────────────
++
++def test_filter_prompt_is_back_to_the_collision_ghost(display):
++    assert display[1].startswith("  Filter: Tab to view collisions")
++
++
++def test_selection_is_back_on_row_1(display):
++    assert display[4].startswith("▸")
++
++
++def test_collision_markers_are_restored_on_rows_2_and_3(display):
++    assert "!" in display[5]
++    assert "!" in display[6]
++
++
++def test_footer_drops_the_clear_filter_hint(display):
++    # With no active filter the footer omits "clear filter" (spec §6.6).
++    assert "edit selected" in display[14]
++    assert "clear filter" not in display[14]
++
++
++# ── snapshot ──────────────────────────────────────────────────────────────────
++
++def test_frame_esc_clear_matches_snapshot(frame_esc_clear_screen, assert_snapshot):
++    assert_snapshot(
++        frame_esc_clear_screen, Path(__file__).parent / "snapshots" / "frame_esc_clear.txt"
++    )
+diff --git a/tests/step_defs/test_collision_filter.py b/tests/step_defs/test_collision_filter.py
+new file mode 100644
+index 0000000..7881f38
+--- /dev/null
++++ b/tests/step_defs/test_collision_filter.py
+@@ -0,0 +1,134 @@
++"""
++TASK-003 — BDD step definitions for the collision metafilter and filter clear.
++
++Steps drive the reducer through dispatched actions (and the input layer's
++readline-alias normalisation) so the bang autocomplete, literal-bang editing,
++backspace, and Esc-clear behaviours are exercised through the same dispatch
++pipeline used by the live loop.
++"""
++from dataclasses import replace
++
++from pytest_bdd import given, when, then, parsers, scenarios
++
++from mapping_resolution_tui.actions import (
++    ClearFilter,
++    DeleteBackward,
++    InsertCharacter,
++)
++from mapping_resolution_tui.loop import key_to_action
++from mapping_resolution_tui.reducer import make_initial_state, reduce
++from mapping_resolution_tui.selectors import parse_filter, select_visible_rows
++
++scenarios("../features/collision_filter.feature")
++
++
++class _Ctx:
++    """Mutable holder so successive steps can advance a single AppState."""
++
++    def __init__(self, state):
++        self.state = state
++
++
++@given("the storyboard fixture is loaded in a 15-row terminal", target_fixture="ctx")
++def loaded_ctx():
++    from tests.fixtures.storyboard import make_config, make_mappings
++
++    return _Ctx(make_initial_state(make_config(), make_mappings(), frame_height=15))
++
++
++@given("the collision is resolved so no unresolved collisions remain")
++def resolve_collision(ctx):
++    # Give one of the AT-T pair (ordinal 3) a distinct target so the only
++    # storyboard collision group disappears, hiding the Tab ghost.
++    mappings = [
++        replace(m, target_value="ATT") if m.ordinal == 3 else m
++        for m in ctx.state.mappings
++    ]
++    ctx.state = replace(ctx.state, mappings=mappings)
++
++
++@given(parsers.parse('the filter buffer already contains "{raw}" with the cursor at offset {offset:d}'))
++def preload_filter(ctx, raw, offset):
++    collision_only, text = parse_filter(raw)
++    ctx.state = replace(
++        ctx.state,
++        filter=replace(
++            ctx.state.filter,
++            raw=raw,
++            text=text,
++            collision_only=collision_only,
++            cursor=offset,
++        ),
++    )
++
++
++@when(parsers.parse('the reviewer types "{text}" into the filter'))
++def type_text(ctx, text):
++    for char in text:
++        ctx.state = reduce(ctx.state, InsertCharacter(char))
++
++
++@when(parsers.parse('the reviewer presses "{alias}"'))
++def press_alias(ctx, alias):
++    # The bang autocomplete arrives as Tab / ctrl+i (\x09) and is normalised by
++    # the input layer exactly as the live loop does.
++    aliases = {"tab": "\t"}
++    action = key_to_action(aliases[alias])
++    if action is not None:
++        ctx.state = reduce(ctx.state, action)
++
++
++@when("the reviewer presses backspace")
++def press_backspace(ctx):
++    ctx.state = reduce(ctx.state, DeleteBackward())
++
++
++@when("the reviewer presses Esc")
++def press_esc(ctx):
++    ctx.state = reduce(ctx.state, ClearFilter())
++
++
++@then(parsers.parse('the filter buffer is "{raw}"'))
++def assert_raw(ctx, raw):
++    assert ctx.state.filter.raw == raw
++
++
++@then("the filter buffer is empty")
++def assert_raw_empty(ctx):
++    assert ctx.state.filter.raw == ""
++
++
++@then(parsers.parse('the filter search text is "{text}"'))
++def assert_text(ctx, text):
++    assert ctx.state.filter.text == text
++
++
++@then("the filter search text is empty")
++def assert_text_empty(ctx):
++    assert ctx.state.filter.text == ""
++
++
++@then("the collision-only metafilter is active")
++def assert_collision_only_active(ctx):
++    assert ctx.state.filter.collision_only is True
++
++
++@then("the collision-only metafilter is inactive")
++def assert_collision_only_inactive(ctx):
++    assert ctx.state.filter.collision_only is False
++
++
++@then(parsers.parse("the filter cursor is at offset {offset:d}"))
++def assert_cursor(ctx, offset):
++    assert ctx.state.filter.cursor == offset
++
++
++@then(parsers.parse("the visible ordinals are {ordinals}"))
++def assert_visible_ordinals(ctx, ordinals):
++    expected = [int(part) for part in ordinals.split(",")]
++    assert [m.ordinal for m in select_visible_rows(ctx.state)] == expected
++
++
++@then(parsers.parse("the selected ordinal is {ordinal:d}"))
++def assert_selected_ordinal(ctx, ordinal):
++    assert ctx.state.selection.selected_ordinal == ordinal
+diff --git a/tests/unit/test_loop.py b/tests/unit/test_loop.py
+index c7b0c6c..c205c20 100644
+--- a/tests/unit/test_loop.py
++++ b/tests/unit/test_loop.py
+@@ -6,6 +6,7 @@ no-op families (spec §5.1), unsupported-key no-ops (FR30), and the quit key.
+ from blessed.keyboard import Keystroke
+ 
+ from mapping_resolution_tui.actions import (
++    AutocompleteBang,
+     ClearFilter,
+     DeleteBackward,
+     DeleteForward,
+@@ -31,7 +32,7 @@ def _initial_state():
+     return make_initial_state(make_config(), make_mappings(), frame_height=15)
+ 
+ 
+-# ── printable insertion; `!` is now ordinary text, Tab is a no-op ───────────────
++# ── printable insertion; `!` is ordinary text, Tab autocompletes the bang ───────
+ 
+ def test_printable_character_maps_to_insert():
+     assert key_to_action("a") == InsertCharacter("a")
+@@ -50,10 +51,12 @@ def test_bang_maps_to_literal_insert_not_a_toggle():
+     assert key_to_action("!") == InsertCharacter("!")
+ 
+ 
+-def test_tab_is_a_noop_reserved_for_bang_autocomplete():
+-    # Tab/ctrl+i is reserved for the TASK-003 bang-autocomplete; no-op until then.
+-    assert key_to_action("\t") is None
+-    assert key_to_action(Keystroke("\t", code=512, name="KEY_TAB")) is None
++def test_tab_maps_to_bang_autocomplete():
++    # Tab / ctrl+i (\x09) and KEY_TAB normalise to the bang autocomplete; the
++    # reducer decides whether the ghost makes it fire (spec §3.3 / §5.1).
++    assert key_to_action("\t") == AutocompleteBang()
++    assert key_to_action("\x09") == AutocompleteBang()
++    assert key_to_action(Keystroke("\t", code=512, name="KEY_TAB")) == AutocompleteBang()
+ 
+ 
+ # ── readline line-editing aliases (FR29 / spec §5.1) ────────────────────────────
+@@ -215,6 +218,18 @@ def test_bang_then_text_builds_metafiltered_query():
+     assert state.filter.raw == "!3"
+ 
+ 
++def test_tab_through_input_layer_autocompletes_the_bang():
++    state = _drive(_initial_state(), ["\t"])
++    assert state.filter.raw == "!"
++    assert state.filter.collision_only is True
++    assert state.filter.cursor == 1
++
++
++def test_second_tab_through_input_layer_is_a_noop():
++    state = _drive(_initial_state(), ["\t", "\t"])
++    assert state.filter.raw == "!"
++
++
+ def test_ctrl_u_then_retype_via_input_layer():
+     state = _drive(_initial_state(), ["a", "b", "c", "\x15", "x"])
+     assert state.filter.raw == "x"
+diff --git a/tests/unit/test_reducer.py b/tests/unit/test_reducer.py
+index 5a10312..0bf5368 100644
+--- a/tests/unit/test_reducer.py
++++ b/tests/unit/test_reducer.py
+@@ -11,6 +11,7 @@ from dataclasses import replace
+ import pytest
+ 
+ from mapping_resolution_tui.actions import (
++    AutocompleteBang,
+     ClearFilter,
+     DeleteBackward,
+     DeleteForward,
+@@ -25,7 +26,7 @@ from mapping_resolution_tui.actions import (
+     MoveCursorRight,
+ )
+ from mapping_resolution_tui.reducer import make_initial_state, reduce
+-from mapping_resolution_tui.selectors import parse_filter
++from mapping_resolution_tui.selectors import parse_filter, select_visible_rows
+ from mapping_resolution_tui.state import FilterState
+ 
+ 
+@@ -246,6 +247,70 @@ def test_clear_filter_on_empty_is_noop(state):
+     assert reduce(state, ClearFilter()) is state
+ 
+ 
++# ── Tab bang autocomplete (spec §3.3) ───────────────────────────────────────────
++
++def test_autocomplete_bang_inserts_leading_bang_when_ghost_visible(state):
++    # Fresh state: empty filter with one unresolved collision -> ghost visible.
++    new_state = reduce(state, AutocompleteBang())
++    assert new_state.filter.raw == "!"
++    assert new_state.filter.cursor == 1
++    assert new_state.filter.collision_only is True
++    assert new_state.filter.text == ""
++
++
++def test_autocomplete_bang_clamps_selection_to_first_collision_row(state):
++    # Selection starts on ordinal 1, which the metafilter hides; it clamps to the
++    # first visible collision row (ordinal 2).
++    assert state.selection.selected_ordinal == 1
++    new_state = reduce(state, AutocompleteBang())
++    assert new_state.selection.selected_ordinal == 2
++
++
++def test_second_autocomplete_bang_does_not_clear_the_bang(state):
++    once = reduce(state, AutocompleteBang())
++    twice = reduce(once, AutocompleteBang())
++    assert twice.filter.raw == "!"
++    assert twice is once  # ghost no longer visible -> no-op identity
++
++
++def test_autocomplete_bang_is_noop_when_filter_has_text(state):
++    state = _raw(state, "a", 1)
++    assert reduce(state, AutocompleteBang()) is state
++
++
++def test_autocomplete_bang_is_noop_when_no_unresolved_collisions(state):
++    # Resolve the AT-T collision so the ghost (and the autocomplete) disappears.
++    mappings = [
++        replace(m, target_value="ATT") if m.ordinal == 3 else m
++        for m in state.mappings
++    ]
++    state = replace(state, mappings=mappings)
++    assert reduce(state, AutocompleteBang()) is state
++
++
++# ── selection clamp after filter mutations (spec §3.4) ──────────────────────────
++
++def test_metafilter_hides_selected_row_and_clamps_selection(state):
++    new_state = reduce(state, InsertCharacter("!"))
++    assert [m.ordinal for m in select_visible_rows(new_state)] == [2, 3]
++    assert new_state.selection.selected_ordinal == 2
++
++
++def test_selection_unchanged_when_selected_row_stays_visible(state):
++    # Ordinal 1 (APPLE) matches "1"; the selection stays put.
++    new_state = reduce(state, InsertCharacter("1"))
++    assert new_state.selection.selected_ordinal == 1
++
++
++def test_empty_result_clears_selection_then_clear_restores_first_row(state):
++    state = reduce(state, InsertCharacter("!"))
++    state = reduce(state, InsertCharacter("1"))  # "!1": no collision row matches
++    assert select_visible_rows(state) == []
++    assert state.selection.selected_ordinal is None
++    state = reduce(state, ClearFilter())
++    assert state.selection.selected_ordinal == 1
++
++
+ # ── immutability and dispatch contract ─────────────────────────────────────────
+ 
+ def test_reduce_does_not_mutate_input_state(state):
+diff --git a/tests/unit/test_selectors.py b/tests/unit/test_selectors.py
+index 20e4374..ad53076 100644
+--- a/tests/unit/test_selectors.py
++++ b/tests/unit/test_selectors.py
+@@ -382,6 +382,33 @@ def test_select_visible_rows_matches_ordinal_and_token_only_excluding_sources():
+     assert select_visible_rows(state_src) == []
+ 
+ 
++def test_collision_ghost_visible_only_with_empty_filter_and_collisions():
++    from dataclasses import replace
++
++    from tests.fixtures.storyboard import make_config, make_mappings
++    from mapping_resolution_tui.reducer import make_initial_state
++    from mapping_resolution_tui.selectors import select_collision_ghost_visible
++
++    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
++
++    # Empty filter with one unresolved collision: the ghost is visible.
++    assert select_collision_ghost_visible(state) is True
++
++    # Any filter text hides the ghost (and the Tab autocomplete it gates).
++    state_text = replace(state, filter=replace(state.filter, raw="a", text="a", cursor=1))
++    assert select_collision_ghost_visible(state_text) is False
++
++    # Resolving the only collision hides the ghost even with an empty filter.
++    resolved = replace(
++        state,
++        mappings=[
++            replace(m, target_value="ATT") if m.ordinal == 3 else m
++            for m in state.mappings
++        ],
++    )
++    assert select_collision_ghost_visible(resolved) is False
++
++
+ def test_collision_selectors_are_repeatable_and_do_not_store_state_on_mappings():
+     from mapping_resolution_tui.selectors import (
+         select_collision_groups,

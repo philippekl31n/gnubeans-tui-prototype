@@ -22,6 +22,10 @@ from mapping_resolution_tui.actions import (
     MoveCursorHome,
     MoveCursorLeft,
     MoveCursorRight,
+    MoveSelectionDown,
+    MoveSelectionUp,
+    PageDown,
+    PageUp,
     Redraw,
     UnixLineDiscard,
 )
@@ -160,6 +164,26 @@ def _clamp_selection(state: AppState) -> SelectionState:
     return replace(selection, selected_ordinal=selected, scroll_offset=scroll)
 
 
+def _apply_selection(state: AppState, visible: list[Mapping], selected_idx: int) -> AppState:
+    capacity = select_body_capacity(state.terminal.height)
+    selected_ordinal = visible[selected_idx].ordinal
+    scroll = state.selection.scroll_offset
+    
+    # Anchored body allocation: selected row MUST be visible.
+    if selected_idx < scroll:
+        scroll = selected_idx
+    elif selected_idx >= scroll + capacity:
+        scroll = selected_idx - capacity + 1
+        
+    scroll = max(0, min(scroll, max(0, len(visible) - capacity)))
+    
+    if selected_ordinal == state.selection.selected_ordinal and scroll == state.selection.scroll_offset:
+        return state
+        
+    selection = replace(state.selection, selected_ordinal=selected_ordinal, scroll_offset=scroll)
+    return replace(state, selection=selection)
+
+
 def _backward_word_start(raw: str, cursor: int) -> int:
     """Index where the word before ``cursor`` begins (ASCII word boundaries)."""
     i = cursor
@@ -289,6 +313,70 @@ def _reduce_clear_filter(state: AppState, action: ClearFilter) -> AppState:
     )
 
 
+def _reduce_move_selection_up(state: AppState, action: MoveSelectionUp) -> AppState:
+    visible = select_visible_rows(state)
+    if not visible:
+        return state
+    
+    current = state.selection.selected_ordinal
+    if current is None:
+        idx = 0
+    else:
+        try:
+            idx = next(i for i, m in enumerate(visible) if m.ordinal == current)
+        except StopIteration:
+            idx = 0
+            
+    idx = max(0, idx - 1)
+    return _apply_selection(state, visible, idx)
+
+
+def _reduce_move_selection_down(state: AppState, action: MoveSelectionDown) -> AppState:
+    visible = select_visible_rows(state)
+    if not visible:
+        return state
+    
+    current = state.selection.selected_ordinal
+    if current is None:
+        idx = 0
+    else:
+        try:
+            idx = next(i for i, m in enumerate(visible) if m.ordinal == current)
+        except StopIteration:
+            idx = 0
+            
+    idx = min(len(visible) - 1, idx + 1)
+    return _apply_selection(state, visible, idx)
+
+
+def _reduce_page_up(state: AppState, action: PageUp) -> AppState:
+    visible = select_visible_rows(state)
+    if not visible:
+        return state
+    
+    capacity = select_body_capacity(state.terminal.height)
+    scroll = max(0, state.selection.scroll_offset - capacity)
+    selected_ordinal = visible[scroll].ordinal
+    
+    selection = replace(state.selection, selected_ordinal=selected_ordinal, scroll_offset=scroll)
+    return replace(state, selection=selection)
+
+
+def _reduce_page_down(state: AppState, action: PageDown) -> AppState:
+    visible = select_visible_rows(state)
+    if not visible:
+        return state
+        
+    capacity = select_body_capacity(state.terminal.height)
+    max_offset = max(0, len(visible) - capacity)
+    scroll = min(max_offset, state.selection.scroll_offset + capacity)
+    
+    selected_ordinal = visible[scroll].ordinal
+    
+    selection = replace(state.selection, selected_ordinal=selected_ordinal, scroll_offset=scroll)
+    return replace(state, selection=selection)
+
+
 _HANDLERS = {
     InsertChar: _reduce_insert_char,
     MoveCursorLeft: _reduce_move_cursor_left,
@@ -304,6 +392,10 @@ _HANDLERS = {
     AutocompleteBang: _reduce_autocomplete_bang,
     Redraw: _reduce_redraw,
     ClearFilter: _reduce_clear_filter,
+    MoveSelectionUp: _reduce_move_selection_up,
+    MoveSelectionDown: _reduce_move_selection_down,
+    PageUp: _reduce_page_up,
+    PageDown: _reduce_page_down,
 }
 
 

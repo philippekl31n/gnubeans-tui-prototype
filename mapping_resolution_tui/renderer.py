@@ -36,6 +36,7 @@ _FOOTER_HINT_DISPLAY: dict[FooterHint, tuple[str, str]] = {
     FooterHint.SELECT_SOURCE: ("↑↓",       "select source"),
     FooterHint.SUBMIT:        ("↵",        "submit"),
     FooterHint.CANCEL:        ("esc",      "cancel"),
+    FooterHint.NO_MATCHING_ROWS: ("Error:", "no matching rows"),
 }
 
 _ORDINAL_GAP = 2       # blank columns between the ordinal field and the collision marker
@@ -181,6 +182,9 @@ def render_lines(state: AppState) -> list[str]:
             f"{collision}{token_cell}{' ' * _SOURCE_GAP}{source}"
         )
         body_lines.append(row)
+
+    if not shown:
+        body_lines.append("")
 
 
 

@@ -33,6 +33,10 @@ from mapping_resolution_tui.actions import (
     MoveCursorHome,
     MoveCursorLeft,
     MoveCursorRight,
+    MoveSelectionDown,
+    MoveSelectionUp,
+    PageDown,
+    PageUp,
     Redraw,
     UnixLineDiscard,
 )
@@ -56,6 +60,12 @@ _NAME_ACTIONS: dict[str, type] = {
     "KEY_BACKSPACE": Backspace,
     "KEY_DELETE": DeleteChar,
     "KEY_ESCAPE": ClearFilter,
+    "KEY_UP": MoveSelectionUp,
+    "KEY_DOWN": MoveSelectionDown,
+    "KEY_SUP": PageUp,
+    "KEY_PGUP": PageUp,
+    "KEY_SDOWN": PageDown,
+    "KEY_PGDOWN": PageDown,
 }
 
 # `Tab` / `ctrl+i` autocompletes a leading `!` collision metafilter; the reducer
@@ -81,6 +91,8 @@ _CTRL_ACTIONS: dict[str, type] = {
     "\x0b": KillLine,          # ctrl+k  kill-line
     "\x15": UnixLineDiscard,   # ctrl+u  unix-line-discard
     "\x17": BackwardKillWord,  # ctrl+w  unix-word-rubout
+    "\x10": MoveSelectionUp,   # ctrl+p  previous-history
+    "\x0e": MoveSelectionDown, # ctrl+n  next-history
     "\x0c": Redraw,            # ctrl+l  clear-screen / redraw only
     "\x1b": ClearFilter,       # ESC     clear filter
 }

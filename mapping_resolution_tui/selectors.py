@@ -228,6 +228,13 @@ def select_filter_prompt(state: "AppState", unresolved_count: int) -> FilterProm
 
 def select_footer_content(state: "AppState") -> FooterContent:
     if state.mode == Mode.BROWSING:
+        visible = select_visible_rows(state)
+        if not visible:
+            hints = [FooterHint.NO_MATCHING_ROWS]
+            if state.filter.text or state.filter.collision_only:
+                hints.append(FooterHint.CLEAR_FILTER)
+            return FooterContent(hints=tuple(hints))
+            
         hints: list[FooterHint] = [FooterHint.PAGE_SCROLL, FooterHint.EDIT_SELECTED]
         if state.filter.text or state.filter.collision_only:
             hints.append(FooterHint.CLEAR_FILTER)

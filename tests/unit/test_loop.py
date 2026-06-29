@@ -122,8 +122,6 @@ def test_key_to_action_maps_supported_keys(key, expected):
 @pytest.mark.parametrize(
     "key",
     [
-        Key(name="KEY_UP"),
-        Key(name="KEY_DOWN"),
         Key(name="KEY_ENTER"),
         CTRL_X,
         CTRL_C,                  # quit is handled by is_quit_key, not key_to_action
@@ -175,7 +173,7 @@ def test_named_arrow_key_moves_cursor_via_loop():
 
 def test_unsupported_keys_do_not_rerender():
     # FR30: an unsupported key produces no new frame and no state change.
-    _, frames = run_keys([Key(name="KEY_UP"), CTRL_X, Key(name="KEY_DOWN")])
+    _, frames = run_keys([Key(name="KEY_ENTER"), CTRL_X, CTRL_G])
     assert len(frames) == 1  # only the initial frame
 
 

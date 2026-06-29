@@ -100,6 +100,26 @@ class ClearFilter:
     """Clear ``filter.raw`` and reset ``filter.cursor`` to 0 (Esc)."""
 
 
+@dataclass(frozen=True)
+class MoveSelectionUp:
+    """Move selection up by one row."""
+
+
+@dataclass(frozen=True)
+class MoveSelectionDown:
+    """Move selection down by one row."""
+
+
+@dataclass(frozen=True)
+class PageUp:
+    """Page selection up."""
+
+
+@dataclass(frozen=True)
+class PageDown:
+    """Page selection down."""
+
+
 # Discriminated union of every action the reducer understands (PEP 604).
 Action = (
     InsertChar
@@ -116,4 +136,8 @@ Action = (
     | AutocompleteBang
     | Redraw
     | ClearFilter
+    | MoveSelectionUp
+    | MoveSelectionDown
+    | PageUp
+    | PageDown
 )

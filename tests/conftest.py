@@ -121,6 +121,52 @@ def frame_esc_clear_screen(frame_esc_clear_lines):
 
 
 @pytest.fixture
+def frame_3_lines():
+    """Frame 3: collision-only and text '3' active (TASK-004).
+
+    Drives the input layer: Tab then '3'. Only ordinal 3 remains.
+    The selected ordinal is 3.
+    """
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.loop import key_to_action
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    state = reduce(state, key_to_action("\t"))
+    state = reduce(state, key_to_action("3"))
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_3_screen(frame_3_lines):
+    return make_pyte_screen(frame_3_lines)
+
+
+@pytest.fixture
+def frame_13_lines():
+    """Frame 13: no match state (TASK-004).
+
+    Filter typed that matches nothing ('999'). Empty body row rendered.
+    Footer shows NO_MATCHING_ROWS error.
+    """
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.loop import key_to_action
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    for c in "999":
+        state = reduce(state, key_to_action(c))
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_13_screen(frame_13_lines):
+    return make_pyte_screen(frame_13_lines)
+
+
+@pytest.fixture
 def assert_snapshot(update_snapshots):
     def _check(screen: pyte.Screen, snapshot_path: Path):
         actual = "\n".join(row.rstrip() for row in screen.display) + "\n"
