@@ -53,11 +53,13 @@ Feature: Selection clamping, browsing navigation, and empty results
     And the rendered body still shows ordinal 9
     And the row cursor is on ordinal 2
 
-  Scenario: ctrl+n and ctrl+p move the selection down and up
+  Scenario: ctrl+n and ctrl+p page the selection down and up
     When the reviewer presses "ctrl+n"
-    Then the selected ordinal is 2
+    Then the scroll offset is 2
+    And the selected ordinal is 3
     When the reviewer presses "ctrl+p"
-    Then the selected ordinal is 1
+    Then the scroll offset is 0
+    And the selected ordinal is 1
 
   Scenario: The down arrow clamps at the last visible row
     When the reviewer presses down arrow 12 times

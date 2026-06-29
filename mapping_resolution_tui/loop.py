@@ -91,8 +91,8 @@ _CTRL_ACTIONS: dict[str, type] = {
     "\x0b": KillLine,          # ctrl+k  kill-line
     "\x15": UnixLineDiscard,   # ctrl+u  unix-line-discard
     "\x17": BackwardKillWord,  # ctrl+w  unix-word-rubout
-    "\x10": MoveSelectionUp,   # ctrl+p  previous-history
-    "\x0e": MoveSelectionDown, # ctrl+n  next-history
+    "\x10": PageUp,            # ctrl+p  previous-history -> PageUp
+    "\x0e": PageDown,          # ctrl+n  next-history -> PageDown
     "\x0c": Redraw,            # ctrl+l  clear-screen / redraw only
     "\x1b": ClearFilter,       # ESC     clear filter
 }

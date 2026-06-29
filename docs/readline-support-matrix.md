@@ -66,9 +66,9 @@ original toggle model this means:
 | `\x0b` | ctrl+k | `kill-line` | Delete from cursor through end of `filter.raw` | `KillLine` | ✅ |
 | `\x0c` | ctrl+l | `clear-screen` / `redraw-current-line` | Re-render only; MUST NOT mutate state | `Redraw` (re-render only; no mutation) | ✅ |
 | `\x0d` | ctrl+m | `accept-line` (Enter) | Dispatch as Enter (edit selected row) | `None` | 🔴 |
-| `\x0e` | ctrl+n | `next-history` → *(app)* | Move selection down | `MoveSelectionDown` | ✅ |
+| `\x0e` | ctrl+n | `next-history` → *(app)* | Page down; select first visible | `PageDown` | ✅ |
 | `\x0f` | ctrl+o | `operate-and-get-next` | — (not named) | `None` | ⚪ |
-| `\x10` | ctrl+p | `previous-history` → *(app)* | Move selection up | `MoveSelectionUp` | ✅ |
+| `\x10` | ctrl+p | `previous-history` → *(app)* | Page up; select first visible | `PageUp` | ✅ |
 | `\x11` | ctrl+q | `quoted-insert` | No-op (quoted insertion unsupported) | `None` | 🟡 |
 | `\x12` | ctrl+r | `reverse-search-history` | No-op | `None` | 🟡 |
 | `\x13` | ctrl+s | *(app)* submit / `forward-search-history` | Open accept confirmation if 0 collisions | `None` | 🔴 |
