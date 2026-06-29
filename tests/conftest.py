@@ -39,14 +39,60 @@ def frame_1a_screen(frame_1a_lines):
 
 
 @pytest.fixture
+def frame_2_lines():
+    """Frame 2: Tab autocompletes a leading ``!`` collision metafilter from 1a.
+
+    From the initial browsing state the reviewer presses Tab; the ``Tab to view
+    collisions`` ghost is visible, so the bang autocompletes (``filter.raw='!'``,
+    ``filter.cursor=1``, ``collision_only`` derived True). Visible rows narrow to
+    the AT-T collision pair (ordinals 2 and 3) and selection clamps to row 2.
+    """
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.actions import AutocompleteBang
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    state = reduce(state, AutocompleteBang())
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_2_screen(frame_2_lines):
+    return make_pyte_screen(frame_2_lines)
+
+
+@pytest.fixture
+def frame_esc_clear_lines():
+    """Esc-clear frame: pressing Esc from a filtered state restores frame 1a.
+
+    The reviewer types a ``1`` text filter (row 1 stays selected and visible)
+    and then presses Esc; ``filter.raw`` is cleared, the cursor resets to 0, and
+    all rows are restored, so the frame is bit-identical to frame 1a.
+    """
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.actions import ClearFilter, InsertChar
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    state = reduce(state, InsertChar("1"))
+    state = reduce(state, ClearFilter())
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_esc_clear_screen(frame_esc_clear_lines):
+    return make_pyte_screen(frame_esc_clear_lines)
+
+
+@pytest.fixture
 def frame_8_lines():
     """Frame 8: single-character text filter '1' over a collision-free dataset.
 
-    The AT-T collision on ordinal 3 is resolved to 'ATT' first — as the
-    storyboard does before frame 8 — so the dataset is collision-free and the
-    header shows the submit affordance (spec §3.2). The reviewer then types '1'
-    via a real InsertChar dispatch; visible rows narrow to ordinals 1, 4 (token
-    C100-F), 10, and 11.
+    The AT-T collision (ordinal 3) is resolved to 'ATT' as the storyboard does
+    before frame 8, then the reviewer types '1'. Visible rows narrow to ordinals
+    1, 4 (token C100-F), 10, and 11.
     """
     from dataclasses import replace
 
@@ -71,70 +117,23 @@ def frame_8_screen(frame_8_lines):
 
 
 @pytest.fixture
-def frame_2_lines():
-    """Frame 2: collision metafilter engaged via Tab from frame 1a (TASK-003).
-
-    Drives the real input layer: a Tab keystroke is normalised by
-    ``key_to_action`` into ``AutocompleteBang`` and dispatched, autocompleting a
-    leading ``!`` (``filter.raw='!'``, ``filter.cursor=1``, collision-only
-    derived). Only the two collision rows 2 and 3 remain; the post-mutation clamp
-    moves the selection onto row 2. The under-full 2-row frame ends at the footer.
-    """
-    from tests.fixtures.storyboard import make_config, make_mappings
-    from mapping_resolution_tui.loop import key_to_action
-    from mapping_resolution_tui.reducer import make_initial_state, reduce
-    from mapping_resolution_tui.renderer import render_lines
-
-    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
-    state = reduce(state, key_to_action("\t"))
-    return render_lines(state)
-
-
-@pytest.fixture
-def frame_2_screen(frame_2_lines):
-    return make_pyte_screen(frame_2_lines)
-
-
-@pytest.fixture
-def frame_esc_clear_lines():
-    """Frame esc-clear: Esc from a filtered state restores every row (TASK-003).
-
-    A text filter ``1`` is typed (keeping ordinal 1 selected and visible), then
-    Esc clears ``filter.raw`` and resets ``filter.cursor`` to 0. The result is
-    byte-identical to frame 1a: all 11 rows restored, the ``Tab to view
-    collisions`` ghost, and row 1 selected.
-    """
-    from tests.fixtures.storyboard import make_config, make_mappings
-    from mapping_resolution_tui.loop import key_to_action
-    from mapping_resolution_tui.reducer import make_initial_state, reduce
-    from mapping_resolution_tui.renderer import render_lines
-
-    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
-    state = reduce(state, key_to_action("1"))
-    state = reduce(state, key_to_action("\x1b"))
-    return render_lines(state)
-
-
-@pytest.fixture
-def frame_esc_clear_screen(frame_esc_clear_lines):
-    return make_pyte_screen(frame_esc_clear_lines)
-
-
-@pytest.fixture
 def frame_3_lines():
-    """Frame 3: collision-only and text '3' active (TASK-004).
+    """Frame 3: collision metafilter plus the text filter ``3``.
 
-    Drives the input layer: Tab then '3'. Only ordinal 3 remains.
-    The selected ordinal is 3.
+    From the initial browsing state the reviewer presses Tab (autocompleting the
+    leading ``!``) and then types ``3``: ``filter.raw='!3'``, ``collision_only``
+    derives True and ``text='3'``. The only collision row whose ordinal/token
+    matches ``3`` is ordinal 3, so the visible list narrows to it and the
+    selection clamps from ordinal 2 to ordinal 3 (spec §3.4 / §10.1 frame 3).
     """
     from tests.fixtures.storyboard import make_config, make_mappings
-    from mapping_resolution_tui.loop import key_to_action
+    from mapping_resolution_tui.actions import AutocompleteBang, InsertChar
     from mapping_resolution_tui.reducer import make_initial_state, reduce
     from mapping_resolution_tui.renderer import render_lines
 
     state = make_initial_state(make_config(), make_mappings(), frame_height=15)
-    state = reduce(state, key_to_action("\t"))
-    state = reduce(state, key_to_action("3"))
+    state = reduce(state, AutocompleteBang())
+    state = reduce(state, InsertChar("3"))
     return render_lines(state)
 
 
@@ -145,19 +144,29 @@ def frame_3_screen(frame_3_lines):
 
 @pytest.fixture
 def frame_13_lines():
-    """Frame 13: no match state (TASK-004).
+    """Frame 13: a text filter that matches no rows (empty result).
 
-    Filter typed that matches nothing ('999'). Empty body row rendered.
-    Footer shows NO_MATCHING_ROWS error.
+    The AT-T collision (ordinal 3) is resolved to 'ATT' as the storyboard does
+    before frame 13, then the reviewer types '12'. No ordinal or target token
+    contains '12', so ``visibleRows`` is empty, ``selectedOrdinal`` is None, and
+    the body renders a single blank row with the error footer (spec §3.4 / §6.6;
+    storyboard frame 13).
     """
+    from dataclasses import replace
+
     from tests.fixtures.storyboard import make_config, make_mappings
-    from mapping_resolution_tui.loop import key_to_action
+    from mapping_resolution_tui.actions import InsertChar
     from mapping_resolution_tui.reducer import make_initial_state, reduce
     from mapping_resolution_tui.renderer import render_lines
 
     state = make_initial_state(make_config(), make_mappings(), frame_height=15)
-    for c in "999":
-        state = reduce(state, key_to_action(c))
+    mappings = [
+        replace(m, target_value="ATT") if m.ordinal == 3 else m
+        for m in state.mappings
+    ]
+    state = replace(state, mappings=mappings)
+    state = reduce(state, InsertChar("1"))
+    state = reduce(state, InsertChar("2"))
     return render_lines(state)
 
 

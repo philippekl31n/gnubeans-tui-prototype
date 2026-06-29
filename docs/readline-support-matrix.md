@@ -66,9 +66,9 @@ original toggle model this means:
 | `\x0b` | ctrl+k | `kill-line` | Delete from cursor through end of `filter.raw` | `KillLine` | ✅ |
 | `\x0c` | ctrl+l | `clear-screen` / `redraw-current-line` | Re-render only; MUST NOT mutate state | `Redraw` (re-render only; no mutation) | ✅ |
 | `\x0d` | ctrl+m | `accept-line` (Enter) | Dispatch as Enter (edit selected row) | `None` | 🔴 |
-| `\x0e` | ctrl+n | `next-history` → *(app)* | Move selection down | `None` | 🔴 |
+| `\x0e` | ctrl+n | `next-history` → *(app)* | Move selection down | `MoveSelectionDown` | ✅ |
 | `\x0f` | ctrl+o | `operate-and-get-next` | — (not named) | `None` | ⚪ |
-| `\x10` | ctrl+p | `previous-history` → *(app)* | Move selection up | `None` | 🔴 |
+| `\x10` | ctrl+p | `previous-history` → *(app)* | Move selection up | `MoveSelectionUp` | ✅ |
 | `\x11` | ctrl+q | `quoted-insert` | No-op (quoted insertion unsupported) | `None` | 🟡 |
 | `\x12` | ctrl+r | `reverse-search-history` | No-op | `None` | 🟡 |
 | `\x13` | ctrl+s | *(app)* submit / `forward-search-history` | Open accept confirmation if 0 collisions | `None` | 🔴 |
@@ -114,31 +114,28 @@ remaining meta functions are no-ops.
 | `KEY_ESCAPE` | Esc | *(app)* | Clear `filter.raw` (clears derived metafilter + text) | `ClearFilter` | ✅ |
 | `KEY_TAB` | Tab | `complete` → *(app)* | Autocomplete leading `!` when `Tab to view collisions` ghost visible; else no-op | `AutocompleteBang` (reducer-gated; no-op when ghost hidden) | ✅ |
 | `KEY_ENTER` | Enter | `accept-line` | Edit selected row | `None` | 🔴 |
-| `KEY_UP` | ↑ | *(app)* | Move selection up | `None` | 🔴 |
-| `KEY_DOWN` | ↓ | *(app)* | Move selection down | `None` | 🔴 |
+| `KEY_UP` | ↑ | *(app)* | Move selection up | `MoveSelectionUp` | ✅ |
+| `KEY_DOWN` | ↓ | *(app)* | Move selection down | `MoveSelectionDown` | ✅ |
 | `KEY_HOME` | Home | `beginning-of-line` | Set cursor 0 | `MoveCursorHome` | ✅ |
 | `KEY_END` | End | `end-of-line` | Set cursor `len(filter.raw)` | `MoveCursorEnd` | ✅ |
 | `KEY_DELETE` | Delete | `delete-char` | Delete at cursor | `DeleteChar` | ✅ |
-| `KEY_SUP` / `KEY_PGUP` | Shift+↑ / PgUp | *(app)* | Page up; select first visible | `None` | 🔴 |
-| `KEY_SDOWN` / `KEY_PGDOWN` | Shift+↓ / PgDn | *(app)* | Page down; select first visible | `None` | 🔴 |
+| `KEY_SUP` / `KEY_PGUP` | Shift+↑ / PgUp | *(app)* | Page up; select first visible | `PageUp` | ✅ |
+| `KEY_SDOWN` / `KEY_PGDOWN` | Shift+↓ / PgDn | *(app)* | Page down; select first visible | `PageDown` | ✅ |
 | `KEY_INSERT` | Insert | — | — (not named) | `None` | ⚪ |
 
 ## Summary
 
 | Status | Count (approx.) | Meaning |
 |---|---|---|
-| ✅ Implemented | 13 control + 2 meta + 8 named = **~23 bindings** | Printable insert (incl. literal `!`), bang autocomplete (Tab/ctrl+i → `AutocompleteBang`), cursor move (left/right/home/end), backspace/forward-delete with cursor-0 no-op, kill-line, unix-line-discard, word kills (back/forward), clear-screen redraw (ctrl+l), Esc clear. |
+| ✅ Implemented | 13 control + 2 meta + 12 named = **~27 bindings** | Printable insert (incl. literal `!`), bang autocomplete (Tab/ctrl+i → `AutocompleteBang`), cursor move (left/right/home/end), backspace/forward-delete with cursor-0 no-op, kill-line, unix-line-discard, word kills (back/forward), clear-screen redraw (ctrl+l), Esc clear, navigation (↑↓/ctrl+p/ctrl+n, page keys). |
 | 🟡 No-op (compliant) | **~14 families** | abort, quoted-insert, undo, transpose, yank, search/history, completion variants, case transforms, macro/shell/vi. |
-| 🔴 Gap (planned) | **~9 bindings** | accept-line (Enter/ctrl+j/ctrl+m), navigation (↑↓/ctrl+p/ctrl+n), page keys, submit (ctrl+s), `ctrl+x` prefix. |
+| 🔴 Gap (planned) | **~5 bindings** | accept-line (Enter/ctrl+j/ctrl+m), submit (ctrl+s), `ctrl+x` prefix. |
 | 🟠 Partial | **1** | `ctrl+c` (simple quit vs EXIT confirmation). |
 | ⚪ Out of scope | **~7** | Control bytes the spec never names. |
 
-> **TASK-002 status:** the `filter.raw`-as-source model and the browsing
-> line-editing aliases (`ctrl+a/e/d/k/u/w`, `meta+d`, `meta+backspace`,
-> Home/End/Delete) are implemented, `!` is an ordinary printable insert, and
-> `ctrl+l` re-renders without mutating state. Tab/ctrl+i bang autocomplete is a
-> no-op reserved for TASK-003, and navigation/accept-line/submit follow in
-> TASK-004 and the editing/confirmation epics.
+> **TASK-004 status:** selection navigation (↑/↓, ctrl+p/n, Shift+↑↓, PgUp/Dn) is implemented
+> with anchored body allocation and gracefully clamped scroll logic. 
+> The remaining gaps are for accept-line and submit which depend on the editing/confirmation epics.
 
 ### Spec-mandated "supported aliases" coverage (§5.1)
 
@@ -152,8 +149,8 @@ The spec requires tests for these 14 aliases. Current state:
 | ctrl+f | forward-char | ✅ |
 | ctrl+j | accept-line | 🔴 |
 | ctrl+m | accept-line | 🔴 |
-| ctrl+p | up | 🔴 |
-| ctrl+n | down | 🔴 |
+| ctrl+p | up | ✅ |
+| ctrl+n | down | ✅ |
 | ctrl+a | beginning-of-line | ✅ |
 | ctrl+e | end-of-line | ✅ |
 | ctrl+d | delete-char | ✅ |
@@ -161,10 +158,7 @@ The spec requires tests for these 14 aliases. Current state:
 | ctrl+u | unix-line-discard | ✅ |
 | ctrl+w | backward-kill-word | ✅ |
 
-**9 of 14** supported. The remaining five are `ctrl+i` (bang autocomplete →
-TASK-003), `ctrl+j`/`ctrl+m` (accept-line → editing epic), and `ctrl+p`/`ctrl+n`
-(selection navigation → TASK-004). (`ctrl+h` and `DEL`, also implemented, are
-`backward-delete-char` aliases not on the must-test list.)
+**11 of 14** supported. The remaining three are `ctrl+j`/`ctrl+m` (accept-line → editing epic) and `ctrl+i` (bang autocomplete → TASK-003).
 
 ## Closing the gaps — what needs to be built
 
@@ -182,11 +176,9 @@ Remaining work, by owning task:
    cursor 1 only when the `Tab to view collisions` ghost is visible; otherwise
    no-op. (`!` literal insert and the `Backspace` cursor-0 no-op already landed in
    TASK-002.)
-2. **Navigation** (TASK-004, FR14) — up/down (↑/↓, ctrl+p/ctrl+n) and page
-   (Shift+↑↓, PgUp/PgDn) for selection movement with anchored body allocation.
-3. **accept-line** — Enter / ctrl+j / ctrl+m → enter `EDITING` (editing epic).
-4. **submit** — ctrl+s → accept confirmation when collisions are zero (confirmation epic).
-5. **ctrl+c** — upgrade the clean-quit into the EXIT-confirmation contract
+2. **accept-line** — Enter / ctrl+j / ctrl+m → enter `EDITING` (editing epic).
+3. **submit** — ctrl+s → accept confirmation when collisions are zero (confirmation epic).
+4. **ctrl+c** — upgrade the clean-quit into the EXIT-confirmation contract
    (with second-ctrl+c SIGINT) once `CONFIRMING` exists.
 
 The active no-op families (🟡) require no new behavior — only explicit tests

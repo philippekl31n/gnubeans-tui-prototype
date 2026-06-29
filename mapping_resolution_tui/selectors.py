@@ -216,6 +216,16 @@ def select_ordinal_match_spans(
     )
 
 
+def select_body_rows(state: "AppState") -> list[Mapping]:
+    """Return the mappings to render in the table body (spec §8.2)."""
+    visible = select_visible_rows(state)
+    capacity = select_body_capacity(state.terminal.height)
+    if capacity <= 0 or not visible:
+        return []
+    scroll = state.selection.scroll_offset
+    return visible[scroll : scroll + capacity]
+
+
 def select_filter_prompt(state: "AppState", unresolved_count: int) -> FilterPromptContent:
     return FilterPromptContent(
         filter_raw=state.filter.raw,
@@ -228,12 +238,11 @@ def select_filter_prompt(state: "AppState", unresolved_count: int) -> FilterProm
 
 def select_footer_content(state: "AppState") -> FooterContent:
     if state.mode == Mode.BROWSING:
-        visible = select_visible_rows(state)
-        if not visible:
-            hints = [FooterHint.NO_MATCHING_ROWS]
-            if state.filter.text or state.filter.collision_only:
-                hints.append(FooterHint.CLEAR_FILTER)
-            return FooterContent(hints=tuple(hints))
+        if not select_visible_rows(state):
+            return FooterContent(
+                hints=(FooterHint.CLEAR_FILTER,),
+                error="no matching rows",
+            )
             
         hints: list[FooterHint] = [FooterHint.PAGE_SCROLL, FooterHint.EDIT_SELECTED]
         if state.filter.text or state.filter.collision_only:

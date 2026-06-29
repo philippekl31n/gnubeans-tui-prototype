@@ -164,18 +164,51 @@ def _clamp_selection(state: AppState) -> SelectionState:
     return replace(selection, selected_ordinal=selected, scroll_offset=scroll)
 
 
-def _apply_selection(state: AppState, visible: list[Mapping], selected_idx: int) -> AppState:
+def _move_selection(state: AppState, delta: int) -> AppState:
+    visible = select_visible_rows(state)
+    if not visible:
+        return state
+        
+    current = state.selection.selected_ordinal
+    if current is None:
+        idx = 0
+    else:
+        try:
+            idx = next(i for i, m in enumerate(visible) if m.ordinal == current)
+        except StopIteration:
+            idx = 0
+            
+    idx = max(0, min(len(visible) - 1, idx + delta))
+    
     capacity = select_body_capacity(state.terminal.height)
-    selected_ordinal = visible[selected_idx].ordinal
+    selected_ordinal = visible[idx].ordinal
     scroll = state.selection.scroll_offset
     
     # Anchored body allocation: selected row MUST be visible.
-    if selected_idx < scroll:
-        scroll = selected_idx
-    elif selected_idx >= scroll + capacity:
-        scroll = selected_idx - capacity + 1
+    if idx < scroll:
+        scroll = idx
+    elif idx >= scroll + capacity:
+        scroll = idx - capacity + 1
         
     scroll = max(0, min(scroll, max(0, len(visible) - capacity)))
+    
+    if selected_ordinal == state.selection.selected_ordinal and scroll == state.selection.scroll_offset:
+        return state
+        
+    selection = replace(state.selection, selected_ordinal=selected_ordinal, scroll_offset=scroll)
+    return replace(state, selection=selection)
+
+
+def _page_selection(state: AppState, direction: int) -> AppState:
+    visible = select_visible_rows(state)
+    if not visible:
+        return state
+        
+    capacity = select_body_capacity(state.terminal.height)
+    max_offset = max(0, len(visible) - capacity)
+    
+    scroll = max(0, min(state.selection.scroll_offset + (direction * capacity), max_offset))
+    selected_ordinal = visible[scroll].ordinal
     
     if selected_ordinal == state.selection.selected_ordinal and scroll == state.selection.scroll_offset:
         return state
@@ -314,67 +347,19 @@ def _reduce_clear_filter(state: AppState, action: ClearFilter) -> AppState:
 
 
 def _reduce_move_selection_up(state: AppState, action: MoveSelectionUp) -> AppState:
-    visible = select_visible_rows(state)
-    if not visible:
-        return state
-    
-    current = state.selection.selected_ordinal
-    if current is None:
-        idx = 0
-    else:
-        try:
-            idx = next(i for i, m in enumerate(visible) if m.ordinal == current)
-        except StopIteration:
-            idx = 0
-            
-    idx = max(0, idx - 1)
-    return _apply_selection(state, visible, idx)
+    return _move_selection(state, -1)
 
 
 def _reduce_move_selection_down(state: AppState, action: MoveSelectionDown) -> AppState:
-    visible = select_visible_rows(state)
-    if not visible:
-        return state
-    
-    current = state.selection.selected_ordinal
-    if current is None:
-        idx = 0
-    else:
-        try:
-            idx = next(i for i, m in enumerate(visible) if m.ordinal == current)
-        except StopIteration:
-            idx = 0
-            
-    idx = min(len(visible) - 1, idx + 1)
-    return _apply_selection(state, visible, idx)
+    return _move_selection(state, 1)
 
 
 def _reduce_page_up(state: AppState, action: PageUp) -> AppState:
-    visible = select_visible_rows(state)
-    if not visible:
-        return state
-    
-    capacity = select_body_capacity(state.terminal.height)
-    scroll = max(0, state.selection.scroll_offset - capacity)
-    selected_ordinal = visible[scroll].ordinal
-    
-    selection = replace(state.selection, selected_ordinal=selected_ordinal, scroll_offset=scroll)
-    return replace(state, selection=selection)
+    return _page_selection(state, -1)
 
 
 def _reduce_page_down(state: AppState, action: PageDown) -> AppState:
-    visible = select_visible_rows(state)
-    if not visible:
-        return state
-        
-    capacity = select_body_capacity(state.terminal.height)
-    max_offset = max(0, len(visible) - capacity)
-    scroll = min(max_offset, state.selection.scroll_offset + capacity)
-    
-    selected_ordinal = visible[scroll].ordinal
-    
-    selection = replace(state.selection, selected_ordinal=selected_ordinal, scroll_offset=scroll)
-    return replace(state, selection=selection)
+    return _page_selection(state, 1)
 
 
 _HANDLERS = {

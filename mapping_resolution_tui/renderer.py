@@ -8,6 +8,7 @@ from mapping_resolution_tui.state import AppState, FooterHint
 
 from mapping_resolution_tui.selectors import (
     select_body_capacity,
+    select_body_rows,
     select_current_target_value,
     select_default_source,
     select_filter_prompt,
@@ -36,7 +37,6 @@ _FOOTER_HINT_DISPLAY: dict[FooterHint, tuple[str, str]] = {
     FooterHint.SELECT_SOURCE: ("↑↓",       "select source"),
     FooterHint.SUBMIT:        ("↵",        "submit"),
     FooterHint.CANCEL:        ("esc",      "cancel"),
-    FooterHint.NO_MATCHING_ROWS: ("Error:", "no matching rows"),
 }
 
 _ORDINAL_GAP = 2       # blank columns between the ordinal field and the collision marker
@@ -150,10 +150,7 @@ def render_lines(state: AppState) -> list[str]:
     table_header = f"{header_prefix}{target_label}{padding}{source_label}"
 
     # ── body rows ─────────────────────────────────────────────────────────────
-    capacity = select_body_capacity(height)
-    visible = select_visible_rows(state)
-    scroll = state.selection.scroll_offset
-    shown = visible[scroll : scroll + capacity]
+    shown = select_body_rows(state)
 
     filter_text = state.filter.text
     body_lines: list[str] = []
@@ -190,11 +187,15 @@ def render_lines(state: AppState) -> list[str]:
 
     # ── footer ────────────────────────────────────────────────────────────────
     footer_content = select_footer_content(state)
-    hints = "  ·  ".join(
-        f"{key} {label}"
-        for hint in footer_content.hints
-        for key, label in (_FOOTER_HINT_DISPLAY[hint],)
-    )
+    hints_list = []
+    if footer_content.error:
+        hints_list.append(f"Error: {footer_content.error}")
+    
+    for hint in footer_content.hints:
+        key, label = _FOOTER_HINT_DISPLAY[hint]
+        hints_list.append(f"{key} {label}")
+        
+    hints = "  ·  ".join(hints_list)
     footer = f"  {hints}"
 
     # ── assemble ──────────────────────────────────────────────────────────────

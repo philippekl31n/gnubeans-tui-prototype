@@ -77,7 +77,7 @@ wheels = [
 
 [[package]]
 name = "mapping-resolution-tui"
-version = "0.5.17"
+version = "0.5.18"
 source = { editable = "." }
 dependencies = [
     { name = "blessed" },

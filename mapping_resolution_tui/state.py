@@ -113,7 +113,6 @@ class FooterHint(Enum):
     SELECT_SOURCE = "SELECT_SOURCE"
     SUBMIT = "SUBMIT"
     CANCEL = "CANCEL"
-    NO_MATCHING_ROWS = "NO_MATCHING_ROWS"
 
 
 @dataclass(frozen=True)
