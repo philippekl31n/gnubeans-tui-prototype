@@ -409,19 +409,25 @@ def test_collision_ghost_visible_only_with_empty_filter_and_collisions():
     assert select_collision_ghost_visible(resolved) is False
 
 
-def test_select_body_rows_anchors_selection_high_and_fills_below():
+def test_select_body_rows_is_the_scroll_offset_window():
+    from dataclasses import replace
+
     from tests.fixtures.storyboard import make_config, make_mappings
     from mapping_resolution_tui.reducer import make_initial_state
     from mapping_resolution_tui.selectors import select_body_rows
 
     state = make_initial_state(make_config(), make_mappings(), frame_height=15)
 
-    # capacity 9 over 11 rows; the selected ordinal 1 anchors the body at the top
-    # and following context fills downward to capacity (ordinals 1..9).
+    # capacity 9 over 11 rows at the top of the list: the window is ordinals 1..9.
     assert [m.ordinal for m in select_body_rows(state)] == [1, 2, 3, 4, 5, 6, 7, 8, 9]
 
+    # Scrolled down by two, the window slides to ordinals 3..11; the selected row
+    # cursor moves within these rows, it does not re-anchor the window (spec §8.3).
+    scrolled = replace(state, selection=replace(state.selection, scroll_offset=2))
+    assert [m.ordinal for m in select_body_rows(scrolled)] == [3, 4, 5, 6, 7, 8, 9, 10, 11]
 
-def test_select_body_rows_never_backfills_above_the_anchor():
+
+def test_select_body_rows_keeps_the_selected_row_within_the_window():
     from dataclasses import replace
 
     from tests.fixtures.storyboard import make_config, make_mappings
@@ -430,10 +436,11 @@ def test_select_body_rows_never_backfills_above_the_anchor():
     from mapping_resolution_tui.state import SelectionState
 
     state = make_initial_state(make_config(), make_mappings(), frame_height=15)
-    # The last row selected: anchored allocation renders only ordinal 11 and does
-    # not backfill the preceding rows above the anchor (spec §8.2).
-    state = replace(state, selection=SelectionState(selected_ordinal=11, scroll_offset=0))
-    assert [m.ordinal for m in select_body_rows(state)] == [11]
+    # The last row selected with the window scrolled to show it: the window is the
+    # scrollOffset slice (ordinals 3..11) and the selected row sits at its bottom,
+    # rather than being pinned to the top of the body.
+    state = replace(state, selection=SelectionState(selected_ordinal=11, scroll_offset=2))
+    assert [m.ordinal for m in select_body_rows(state)] == [3, 4, 5, 6, 7, 8, 9, 10, 11]
 
 
 def test_select_body_rows_empty_when_no_rows_match():

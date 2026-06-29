@@ -356,6 +356,37 @@ def test_move_selection_traverses_only_filtered_rows(state):
     assert state.selection.selected_ordinal == 10
 
 
+def test_move_selection_keeps_window_fixed_until_the_cursor_reaches_an_edge(state):
+    # capacity 9 over 11 rows: stepping down within the first page moves the cursor
+    # but does not scroll the window (the row cursor moves between visible rows).
+    for _ in range(8):
+        state = reduce(state, MoveSelectionDown())
+    assert state.selection.selected_ordinal == 9
+    assert state.selection.scroll_offset == 0  # window still rows 1..9
+    # The next step pushes the cursor past the bottom edge, so the window scrolls
+    # by exactly one row to keep the selection visible.
+    state = reduce(state, MoveSelectionDown())
+    assert state.selection.selected_ordinal == 10
+    assert state.selection.scroll_offset == 1  # window rows 2..10
+
+
+def test_move_selection_up_scrolls_the_window_only_at_the_top_edge(state):
+    # Drive to the last row (window scrolled to rows 3..11), then step back up.
+    for _ in range(11):
+        state = reduce(state, MoveSelectionDown())
+    assert state.selection.selected_ordinal == 11
+    assert state.selection.scroll_offset == 2
+    # Moving up within the visible window keeps the window fixed at rows 3..11.
+    for _ in range(8):
+        state = reduce(state, MoveSelectionUp())
+    assert state.selection.selected_ordinal == 3
+    assert state.selection.scroll_offset == 2
+    # The next step crosses the top edge, scrolling the window up by one row.
+    state = reduce(state, MoveSelectionUp())
+    assert state.selection.selected_ordinal == 2
+    assert state.selection.scroll_offset == 1
+
+
 def test_move_selection_is_noop_when_no_rows_are_visible(state):
     state = reduce(state, InsertCharacter("z"))  # matches nothing
     assert select_visible_rows(state) == []

@@ -178,16 +178,31 @@ def _clamp_selection(state: AppState) -> AppState:
 
 
 def _clamp_scroll(state: AppState) -> AppState:
-    """Clamp ``selection.scroll_offset`` to ``[0, max(0, len(visible) - capacity)]``.
+    """Clamp ``selection.scroll_offset`` and keep the selected row in view.
 
-    Spec §3.4: ``scrollOffset = clamp(scrollOffset, 0, max(0, visibleRows.length -
-    bodyCapacity))``. A filter that shrinks the visible list must never leave the
-    scroll window pointing past the end of it.
+    ``scrollOffset`` is first clamped to ``[0, max(0, len(visible) -
+    bodyCapacity)]`` (spec §3.4) so the window never points past the end of the
+    list, then nudged the minimum amount needed to keep the selected row inside
+    the ``[scrollOffset, scrollOffset + bodyCapacity)`` viewport window (spec
+    §8.3). The row cursor therefore moves within the rendered rows and the window
+    only scrolls when the selection reaches a viewport edge.
     """
     visible = select_visible_rows(state)
     capacity = select_body_capacity(state.terminal.height)
-    max_offset = max(0, len(visible) - capacity)
-    new_offset = max(0, min(state.selection.scroll_offset, max_offset))
+    if not visible or capacity <= 0:
+        new_offset = 0
+    else:
+        max_offset = max(0, len(visible) - capacity)
+        offset = max(0, min(state.selection.scroll_offset, max_offset))
+        selected = state.selection.selected_ordinal
+        ordinals = [m.ordinal for m in visible]
+        if selected in ordinals:
+            index = ordinals.index(selected)
+            if index < offset:
+                offset = index
+            elif index >= offset + capacity:
+                offset = min(index - capacity + 1, max_offset)
+        new_offset = offset
     if new_offset == state.selection.scroll_offset:
         return state
     return replace(state, selection=replace(state.selection, scroll_offset=new_offset))
@@ -198,7 +213,9 @@ def _move_selection(state: AppState, delta: int) -> AppState:
 
     Movement is clamped at the first and last visible row; with no visible rows
     or at a clamped end the state is returned unchanged so the loop can treat it
-    as a no-op transition.
+    as a no-op transition. After moving, ``scrollOffset`` is adjusted only enough
+    to keep the newly selected row visible, so the row cursor moves between the
+    rendered rows rather than scrolling the list under a fixed cursor.
     """
     visible = select_visible_rows(state)
     if not visible:
@@ -209,12 +226,13 @@ def _move_selection(state: AppState, delta: int) -> AppState:
     except ValueError:
         index = 0
     new_index = max(0, min(index + delta, len(ordinals) - 1))
-    new_ordinal = ordinals[new_index]
-    if new_ordinal == state.selection.selected_ordinal:
+    if new_index == index:
         return state
-    return replace(
-        state, selection=replace(state.selection, selected_ordinal=new_ordinal)
+    moved = replace(
+        state,
+        selection=replace(state.selection, selected_ordinal=ordinals[new_index]),
     )
+    return _clamp_scroll(moved)
 
 
 def _page_selection(state: AppState, direction: int) -> AppState:

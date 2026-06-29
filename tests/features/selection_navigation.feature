@@ -45,6 +45,14 @@ Feature: Selection clamping, browsing navigation, and empty results
     When the reviewer presses up arrow
     Then the selected ordinal is 1
 
+  Scenario: Arrow keys move the cursor between rows without scrolling the list
+    When the reviewer presses down arrow
+    Then the selected ordinal is 2
+    And the scroll offset is 0
+    And the rendered body still shows ordinal 1
+    And the rendered body still shows ordinal 9
+    And the row cursor is on ordinal 2
+
   Scenario: ctrl+n and ctrl+p move the selection down and up
     When the reviewer presses "ctrl+n"
     Then the selected ordinal is 2

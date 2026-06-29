@@ -168,3 +168,16 @@ def assert_selected_row_visible(ctx):
     assert len(cursor_rows) == 1
     fields = cursor_rows[0].split()
     assert fields[1] == str(selected)
+
+
+@then(parsers.parse("the rendered body still shows ordinal {ordinal:d}"))
+def assert_body_shows_ordinal(ctx, ordinal):
+    assert ordinal in {m.ordinal for m in select_body_rows(ctx.state)}
+
+
+@then(parsers.parse("the row cursor is on ordinal {ordinal:d}"))
+def assert_row_cursor_on_ordinal(ctx, ordinal):
+    lines = render_lines(ctx.state)
+    cursor_rows = [strip_ansi(line) for line in lines if strip_ansi(line).startswith("▸")]
+    assert len(cursor_rows) == 1
+    assert cursor_rows[0].split()[1] == str(ordinal)

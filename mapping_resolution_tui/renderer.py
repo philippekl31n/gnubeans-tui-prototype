@@ -119,8 +119,9 @@ def render_lines(state: AppState) -> list[str]:
     table_header = f"    #   {target_label}{padding}{source_label}"
 
     # ── body rows ─────────────────────────────────────────────────────────────
-    # Anchored body allocation (§8.2) keeps the selected row visible; the
-    # selector output is authoritative for which rows render.
+    # The body is the scrollOffset window over the visible rows; the reducer keeps
+    # the selected row inside it, so the row cursor moves between the rendered
+    # rows rather than scrolling the list under a fixed cursor (spec §8.3).
     visible = select_visible_rows(state)
     shown = select_body_rows(state)
 

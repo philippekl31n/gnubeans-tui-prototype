@@ -198,26 +198,19 @@ def select_visible_rows(state: "AppState") -> list[Mapping]:
 
 
 def select_body_rows(state: "AppState") -> list[Mapping]:
-    """Return the mappings to render in the table body (spec §8.2).
+    """Return the mappings to render in the table body.
 
-    In ``BROWSING`` with a selected row, the selected mapping anchors the body at
-    the top and following context fills downward up to ``bodyCapacity``; preceding
-    rows are never backfilled above the anchor, so a selection near the end of the
-    list renders fewer than ``bodyCapacity`` rows. Without an anchor (e.g. an
-    empty result) or in unanchored modes the body is a plain ``scrollOffset``
-    window. The renderer treats this output as authoritative for rendering.
+    The body is the ``scrollOffset`` window over ``visibleRows`` —
+    ``visibleRows[scrollOffset : scrollOffset + bodyCapacity]`` — so the row
+    cursor moves *within* the rendered rows and the window only scrolls when the
+    selection reaches a viewport edge. The reducer keeps ``scrollOffset`` in step
+    with the selection (spec §8.3) so the selected row is always inside this
+    window; the renderer treats this output as authoritative.
     """
     visible = select_visible_rows(state)
     capacity = select_body_capacity(state.terminal.height)
     if capacity <= 0 or not visible:
         return []
-    if state.mode == Mode.BROWSING and state.selection.selected_ordinal is not None:
-        ordinals = [m.ordinal for m in visible]
-        try:
-            anchor_index = ordinals.index(state.selection.selected_ordinal)
-        except ValueError:
-            anchor_index = 0
-        return visible[anchor_index : anchor_index + capacity]
     scroll = state.selection.scroll_offset
     return visible[scroll : scroll + capacity]
 
