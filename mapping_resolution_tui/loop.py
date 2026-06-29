@@ -150,7 +150,18 @@ def run(
             # FR30: unsupported keys mutate nothing and trigger no redraw.
             continue
 
-        state = reduce(state, action)
+        if isinstance(action, Redraw):
+            # ctrl+l re-renders the current state without mutating it; this is
+            # the one repaint that is never skipped by the no-op check below.
+            render(render_lines(state))
+            continue
+
+        new_state = reduce(state, action)
+        if new_state is state:
+            # A recognised action that changed nothing (the reducer returned the
+            # same object) needs no repaint — state and output stay unchanged.
+            continue
+        state = new_state
         render(render_lines(state))
 
     return state.mappings

@@ -173,6 +173,21 @@ def test_ctrl_l_rerenders_only_without_mutating_state():
     assert frames[-1] == frames[-2]  # redraw produced an identical frame
 
 
+def test_recognised_noop_action_does_not_rerender():
+    # Esc clears the filter, but on an already-empty filter that mutation is a
+    # no-op (the reducer returns the same state object), so the loop must not
+    # repaint — only the initial frame is produced.
+    _, frames = run_keys(["esc"])
+    assert len(frames) == 1
+
+
+def test_redundant_clear_after_typing_still_rerenders_once_then_skips():
+    # First esc clears the typed text (a real change → repaint); a second esc is
+    # a no-op on the now-empty filter and produces no further frame.
+    _, frames = run_keys(["a", "esc", "esc"])
+    assert len(frames) == 3  # initial + insert + first (effective) clear
+
+
 def test_quit_key_exits_cleanly_with_none():
     result, frames = run_keys(["a", "ctrl+c", "b"])
     assert result is None

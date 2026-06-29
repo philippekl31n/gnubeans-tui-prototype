@@ -188,11 +188,15 @@ def _reduce_delete_char(state: AppState, action: DeleteChar) -> AppState:
 
 def _reduce_kill_line(state: AppState, action: KillLine) -> AppState:
     cursor = state.filter.cursor
+    if cursor >= len(state.filter.raw):
+        return state  # no-op: nothing after the cursor to kill
     return _with_filter(state, raw=state.filter.raw[:cursor], cursor=cursor)
 
 
 def _reduce_unix_line_discard(state: AppState, action: UnixLineDiscard) -> AppState:
     cursor = state.filter.cursor
+    if cursor == 0:
+        return state  # no-op: nothing before the cursor to discard
     return _with_filter(state, raw=state.filter.raw[cursor:], cursor=0)
 
 
@@ -200,6 +204,8 @@ def _reduce_kill_word(state: AppState, action: KillWord) -> AppState:
     cursor = state.filter.cursor
     raw = state.filter.raw
     end = _forward_word_end(raw, cursor)
+    if end == cursor:
+        return state  # no-op: no word ahead of the cursor
     new_raw = raw[:cursor] + raw[end:]
     return _with_filter(state, raw=new_raw, cursor=cursor)
 
@@ -208,6 +214,8 @@ def _reduce_backward_kill_word(state: AppState, action: BackwardKillWord) -> App
     cursor = state.filter.cursor
     raw = state.filter.raw
     start = _backward_word_start(raw, cursor)
+    if start == cursor:
+        return state  # no-op: no word behind the cursor
     new_raw = raw[:start] + raw[cursor:]
     return _with_filter(state, raw=new_raw, cursor=start)
 
@@ -217,6 +225,8 @@ def _reduce_redraw(state: AppState, action: Redraw) -> AppState:
 
 
 def _reduce_clear_filter(state: AppState, action: ClearFilter) -> AppState:
+    if state.filter.raw == "":
+        return state  # no-op: filter already empty (cursor is clamped to 0)
     return _with_filter(state, raw="", cursor=0)
 
 

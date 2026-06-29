@@ -279,3 +279,38 @@ def test_clear_filter_resets_raw_and_cursor(state):
     assert s.filter.text == ""
     assert s.filter.cursor == 0
     assert visible_ordinals(s) == list(range(1, 12))
+
+
+# ── identity-preserving no-ops (a true no-op returns the same state object) ───
+# The loop uses object identity to decide whether a repaint is needed, so a
+# mutation that changes nothing must return the input state unchanged.
+
+def test_clear_filter_on_empty_is_a_noop(state):
+    same = reduce(state, ClearFilter())
+    assert same is state
+
+
+def test_kill_line_at_end_is_a_noop(state):
+    s = type_text(state, "ab")  # cursor at end
+    same = reduce(s, KillLine())
+    assert same is s
+
+
+def test_unix_line_discard_at_start_is_a_noop(state):
+    s = type_text(state, "ab")
+    s = reduce(s, MoveCursorHome())  # cursor at 0
+    same = reduce(s, UnixLineDiscard())
+    assert same is s
+
+
+def test_kill_word_with_no_word_ahead_is_a_noop(state):
+    s = type_text(state, "ab")  # cursor at end; nothing to kill forward
+    same = reduce(s, KillWord())
+    assert same is s
+
+
+def test_backward_kill_word_with_no_word_behind_is_a_noop(state):
+    s = type_text(state, "ab")
+    s = reduce(s, MoveCursorHome())  # cursor at 0; nothing to kill backward
+    same = reduce(s, BackwardKillWord())
+    assert same is s
