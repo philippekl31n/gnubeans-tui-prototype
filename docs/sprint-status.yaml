@@ -1,27 +1,7 @@
 # sprint-status.yaml
 # Epic 2 — Browse, Filter, and Navigate Mappings
 # Drop into: docs/sprint-status.yaml
-# Updated: 2026-06-26
-#
-# NOTE (2026-06-25): aligned with the reworked render layout contract
-# (tui_architecture_spec.md S6.1/S6.2/S6.7, S8). The frame is a variable-height
-# inline render, not a fixed 15x75 grid: it ends at the footer with no trailing
-# blank padding, and scrolling engages only when content+chrome overflows the
-# host terminal. Golden snapshots for the under-full browsing frames referenced
-# below (frame_2, frame_3, frame_8, frame_13, frame_esc_clear) MUST be captured
-# against this contract.
-#
-# NOTE (2026-06-26): aligned with the bang-autocomplete filter contract
-# (tui_architecture_spec.md S3.2/S3.3/S4.2/S5/S5.1/S6.5/S6.6/S10). filter.raw is
-# now the single editable buffer and the source of truth; collisionOnly (raw
-# begins with "!") and text (raw minus a single leading "!") are DERIVED after
-# every mutation. There is no collisionOnly toggle: "!" is an ordinary editable
-# character, and Tab / ctrl+i autocompletes a leading "!" into filter.raw only
-# when the "Tab to view collisions" ghost is visible (filter.raw empty with at
-# least one unresolved collision); it is otherwise a no-op (a second Tab does
-# NOT clear the "!"). Backspace at cursor 0 is a no-op; the leading "!" deletes
-# like any other character. filter.cursor indexes filter.raw, including any
-# leading "!".
+# Updated: 2026-06-29
 
 schema_version: 1
 
@@ -40,24 +20,29 @@ tasks:
   - key: TASK-001
     type: task
     title: Wire action dispatch infrastructure
-    status: todo
-    assignee: null
+    status: in_progress
+    assignee: philippekl31n
     depends_on: []
     files:
       - mapping_resolution_tui/actions.py
       - mapping_resolution_tui/reducer.py
       - mapping_resolution_tui/loop.py
+      - mapping_resolution_tui/renderer.py  # source column format fix
     summary: >
       Establish the Redux-style dispatch plumbing that all Epic 2 stories
       depend on. Currently actions.py is an empty stub, reducer.py only
       contains make_initial_state(), and loop.py prints a static frame
       with no input handling.
+
+      Also fixes a pre-existing renderer defect: the browsing row source
+      column currently outputs only original_value, but the storyboard
+      specifies label: "original" → "sanitized" format. This must be
+      corrected and frame_1a regenerated before any subsequent golden
+      frames are committed.
     acceptance_criteria:
       - "actions.py defines action dataclasses for all browsing-mode filter
-        operations: character insertion (including a literal !), cursor
-        movement (left/right), Tab-autocomplete of a leading ! collision
-        metafilter (guarded by the ghost), backspace delete, and filter clear
-        (Esc). There is no collision-only toggle action"
+        operations: character insertion, cursor movement (left/right),
+        collision-only toggle, and filter clear"
       - "reducer.py exposes a reduce(state: AppState, action) -> AppState
         dispatch function that delegates to per-action handlers and returns
         a new immutable state"
@@ -67,15 +52,28 @@ tasks:
       - "Unsupported keys and unrecognised control sequences leave state and
         rendered output unchanged (FR30)"
       - "Loop exits cleanly on the configured quit key"
+      - "Browsing row source column renders 'label: "original" → "sanitized"'
+        when original_value differs from sanitized_value (e.g.
+        'cmdty_id: "100-F" → "C100-F"'), and 'label: "value"' when they are
+        the same (e.g. 'cmdty_id: "GOOGL"'), matching the storyboard
+        format exactly"
+      - "frame_1a golden snapshot regenerated via --update-snapshots to
+        reflect the corrected source column (rows 2 and 4 change:
+        AT&T → AT-T and 100-F → C100-F); test passes with new snapshot"
     implementation_notes:
-      - "All state mutations must return new frozen dataclasses — no in-place
-        mutation"
-      - "Readline alias normalisation (e.g. ctrl+b → cursor-left) belongs in
-        the input layer before the action is constructed (FR29)"
-      - "FilterState.raw is the single editable buffer and the source of
-        truth; collision_only (raw begins with !) and text (raw minus a single
-        leading !) are DERIVED from raw after every mutation. select_filter_prompt
-        renders filter.raw literally, including any leading !"
+      - "All state mutations must return new frozen dataclasses — no
+        in-place mutation"
+      - "Readline alias normalisation (e.g. ctrl+b → cursor-left) belongs
+        in the input layer before the action is constructed (FR29)"
+      - "FilterState.raw must be kept in sync with collision_only + text on
+        every mutation; select_filter_prompt already reads it for the
+        leading ! rendering"
+      - "renderer.py currently uses select_default_source(mapping)
+        .original_value directly — update to use the source label field
+        plus both values via select_source_effective_value() to produce
+        the arrow format; that selector already exists in selectors.py"
+      - "Regenerate frame_1a with --update-snapshots after the renderer
+        fix before committing any new golden frames"
       - "This task is a prerequisite for all three Epic 2 stories; implement
         first or in parallel with writing the BDD step stubs"
 

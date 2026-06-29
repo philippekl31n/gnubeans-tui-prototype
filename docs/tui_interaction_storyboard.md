@@ -20,8 +20,8 @@ Below are the exact visual states the TUI must accurately render across its life
    5   GOOGL                      cmdty_id: "GOOGL"
    6   MSFT                       cmdty_id: "MSFT"
    7   NVDA                       cmdty_id: "NVDA"
-   8   SPY                        cmdty_id: "SPY"
-   9   QQQ                        cmdty_id: "QQQ"
+   8   QQQ                        cmdty_id: "QQQ"
+   9   SPY                        cmdty_id: "SPY"
 
   shift+↑↓ pageup/dn  ·  ↵ edit selected
 ```
@@ -45,8 +45,8 @@ Below are the exact visual states the TUI must accurately render across its life
    5   GOOGL                      cmdty_id: "GOOGL"
    6   MSFT                       cmdty_id: "MSFT"
    7   NVDA                       cmdty_id: "NVDA"
-   8   SPY                        cmdty_id: "SPY"
-   9   QQQ                        cmdty_id: "QQQ"
+   8   QQQ                        cmdty_id: "QQQ"
+   9   SPY                        cmdty_id: "SPY"
 
   ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ edit mappings
 ```
@@ -129,8 +129,8 @@ Below are the exact visual states the TUI must accurately render across its life
    5   GOOGL                      cmdty_id: "GOOGL"
    6   MSFT                       cmdty_id: "MSFT"
    7   NVDA                       cmdty_id: "NVDA"
-   8   SPY                        cmdty_id: "SPY"
-   9   QQQ                        cmdty_id: "QQQ"
+   8   QQQ                        cmdty_id: "QQQ"
+   9   SPY                        cmdty_id: "SPY"
 
   ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ confirm
 ```
@@ -151,8 +151,8 @@ Below are the exact visual states the TUI must accurately render across its life
    5   GOOGL                      cmdty_id: "GOOGL"
    6   MSFT                       cmdty_id: "MSFT"
    7   NVDA                       cmdty_id: "NVDA"
-   8   SPY                        cmdty_id: "SPY"
-   9   QQQ                        cmdty_id: "QQQ"
+   8   QQQ                        cmdty_id: "QQQ"
+   9   SPY                        cmdty_id: "SPY"
   10   VTSAX                      cmdty_id: "VTSAX"
 
   ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ edit mappings
@@ -334,8 +334,8 @@ Below are the exact visual states the TUI must accurately render across its life
    5   GOOGL                      cmdty_id: "GOOGL"
    6   MSFT                       cmdty_id: "MSFT"
    7   NVDA                       cmdty_id: "NVDA"
-   8   SPY                        cmdty_id: "SPY"
-   9   QQQ                        cmdty_id: "QQQ"
+   8   QQQ                        cmdty_id: "QQQ"
+   9   SPY                        cmdty_id: "SPY"
 
   ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ edit mappings
 ```
