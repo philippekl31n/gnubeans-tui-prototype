@@ -24,6 +24,10 @@ from mapping_resolution_tui.actions import (
     MoveCursorHome,
     MoveCursorLeft,
     MoveCursorRight,
+    MoveSelectionDown,
+    MoveSelectionUp,
+    PageDown,
+    PageUp,
 )
 from mapping_resolution_tui.reducer import make_initial_state, reduce
 from mapping_resolution_tui.selectors import parse_filter, select_visible_rows
@@ -309,6 +313,104 @@ def test_empty_result_clears_selection_then_clear_restores_first_row(state):
     assert state.selection.selected_ordinal is None
     state = reduce(state, ClearFilter())
     assert state.selection.selected_ordinal == 1
+
+
+def test_metafilter_then_text_3_clamps_selection_to_ordinal_3(state):
+    # Frame 3: "!3" narrows the collision pair to ordinal 3, clamping selection.
+    state = reduce(state, InsertCharacter("!"))
+    assert state.selection.selected_ordinal == 2
+    state = reduce(state, InsertCharacter("3"))
+    assert [m.ordinal for m in select_visible_rows(state)] == [3]
+    assert state.selection.selected_ordinal == 3
+
+
+# ── browsing navigation: row movement (spec §8.3) ──────────────────────────────
+
+def test_move_selection_down_advances_to_next_visible_row(state):
+    assert reduce(state, MoveSelectionDown()).selection.selected_ordinal == 2
+
+
+def test_move_selection_up_at_first_row_is_noop(state):
+    assert reduce(state, MoveSelectionUp()) is state
+
+
+def test_move_selection_up_returns_to_the_previous_row(state):
+    down = reduce(state, MoveSelectionDown())
+    assert reduce(down, MoveSelectionUp()).selection.selected_ordinal == 1
+
+
+def test_move_selection_down_clamps_at_the_last_visible_row(state):
+    cur = state
+    for _ in range(20):
+        cur = reduce(cur, MoveSelectionDown())
+    assert cur.selection.selected_ordinal == 11
+    assert reduce(cur, MoveSelectionDown()) is cur
+
+
+def test_move_selection_traverses_only_filtered_rows(state):
+    # Filter "1" -> visible ordinals 1, 4, 10, 11; movement skips hidden rows.
+    state = reduce(state, InsertCharacter("1"))
+    state = reduce(state, MoveSelectionDown())
+    assert state.selection.selected_ordinal == 4
+    state = reduce(state, MoveSelectionDown())
+    assert state.selection.selected_ordinal == 10
+
+
+def test_move_selection_is_noop_when_no_rows_are_visible(state):
+    state = reduce(state, InsertCharacter("z"))  # matches nothing
+    assert select_visible_rows(state) == []
+    assert reduce(state, MoveSelectionDown()) is state
+    assert reduce(state, MoveSelectionUp()) is state
+
+
+# ── browsing navigation: page movement (spec §8.5) ──────────────────────────────
+
+def test_page_down_jumps_to_max_offset_and_selects_first_visible(state):
+    # capacity 9 over 11 visible rows -> maxOffset 2; selection re-anchors to the
+    # row that becomes the first visible row after paging.
+    paged = reduce(state, PageDown())
+    assert paged.selection.scroll_offset == 2
+    assert paged.selection.selected_ordinal == 3
+
+
+def test_page_down_at_max_offset_is_noop(state):
+    paged = reduce(state, PageDown())
+    assert reduce(paged, PageDown()) is paged
+
+
+def test_page_up_clamps_to_zero_and_selects_first_visible(state):
+    paged = reduce(state, PageDown())
+    up = reduce(paged, PageUp())
+    assert up.selection.scroll_offset == 0
+    assert up.selection.selected_ordinal == 1
+
+
+def test_page_up_at_the_top_is_noop(state):
+    assert reduce(state, PageUp()) is state
+
+
+def test_page_movement_is_noop_when_no_rows_are_visible(state):
+    state = reduce(state, InsertCharacter("z"))
+    assert reduce(state, PageDown()) is state
+    assert reduce(state, PageUp()) is state
+
+
+# ── scroll clamp after filter mutation (spec §3.4) ──────────────────────────────
+
+def test_filter_mutation_clamps_scroll_offset_into_range(state):
+    state = reduce(state, PageDown())
+    assert state.selection.scroll_offset == 2
+    # The collision pair (2 rows) fits within capacity, so maxOffset is 0 and the
+    # scroll window must clamp back to the top.
+    narrowed = reduce(state, InsertCharacter("!"))
+    assert narrowed.selection.scroll_offset == 0
+
+
+def test_empty_result_keeps_scroll_offset_clamped_to_zero(state):
+    state = reduce(state, PageDown())
+    narrowed = reduce(state, InsertCharacter("z"))  # empty result
+    assert select_visible_rows(narrowed) == []
+    assert narrowed.selection.scroll_offset == 0
 
 
 # ── immutability and dispatch contract ─────────────────────────────────────────

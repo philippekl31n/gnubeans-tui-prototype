@@ -117,6 +117,65 @@ def frame_8_screen(frame_8_lines):
 
 
 @pytest.fixture
+def frame_3_lines():
+    """Frame 3: collision metafilter plus the text filter ``3``.
+
+    From the initial browsing state the reviewer presses Tab (autocompleting the
+    leading ``!``) and then types ``3``: ``filter.raw='!3'``, ``collision_only``
+    derives True and ``text='3'``. The only collision row whose ordinal/token
+    matches ``3`` is ordinal 3, so the visible list narrows to it and the
+    selection clamps from ordinal 2 to ordinal 3 (spec §3.4 / §10.1 frame 3).
+    """
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.actions import AutocompleteBang, InsertCharacter
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    state = reduce(state, AutocompleteBang())
+    state = reduce(state, InsertCharacter("3"))
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_3_screen(frame_3_lines):
+    return make_pyte_screen(frame_3_lines)
+
+
+@pytest.fixture
+def frame_13_lines():
+    """Frame 13: a text filter that matches no rows (empty result).
+
+    The AT-T collision (ordinal 3) is resolved to 'ATT' as the storyboard does
+    before frame 13, then the reviewer types '12'. No ordinal or target token
+    contains '12', so ``visibleRows`` is empty, ``selectedOrdinal`` is None, and
+    the body renders a single blank row with the error footer (spec §3.4 / §6.6;
+    storyboard frame 13).
+    """
+    from dataclasses import replace
+
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.actions import InsertCharacter
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    mappings = [
+        replace(m, target_value="ATT") if m.ordinal == 3 else m
+        for m in state.mappings
+    ]
+    state = replace(state, mappings=mappings)
+    state = reduce(state, InsertCharacter("1"))
+    state = reduce(state, InsertCharacter("2"))
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_13_screen(frame_13_lines):
+    return make_pyte_screen(frame_13_lines)
+
+
+@pytest.fixture
 def assert_snapshot(update_snapshots):
     def _check(screen: pyte.Screen, snapshot_path: Path):
         actual = "\n".join(row.rstrip() for row in screen.display) + "\n"

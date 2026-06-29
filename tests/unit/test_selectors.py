@@ -409,6 +409,69 @@ def test_collision_ghost_visible_only_with_empty_filter_and_collisions():
     assert select_collision_ghost_visible(resolved) is False
 
 
+def test_select_body_rows_anchors_selection_high_and_fills_below():
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.reducer import make_initial_state
+    from mapping_resolution_tui.selectors import select_body_rows
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+
+    # capacity 9 over 11 rows; the selected ordinal 1 anchors the body at the top
+    # and following context fills downward to capacity (ordinals 1..9).
+    assert [m.ordinal for m in select_body_rows(state)] == [1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+
+def test_select_body_rows_never_backfills_above_the_anchor():
+    from dataclasses import replace
+
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.reducer import make_initial_state
+    from mapping_resolution_tui.selectors import select_body_rows
+    from mapping_resolution_tui.state import SelectionState
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    # The last row selected: anchored allocation renders only ordinal 11 and does
+    # not backfill the preceding rows above the anchor (spec §8.2).
+    state = replace(state, selection=SelectionState(selected_ordinal=11, scroll_offset=0))
+    assert [m.ordinal for m in select_body_rows(state)] == [11]
+
+
+def test_select_body_rows_empty_when_no_rows_match():
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.actions import InsertCharacter
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.selectors import select_body_rows, select_visible_rows
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    state = reduce(state, InsertCharacter("z"))  # matches nothing
+    assert select_visible_rows(state) == []
+    assert select_body_rows(state) == []
+
+
+def test_select_footer_content_emits_error_variant_for_empty_result():
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.actions import InsertCharacter
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.selectors import select_footer_content
+    from mapping_resolution_tui.state import FooterHint
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    state = reduce(state, InsertCharacter("z"))  # empty result
+    footer = select_footer_content(state)
+    assert footer.error == "no matching rows"
+    assert footer.hints == (FooterHint.CLEAR_FILTER,)
+
+
+def test_select_footer_content_has_no_error_when_rows_match():
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.reducer import make_initial_state
+    from mapping_resolution_tui.selectors import select_footer_content
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    footer = select_footer_content(state)
+    assert footer.error is None
+
+
 def test_collision_selectors_are_repeatable_and_do_not_store_state_on_mappings():
     from mapping_resolution_tui.selectors import (
         select_collision_groups,

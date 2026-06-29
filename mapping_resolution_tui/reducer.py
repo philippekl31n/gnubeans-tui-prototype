@@ -23,9 +23,14 @@ from mapping_resolution_tui.actions import (
     MoveCursorHome,
     MoveCursorLeft,
     MoveCursorRight,
+    MoveSelectionDown,
+    MoveSelectionUp,
+    PageDown,
+    PageUp,
 )
 from mapping_resolution_tui.selectors import (
     parse_filter,
+    select_body_capacity,
     select_collision_ghost_visible,
     select_visible_rows,
     sort_mappings_for_initial_display,
@@ -117,6 +122,14 @@ def reduce(state: AppState, action: Action) -> AppState:
         return _clear_filter(state)
     if isinstance(action, AutocompleteBang):
         return _autocomplete_bang(state)
+    if isinstance(action, MoveSelectionUp):
+        return _move_selection(state, -1)
+    if isinstance(action, MoveSelectionDown):
+        return _move_selection(state, +1)
+    if isinstance(action, PageUp):
+        return _page_selection(state, -1)
+    if isinstance(action, PageDown):
+        return _page_selection(state, +1)
     return state
 
 
@@ -130,8 +143,8 @@ def _with_raw(state: AppState, raw: str, cursor: int) -> AppState:
 
     ``filter.raw`` is the single editable buffer (spec §3.3): ``cursor`` is
     clamped to ``[0, len(raw)]`` and ``collision_only`` / ``text`` are re-derived
-    from ``raw`` on every mutation. Selection is then clamped so it never points
-    at a row the new filter hides (spec §3.4 / §5.1).
+    from ``raw`` on every mutation. Selection and scroll are then clamped so they
+    never point at a row the new filter hides (spec §3.4 / §5.1).
     """
     cursor = max(0, min(cursor, len(raw)))
     collision_only, text = parse_filter(raw)
@@ -141,7 +154,7 @@ def _with_raw(state: AppState, raw: str, cursor: int) -> AppState:
         text=text,
         cursor=cursor,
     )
-    return _clamp_selection(replace(state, filter=new_filter))
+    return _clamp_scroll(_clamp_selection(replace(state, filter=new_filter)))
 
 
 def _clamp_selection(state: AppState) -> AppState:
@@ -162,6 +175,72 @@ def _clamp_selection(state: AppState) -> AppState:
     if selected == state.selection.selected_ordinal:
         return state
     return replace(state, selection=replace(state.selection, selected_ordinal=selected))
+
+
+def _clamp_scroll(state: AppState) -> AppState:
+    """Clamp ``selection.scroll_offset`` to ``[0, max(0, len(visible) - capacity)]``.
+
+    Spec §3.4: ``scrollOffset = clamp(scrollOffset, 0, max(0, visibleRows.length -
+    bodyCapacity))``. A filter that shrinks the visible list must never leave the
+    scroll window pointing past the end of it.
+    """
+    visible = select_visible_rows(state)
+    capacity = select_body_capacity(state.terminal.height)
+    max_offset = max(0, len(visible) - capacity)
+    new_offset = max(0, min(state.selection.scroll_offset, max_offset))
+    if new_offset == state.selection.scroll_offset:
+        return state
+    return replace(state, selection=replace(state.selection, scroll_offset=new_offset))
+
+
+def _move_selection(state: AppState, delta: int) -> AppState:
+    """Move ``selected_ordinal`` by ``delta`` rows within ``visibleRows`` (§8.3).
+
+    Movement is clamped at the first and last visible row; with no visible rows
+    or at a clamped end the state is returned unchanged so the loop can treat it
+    as a no-op transition.
+    """
+    visible = select_visible_rows(state)
+    if not visible:
+        return state
+    ordinals = [m.ordinal for m in visible]
+    try:
+        index = ordinals.index(state.selection.selected_ordinal)
+    except ValueError:
+        index = 0
+    new_index = max(0, min(index + delta, len(ordinals) - 1))
+    new_ordinal = ordinals[new_index]
+    if new_ordinal == state.selection.selected_ordinal:
+        return state
+    return replace(
+        state, selection=replace(state.selection, selected_ordinal=new_ordinal)
+    )
+
+
+def _page_selection(state: AppState, direction: int) -> AppState:
+    """Page ``scrollOffset`` by one body capacity and re-anchor selection (§8.5).
+
+    ``PgDn`` clamps ``scrollOffset`` to ``maxOffset`` and ``PgUp`` clamps it to 0;
+    after paging the row at the new scroll offset becomes the selected (first
+    visible) row. A no-op when no rows are visible or nothing would change.
+    """
+    visible = select_visible_rows(state)
+    if not visible:
+        return state
+    capacity = select_body_capacity(state.terminal.height)
+    page_size = max(1, capacity)
+    max_offset = max(0, len(visible) - capacity)
+    if direction > 0:
+        new_offset = min(state.selection.scroll_offset + page_size, max_offset)
+    else:
+        new_offset = max(state.selection.scroll_offset - page_size, 0)
+    new_ordinal = visible[new_offset].ordinal
+    new_selection = SelectionState(
+        selected_ordinal=new_ordinal, scroll_offset=new_offset
+    )
+    if new_selection == state.selection:
+        return state
+    return replace(state, selection=new_selection)
 
 
 def _autocomplete_bang(state: AppState) -> AppState:

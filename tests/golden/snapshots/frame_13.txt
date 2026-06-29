@@ -1,0 +1,7 @@
+❯ Reviewing 11 commodity mappings. ctrl+s submit  ·  ctrl+c cancel
+  Filter: 12
+
+    #   Beancount Token           GnuCash Source
+
+
+  Error: no matching rows  ·  esc clear filter

@@ -197,6 +197,31 @@ def select_visible_rows(state: "AppState") -> list[Mapping]:
     return rows
 
 
+def select_body_rows(state: "AppState") -> list[Mapping]:
+    """Return the mappings to render in the table body (spec §8.2).
+
+    In ``BROWSING`` with a selected row, the selected mapping anchors the body at
+    the top and following context fills downward up to ``bodyCapacity``; preceding
+    rows are never backfilled above the anchor, so a selection near the end of the
+    list renders fewer than ``bodyCapacity`` rows. Without an anchor (e.g. an
+    empty result) or in unanchored modes the body is a plain ``scrollOffset``
+    window. The renderer treats this output as authoritative for rendering.
+    """
+    visible = select_visible_rows(state)
+    capacity = select_body_capacity(state.terminal.height)
+    if capacity <= 0 or not visible:
+        return []
+    if state.mode == Mode.BROWSING and state.selection.selected_ordinal is not None:
+        ordinals = [m.ordinal for m in visible]
+        try:
+            anchor_index = ordinals.index(state.selection.selected_ordinal)
+        except ValueError:
+            anchor_index = 0
+        return visible[anchor_index : anchor_index + capacity]
+    scroll = state.selection.scroll_offset
+    return visible[scroll : scroll + capacity]
+
+
 def select_filter_prompt(state: "AppState", unresolved_count: int) -> FilterPromptContent:
     return FilterPromptContent(
         filter_raw=state.filter.raw,
@@ -209,6 +234,13 @@ def select_filter_prompt(state: "AppState", unresolved_count: int) -> FilterProm
 
 def select_footer_content(state: "AppState") -> FooterContent:
     if state.mode == Mode.BROWSING:
+        # A non-empty filter that matches no rows replaces the navigation hints
+        # with the error variant (spec §6.6; storyboard frame 13).
+        if not select_visible_rows(state):
+            return FooterContent(
+                hints=(FooterHint.CLEAR_FILTER,),
+                error="no matching rows",
+            )
         hints: list[FooterHint] = [FooterHint.PAGE_SCROLL, FooterHint.EDIT_SELECTED]
         if state.filter.text or state.filter.collision_only:
             hints.append(FooterHint.CLEAR_FILTER)

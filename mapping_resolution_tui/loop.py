@@ -27,6 +27,10 @@ from mapping_resolution_tui.actions import (
     MoveCursorHome,
     MoveCursorLeft,
     MoveCursorRight,
+    MoveSelectionDown,
+    MoveSelectionUp,
+    PageDown,
+    PageUp,
 )
 from mapping_resolution_tui.config import QUIT_KEY
 from mapping_resolution_tui.reducer import make_initial_state, reduce
@@ -44,6 +48,8 @@ _CTRL_E = "\x05"  # end-of-line          -> cursor end
 _CTRL_F = "\x06"  # forward-char         -> cursor right
 _CTRL_H = "\x08"  # backward-delete-char -> backspace
 _CTRL_K = "\x0b"  # kill-line            -> delete to end of line
+_CTRL_N = "\x0e"  # next-history         -> move selection down
+_CTRL_P = "\x10"  # previous-history     -> move selection up
 _CTRL_U = "\x15"  # unix-line-discard    -> delete to start of line
 _CTRL_W = "\x17"  # unix-word-rubout     -> delete word backward
 _TAB = "\t"       # complete / ctrl+i    -> bang autocomplete (\x09)
@@ -65,6 +71,15 @@ _CLEAR_NAMES = frozenset({"KEY_ESCAPE"})
 # `Tab` / `ctrl+i` autocompletes a leading `!` collision metafilter; the reducer
 # no-ops unless the `Tab to view collisions` ghost is visible (spec §3.3 / §5.1).
 _TAB_NAMES = frozenset({"KEY_TAB"})
+# Browsing navigation. Plain arrows move one row; the page keys move one body
+# capacity. `Shift+↑/↓` (`KEY_SUP`/`KEY_SDOWN`) page like `PgUp`/`PgDn`, but when
+# the terminal cannot distinguish a shifted arrow it reports a plain `KEY_UP`/
+# `KEY_DOWN` and still moves exactly one row; `PgUp`/`PgDn` remain the reliable
+# page-movement keys (spec §5 / §5.1 / §8.3 / §8.5).
+_SELECT_UP_NAMES = frozenset({"KEY_UP"})
+_SELECT_DOWN_NAMES = frozenset({"KEY_DOWN"})
+_PAGE_UP_NAMES = frozenset({"KEY_PGUP", "KEY_SUP"})
+_PAGE_DOWN_NAMES = frozenset({"KEY_PGDOWN", "KEY_SDOWN"})
 
 
 def is_quit_key(key) -> bool:
@@ -100,6 +115,14 @@ def key_to_action(key) -> Action | None:
         return ClearFilter()
     if name in _TAB_NAMES:
         return AutocompleteBang()
+    if name in _SELECT_UP_NAMES:
+        return MoveSelectionUp()
+    if name in _SELECT_DOWN_NAMES:
+        return MoveSelectionDown()
+    if name in _PAGE_UP_NAMES:
+        return PageUp()
+    if name in _PAGE_DOWN_NAMES:
+        return PageDown()
 
     # Meta/Alt word operations (ESC-prefixed); checked before the lone ESC below.
     if text == _META_D:
@@ -122,6 +145,10 @@ def key_to_action(key) -> Action | None:
         return DeleteForward()
     if text == _CTRL_K:
         return KillToEnd()
+    if text == _CTRL_P:
+        return MoveSelectionUp()
+    if text == _CTRL_N:
+        return MoveSelectionDown()
     if text == _CTRL_U:
         return KillToStart()
     if text == _CTRL_W:

@@ -98,6 +98,42 @@ class AutocompleteBang:
     """
 
 
+@dataclass(frozen=True)
+class MoveSelectionUp:
+    """Move ``selection.selectedOrdinal`` to the previous visible row.
+
+    Dispatched by ``↑`` / ``ctrl+p`` in BROWSING. Movement is clamped at the
+    first visible row and is a no-op when no rows are visible (spec §8.3).
+    """
+
+
+@dataclass(frozen=True)
+class MoveSelectionDown:
+    """Move ``selection.selectedOrdinal`` to the next visible row.
+
+    Dispatched by ``↓`` / ``ctrl+n`` in BROWSING. Movement is clamped at the last
+    visible row and is a no-op when no rows are visible (spec §8.3).
+    """
+
+
+@dataclass(frozen=True)
+class PageUp:
+    """Page the browsing list up by one body capacity (``Shift+↑`` / ``PgUp``).
+
+    Sets ``scrollOffset = max(scrollOffset - pageSize, 0)`` and makes the row at
+    the new scroll offset the selected (first visible) row (spec §8.5).
+    """
+
+
+@dataclass(frozen=True)
+class PageDown:
+    """Page the browsing list down by one body capacity (``Shift+↓`` / ``PgDn``).
+
+    Sets ``scrollOffset = min(scrollOffset + pageSize, maxOffset)`` and makes the
+    row at the new scroll offset the selected (first visible) row (spec §8.5).
+    """
+
+
 Action = (
     InsertCharacter
     | MoveCursorLeft
@@ -112,4 +148,8 @@ Action = (
     | DeleteWordForward
     | ClearFilter
     | AutocompleteBang
+    | MoveSelectionUp
+    | MoveSelectionDown
+    | PageUp
+    | PageDown
 )

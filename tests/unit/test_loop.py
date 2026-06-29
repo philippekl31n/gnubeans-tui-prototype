@@ -19,6 +19,10 @@ from mapping_resolution_tui.actions import (
     MoveCursorHome,
     MoveCursorLeft,
     MoveCursorRight,
+    MoveSelectionDown,
+    MoveSelectionUp,
+    PageDown,
+    PageUp,
 )
 from mapping_resolution_tui.config import QUIT_KEY
 from mapping_resolution_tui.loop import is_quit_key, key_to_action
@@ -146,6 +150,28 @@ def test_escape_keystroke_maps_to_clear_filter():
     assert key_to_action(key) == ClearFilter()
 
 
+# ── browsing navigation keys (spec §5 / §5.1 / §8.3 / §8.5) ─────────────────────
+
+def test_up_and_down_arrows_map_to_selection_movement():
+    assert key_to_action(Keystroke("\x1b[A", code=259, name="KEY_UP")) == MoveSelectionUp()
+    assert key_to_action(Keystroke("\x1b[B", code=258, name="KEY_DOWN")) == MoveSelectionDown()
+
+
+def test_ctrl_p_and_ctrl_n_map_to_selection_movement():
+    assert key_to_action("\x10") == MoveSelectionUp()
+    assert key_to_action("\x0e") == MoveSelectionDown()
+
+
+def test_pgup_and_pgdn_map_to_page_movement():
+    assert key_to_action(Keystroke("\x1b[5~", code=339, name="KEY_PGUP")) == PageUp()
+    assert key_to_action(Keystroke("\x1b[6~", code=338, name="KEY_PGDOWN")) == PageDown()
+
+
+def test_shift_arrows_map_to_page_movement():
+    assert key_to_action(Keystroke("\x1b[1;2A", code=337, name="KEY_SUP")) == PageUp()
+    assert key_to_action(Keystroke("\x1b[1;2B", code=336, name="KEY_SDOWN")) == PageDown()
+
+
 # ── no-op readline families: each is ignored (spec §5.1) ────────────────────────
 
 def test_noop_readline_families_are_ignored():
@@ -240,3 +266,22 @@ def test_unsupported_keys_do_not_change_filter():
     state = _drive(_initial_state(), ["\x07", "\x1c", "\x1b[Z"])
     assert state.filter.raw == ""
     assert state.filter.collision_only is False
+
+
+# ── page-key portability (spec §5 / §10.2) ─────────────────────────────────────
+
+def test_page_keys_are_portable_when_shifted_arrows_are_indistinguishable():
+    # A terminal that cannot tell Shift+arrow from a plain arrow delivers a plain
+    # KEY_DOWN even for the shifted chord. That MUST still move exactly one row,
+    # while PgUp/PgDn remain the reliable page-movement keys (spec §5 / §10.2).
+    state = _initial_state()  # 11 visible rows, capacity 9, scroll offset 0
+
+    plain_down = Keystroke("\x1b[B", code=258, name="KEY_DOWN")
+    moved = reduce(state, key_to_action(plain_down))
+    assert moved.selection.selected_ordinal == 2  # one-row movement, not a page
+    assert moved.selection.scroll_offset == 0
+
+    pgdn = Keystroke("\x1b[6~", code=338, name="KEY_PGDOWN")
+    paged = reduce(state, key_to_action(pgdn))
+    assert paged.selection.scroll_offset == 2  # paged by one body capacity
+    assert paged.selection.selected_ordinal == 3

@@ -4,10 +4,10 @@ Renderer module: converts AppState into a list of styled terminal lines.
 
 import re
 
-from mapping_resolution_tui.state import AppState, FooterHint
+from mapping_resolution_tui.state import AppState, FooterHint, Mode
 
 from mapping_resolution_tui.selectors import (
-    select_body_capacity,
+    select_body_rows,
     select_current_target_value,
     select_default_source,
     select_filter_prompt,
@@ -119,10 +119,10 @@ def render_lines(state: AppState) -> list[str]:
     table_header = f"    #   {target_label}{padding}{source_label}"
 
     # ── body rows ─────────────────────────────────────────────────────────────
-    capacity = select_body_capacity(height)
+    # Anchored body allocation (§8.2) keeps the selected row visible; the
+    # selector output is authoritative for which rows render.
     visible = select_visible_rows(state)
-    scroll = state.selection.scroll_offset
-    shown = visible[scroll : scroll + capacity]
+    shown = select_body_rows(state)
 
     filter_text = state.filter.text
     body_lines: list[str] = []
@@ -152,16 +152,23 @@ def render_lines(state: AppState) -> list[str]:
         row = f"{cursor}  {ordinal_cell}  {collision}{token_cell}  {source}"
         body_lines.append(row)
 
-
+    # Empty-result state: a non-empty filter that matches nothing renders exactly
+    # one blank body row below the table header with no row cursor (§6.1;
+    # storyboard frame 13).
+    if not visible and state.mode == Mode.BROWSING:
+        body_lines = [""]
 
     # ── footer ────────────────────────────────────────────────────────────────
     footer_content = select_footer_content(state)
-    hints = "  ·  ".join(
+    parts: list[str] = []
+    if footer_content.error is not None:
+        parts.append(f"Error: {footer_content.error}")
+    parts.extend(
         f"{key} {label}"
         for hint in footer_content.hints
         for key, label in (_FOOTER_HINT_DISPLAY[hint],)
     )
-    footer = f"  {hints}"
+    footer = "  " + "  ·  ".join(parts)
 
     # ── assemble ──────────────────────────────────────────────────────────────
     # The inline frame is variable-height and ends at the footer; it MUST NOT be
