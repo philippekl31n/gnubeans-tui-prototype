@@ -450,3 +450,266 @@ def test_ordinal_spans_no_match_or_empty_query():
 
     assert select_ordinal_match_spans(4, "1", 2) == ()
     assert select_ordinal_match_spans(1, "", 2) == ()
+
+
+# ── edit-mode selectors (TASK-005, spec §7) ──────────────────────────────────
+
+
+def _editing_state(
+    buffer,
+    cursor,
+    *,
+    ordinal=1,
+    focus_region=None,
+    source_pointer_index=None,
+    source_entry_buffer=None,
+    validation=None,
+):
+    """Build an EDITING AppState with an injected EditState for ``ordinal``.
+
+    Follows the recommended pattern: bootstrap a deterministic initial state via
+    ``make_initial_state`` (ordinals are assigned after the bootstrap sort, so
+    ordinal 1 is always the ``APPLE`` mapping) then ``replace`` an EditState in.
+    """
+    from dataclasses import replace
+
+    from mapping_resolution_tui.reducer import make_initial_state
+    from mapping_resolution_tui.state import (
+        EditState,
+        FocusRegion,
+        Mode,
+        ValidationState,
+    )
+    from tests.fixtures.storyboard import make_config, make_mappings
+
+    if focus_region is None:
+        focus_region = FocusRegion.TOKEN_INPUT
+    if validation is None:
+        validation = ValidationState(status="EMPTY", icon=None, error_message=None)
+
+    base = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    edit = EditState(
+        mapping_ordinal=ordinal,
+        buffer=buffer,
+        cursor=cursor,
+        focus_region=focus_region,
+        source_pointer_index=source_pointer_index,
+        source_entry_buffer=source_entry_buffer,
+        validation=validation,
+        max_length_flash_until=None,
+    )
+    return replace(base, mode=Mode.EDITING, edit=edit)
+
+
+def _mapping(state, ordinal):
+    return next(m for m in state.mappings if m.ordinal == ordinal)
+
+
+def test_ghost_suffix_empty_buffer_is_full_default_source_value():
+    from mapping_resolution_tui.selectors import select_ghost_suffix
+
+    state = _editing_state(buffer="", cursor=0)
+    mapping = _mapping(state, 1)
+
+    assert select_ghost_suffix(state, mapping) == "APPLE"
+
+
+def test_ghost_suffix_prefix_buffer_returns_remaining_suffix():
+    from mapping_resolution_tui.selectors import select_ghost_suffix
+
+    state = _editing_state(buffer="AP", cursor=2)
+    mapping = _mapping(state, 1)
+
+    assert select_ghost_suffix(state, mapping) == "PLE"
+
+
+def test_ghost_suffix_is_empty_when_buffer_equals_full_default():
+    from mapping_resolution_tui.selectors import select_ghost_suffix
+
+    state = _editing_state(buffer="APPLE", cursor=5)
+    mapping = _mapping(state, 1)
+
+    assert select_ghost_suffix(state, mapping) == ""
+
+
+def test_ghost_suffix_is_empty_when_buffer_is_not_a_prefix():
+    from mapping_resolution_tui.selectors import select_ghost_suffix
+
+    state = _editing_state(buffer="AX", cursor=2)
+    mapping = _mapping(state, 1)
+
+    assert select_ghost_suffix(state, mapping) == ""
+
+
+def test_ghost_suffix_is_empty_when_cursor_not_at_end_of_buffer():
+    from mapping_resolution_tui.selectors import select_ghost_suffix
+
+    state = _editing_state(buffer="AP", cursor=1)
+    mapping = _mapping(state, 1)
+
+    assert select_ghost_suffix(state, mapping) == ""
+
+
+def test_ghost_suffix_is_case_sensitive():
+    from mapping_resolution_tui.selectors import select_ghost_suffix
+
+    state = _editing_state(buffer="ap", cursor=2)
+    mapping = _mapping(state, 1)
+
+    assert select_ghost_suffix(state, mapping) == ""
+
+
+def test_ghost_suffix_is_empty_when_literal_target_override_exists():
+    from dataclasses import replace
+
+    from mapping_resolution_tui.selectors import select_ghost_suffix
+
+    state = _editing_state(buffer="A", cursor=1)
+    mapping = replace(_mapping(state, 1), target_value="A")
+
+    # "A" is a prefix of the default "APPLE", but a literal target override
+    # suppresses ghost text entirely (FR17, spec §7.1).
+    assert select_ghost_suffix(state, mapping) == ""
+
+
+def test_concrete_value_uses_buffer_when_non_empty():
+    from mapping_resolution_tui.selectors import select_concrete_value
+
+    state = _editing_state(buffer="ATT", cursor=3)
+    mapping = _mapping(state, 1)
+
+    assert select_concrete_value(state, mapping) == "ATT"
+
+
+def test_concrete_value_falls_back_to_default_source_value_when_buffer_empty():
+    from mapping_resolution_tui.selectors import select_concrete_value
+
+    state = _editing_state(buffer="", cursor=0)
+    mapping = _mapping(state, 1)
+
+    assert select_concrete_value(state, mapping) == "APPLE"
+
+
+def test_concrete_value_empty_buffer_ignores_literal_target_override():
+    from dataclasses import replace
+
+    from mapping_resolution_tui.selectors import select_concrete_value
+
+    state = _editing_state(buffer="", cursor=0)
+    mapping = replace(_mapping(state, 1), target_value="ZZZ")
+
+    # The fallback is the default source effective value, not target_value:
+    # select_concrete_value is buffer-or-default and is the single source of
+    # truth (FR22).
+    assert select_concrete_value(state, mapping) == "APPLE"
+
+
+def test_source_pointer_value_is_none_when_index_is_none():
+    from mapping_resolution_tui.selectors import select_source_pointer_value
+
+    state = _editing_state(buffer="APPLE", cursor=5, source_pointer_index=None)
+    mapping = _mapping(state, 1)
+
+    assert select_source_pointer_value(state, mapping) is None
+
+
+def test_source_pointer_value_resolves_against_active_sources():
+    from mapping_resolution_tui.selectors import select_source_pointer_value
+
+    first = _editing_state(
+        buffer="AAPL",
+        cursor=4,
+        focus_region=None,
+        source_pointer_index=0,
+    )
+    second = _editing_state(
+        buffer="APPLE",
+        cursor=5,
+        source_pointer_index=1,
+    )
+    mapping = _mapping(first, 1)
+
+    assert select_source_pointer_value(first, mapping) == "AAPL"
+    assert select_source_pointer_value(second, mapping) == "APPLE"
+
+
+def test_source_pointer_value_skips_inactive_sources():
+    from dataclasses import replace
+
+    from mapping_resolution_tui.selectors import select_source_pointer_value
+
+    state = _editing_state(buffer="APPLE", cursor=5, source_pointer_index=0)
+    # First raw source has no effective value, so index 0 of the active list is
+    # the second raw source (delegated to select_active_sources, FR21).
+    mapping = replace(
+        _mapping(state, 1),
+        sources=[
+            Source(label="cmdty_id", original_value=None, sanitized_value=None),
+            Source(label="user_symbol", original_value="APPLE", sanitized_value=None),
+        ],
+        default_source_label="user_symbol",
+    )
+
+    assert select_source_pointer_value(state, mapping) == "APPLE"
+
+
+def test_edit_render_row_bundles_token_input_view():
+    from mapping_resolution_tui.selectors import EditSourceRow, select_edit_render_row
+    from mapping_resolution_tui.state import FocusRegion
+
+    state = _editing_state(buffer="", cursor=0)
+    mapping = _mapping(state, 1)
+
+    row = select_edit_render_row(state, mapping)
+
+    assert row.buffer == ""
+    assert row.ghost_suffix == "APPLE"
+    assert row.cursor == 0
+    assert row.focus_region is FocusRegion.TOKEN_INPUT
+    assert row.validation_icon is None
+    assert row.validation_error is None
+    assert row.sources == (
+        EditSourceRow(display='cmdty_id: "AAPL"', is_pointer=False),
+        EditSourceRow(display='user_symbol: "APPLE"', is_pointer=False),
+    )
+
+
+def test_edit_render_row_marks_pointer_in_source_list():
+    from mapping_resolution_tui.selectors import select_edit_render_row
+    from mapping_resolution_tui.state import FocusRegion
+
+    state = _editing_state(
+        buffer="AAPL",
+        cursor=4,
+        focus_region=FocusRegion.SOURCE_LIST,
+        source_pointer_index=0,
+        source_entry_buffer="",
+    )
+    mapping = _mapping(state, 1)
+
+    row = select_edit_render_row(state, mapping)
+
+    assert row.focus_region is FocusRegion.SOURCE_LIST
+    assert row.ghost_suffix == ""
+    assert [source.is_pointer for source in row.sources] == [True, False]
+
+
+def test_edit_render_row_surfaces_policy_validation_result():
+    from mapping_resolution_tui.selectors import select_edit_render_row
+    from mapping_resolution_tui.state import ValidationState
+
+    state = _editing_state(
+        buffer="44PL",
+        cursor=4,
+        validation=ValidationState(
+            status="INVALID", icon="✗", error_message="must start with A-Z"
+        ),
+    )
+    mapping = _mapping(state, 1)
+
+    row = select_edit_render_row(state, mapping)
+
+    assert row.buffer == "44PL"
+    assert row.validation_icon == "✗"
+    assert row.validation_error == "must start with A-Z"
+    assert row.ghost_suffix == ""

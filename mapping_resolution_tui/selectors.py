@@ -9,6 +9,7 @@ from mapping_resolution_tui.state import (
     AppConfig,
     ConfirmationChoice,
     FilterPromptContent,
+    FocusRegion,
     FooterContent,
     FooterHint,
     Mapping,
@@ -76,6 +77,117 @@ def select_active_sources(mapping: Mapping) -> list[Source]:
         for source in mapping.sources
         if select_source_effective_value(source) is not None
     ]
+
+
+# ── edit-mode derived state (spec §7) ────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class EditSourceRow:
+    """A single source line in the expanded edit row's source list (spec §7.4).
+
+    ``display`` is the formatted source cell (see :func:`select_source_display`).
+    ``is_pointer`` is True for the active source the edit pointer currently rests
+    on — the row the renderer marks with ``▸`` in the source column.
+    """
+    display: str
+    is_pointer: bool
+
+
+@dataclass(frozen=True)
+class EditRenderRow:
+    """Everything the renderer needs for the expanded ``EDITING`` row (spec §7).
+
+    Bundles the derived edit-buffer view (buffer text, ghost suffix, cursor
+    offset), the policy validation result (icon and error message), the current
+    focus region, and the active sources annotated with the pointer position.
+    Layout — ANSI styling, reverse-video cursor, column placement — stays in the
+    renderer; this selector only assembles the derived data.
+    """
+    buffer: str
+    ghost_suffix: str
+    cursor: int
+    validation_icon: str | None
+    validation_error: str | None
+    focus_region: FocusRegion
+    sources: tuple[EditSourceRow, ...]
+
+
+def select_ghost_suffix(state: "AppState", mapping: Mapping) -> str:
+    """Remaining suffix of the default source value rendered as ghost text (FR17).
+
+    Returns the suffix of the default source effective value that follows
+    ``edit.buffer`` only when there is no literal target override
+    (``mapping.target_value is None``), the cursor is at the end of the buffer,
+    and ``edit.buffer`` is a case-sensitive prefix of that default value.
+    Returns ``""`` in every other case. An empty buffer is a prefix of any
+    value, so the full default source value is the ghost suffix when the buffer
+    is empty and there is no target override.
+    """
+    edit = state.edit
+    if mapping.target_value is not None:
+        return ""
+    if edit.cursor != len(edit.buffer):
+        return ""
+    default_value = select_default_source_value(mapping)
+    if not default_value.startswith(edit.buffer):
+        return ""
+    return default_value[len(edit.buffer):]
+
+
+def select_concrete_value(state: "AppState", mapping: Mapping) -> str:
+    """The single value validated and committed during editing (FR22).
+
+    Returns ``edit.buffer`` when it is non-empty, otherwise the default source
+    effective value. This is the single source of truth for the value passed to
+    ``targetPolicy.validate`` and committed on submit — callers (including the
+    reducer's submit handler) MUST NOT re-implement the fallback.
+    """
+    buffer = state.edit.buffer
+    if buffer:
+        return buffer
+    return select_default_source_value(mapping)
+
+
+def select_source_pointer_value(state: "AppState", mapping: Mapping) -> str | None:
+    """Effective value of the source the edit pointer rests on (FR21).
+
+    Resolves ``edit.source_pointer_index`` against :func:`select_active_sources`
+    and returns that source's effective value, or ``None`` when the pointer is
+    not in the source list (``source_pointer_index is None``).
+    """
+    index = state.edit.source_pointer_index
+    if index is None:
+        return None
+    return select_source_effective_value(select_active_sources(mapping)[index])
+
+
+def select_edit_render_row(state: "AppState", mapping: Mapping) -> EditRenderRow:
+    """Assemble the renderer's view of the expanded ``EDITING`` row (spec §7).
+
+    The sole selector the renderer calls for the expanded row: it packages the
+    buffer text, derived ghost suffix, cursor offset, validation icon and error
+    message, focus region, and the active sources annotated with the pointer
+    position.
+    """
+    edit = state.edit
+    pointer_index = edit.source_pointer_index
+    sources = tuple(
+        EditSourceRow(
+            display=select_source_display(source),
+            is_pointer=pointer_index is not None and index == pointer_index,
+        )
+        for index, source in enumerate(select_active_sources(mapping))
+    )
+    return EditRenderRow(
+        buffer=edit.buffer,
+        ghost_suffix=select_ghost_suffix(state, mapping),
+        cursor=edit.cursor,
+        validation_icon=edit.validation.icon,
+        validation_error=edit.validation.error_message,
+        focus_region=edit.focus_region,
+        sources=sources,
+    )
 
 
 def sort_mappings_for_initial_display(mappings: list[Mapping]) -> tuple[Mapping, ...]:
