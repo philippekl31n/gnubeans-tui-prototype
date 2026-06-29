@@ -36,8 +36,6 @@ _FOOTER_HINT_DISPLAY: dict[FooterHint, tuple[str, str]] = {
     FooterHint.CANCEL:        ("esc",      "cancel"),
 }
 
-_TOKEN_START_COL = 9   # cursor(1) + 1sp + ordinal:2 + 3sp + collision(1) = 8 prefix chars
-                       # (ordinal field left-aligned at col 2, tens digit under "Reviewing")
 _SOURCE_GAP = 2        # blank columns between the token field and the source value
 
 
@@ -90,6 +88,15 @@ def render_lines(state: AppState) -> list[str]:
     collision_ordinals = select_unresolved_collision_ordinals(mappings)
     total = len(mappings)
 
+    # Variable-width ordinal grid (spec §6.3): the ordinal field is right-aligned
+    # to W = digit count of the mapping count, left edge anchored at column 3
+    # (1-based). Every later column is derived from W, so a wider ordinal (more
+    # mappings) shifts the `#` heading, collision marker, token, and source all
+    # right together. W = 1 for ≤9, 2 for 10–99, 3 for 100–999.
+    ordinal_width = len(str(total)) if total else 1
+    token_start = 7 + ordinal_width   # 1-based column where the token field begins
+    hash_col = 2 + ordinal_width      # 1-based column of the `#` heading (units digit)
+
     # ── header ────────────────────────────────────────────────────────────────
     noun = config.mapping_noun_plural
     entity = config.entity_name_singular
@@ -118,11 +125,14 @@ def render_lines(state: AppState) -> list[str]:
 
     # ── table header ──────────────────────────────────────────────────────────
     max_token_length = config.target_policy.max_token_length
-    source_col = _TOKEN_START_COL + max_token_length + _SOURCE_GAP
+    source_col = token_start + max_token_length + _SOURCE_GAP
     target_label = config.target_column_label
     source_label = config.source_column_label
-    padding = " " * max(1, source_col - 9 - len(target_label))
-    table_header = f"   #    {target_label}{padding}{source_label}"
+    # `#` right-aligns over the ordinal units digit; the target label begins at the
+    # token column. Both follow the ordinal width (spec §6.3).
+    header_prefix = " " * (hash_col - 1) + "#" + " " * (token_start - hash_col - 1)
+    padding = " " * max(1, source_col - token_start - len(target_label))
+    table_header = f"{header_prefix}{target_label}{padding}{source_label}"
 
     # ── body rows ─────────────────────────────────────────────────────────────
     capacity = select_body_capacity(height)
@@ -143,7 +153,7 @@ def render_lines(state: AppState) -> list[str]:
         # The leading pad of a right-justified ordinal carries no match, so the
         # spans are computed on the bare digits and bolded after the pad.
         ordinal_digits = str(mapping.ordinal)
-        ordinal_pad = " " * max(0, 2 - len(ordinal_digits))
+        ordinal_pad = " " * max(0, ordinal_width - len(ordinal_digits))
         ordinal_cell = ordinal_pad + _apply_bold_spans(
             ordinal_digits, select_match_spans(filter_text, ordinal_digits)
         )

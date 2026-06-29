@@ -649,14 +649,16 @@ parameters drive the grid:
 | Source text | 12+W+M | 38 | After the divider and one space, in expanded edit rows. |
 
 A body row is therefore `{▸\|space} {ordinal} {3 spaces} {!\|space}{token}{2 spaces}{source}`, and
-the storyboard table header is exactly `   #    Beancount Token           GnuCash Source` (`#` at
+the rendered `W = 2` table header is `   #    Beancount Token           GnuCash Source` (`#` at
 column 4, `Beancount Token` at column 9, `GnuCash Source` at column 35). The storyboard prose names
 the max edit-cursor and icon positions "column 32" and "column 33" using a zero-based model; in
-these 1-based columns they are 33 and 34.
+these 1-based columns they are 33 and 34. The interaction storyboard's ASCII frames are schematic
+(they carry markdown emphasis markers and are not column-exact); this table is the authoritative
+grid.
 
-The current renderer fixes `W = 2` for the 11-mapping storyboard — the only dataset in TASK-002's
-scope. Generalising the grid to variable `W` (and asserting the `W = 1`, `2`, and `3` regimes) is
-EPIC-005 TASK-014's responsibility (FR34).
+The renderer derives `W` from the mapping count (`W = len(str(total))`) and positions every later
+column from it, so the `W = 1`, `2`, and `3` regimes all render correctly. `tests/unit/test_renderer.py`
+asserts the `#` heading and token columns and the right-aligned ordinal field across those regimes.
 
 ### 6.4 Header Templates
 
