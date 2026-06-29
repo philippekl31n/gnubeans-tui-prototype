@@ -3,16 +3,15 @@ Main event loop and console entry point.
 
 The loop is a blocking Redux-style dispatcher:
 
-    read keypress -> normalise readline aliases -> build action -> reduce -> render
+    read keypress -> key_to_action -> reduce -> render
 
-Input arrives as *semantic key tokens* (e.g. ``"a"``, ``"left"``, ``"tab"``,
-``"esc"``, ``"ctrl+b"``). The live terminal reader (:func:`_terminal_keys`)
-drives ``blessed`` — the project's declared terminal dependency — and translates
-its keystrokes into these tokens; tests inject a token sequence directly through
-the loop's ``keys`` seam. :func:`normalise_key` collapses readline-style aliases
-onto the canonical TUI events (FR29) before an action is constructed. Tokens
-that map to no action are ignored and leave both state and rendered output
-unchanged (FR30).
+Input is a ``blessed.Keystroke`` (or, in tests, any string / string-like object
+carrying an optional ``.name``). A single, table-driven :func:`key_to_action`
+normalises every keypress — named escape sequences via ``Keystroke.name`` and
+readline-style control chords / meta sequences via the raw key text — directly
+into an action, with no intermediate token vocabulary. Keys that map to no
+action are ignored and leave state and rendered output unchanged (FR30). The
+``keys`` and ``render`` seams on :func:`run` keep the loop drivable headless.
 """
 
 import sys
@@ -41,77 +40,89 @@ from mapping_resolution_tui.reducer import make_initial_state, reduce
 from mapping_resolution_tui.renderer import render_lines
 from mapping_resolution_tui.state import AppConfig, Mapping
 
-# Readline-style aliases normalised onto canonical BROWSING events before an
-# action is built (spec S5.1). Tokens absent from this map pass through
-# unchanged — including the no-op readline families (abort, quoted-insert,
-# undo, transpose, yank, reverse-search) that key_to_action then ignores.
-_READLINE_ALIASES = {
-    "ctrl+a": "home",              # beginning-of-line
-    "ctrl+e": "end",               # end-of-line
-    "ctrl+b": "left",              # backward-char
-    "ctrl+f": "right",             # forward-char
-    "ctrl+d": "delete",            # delete-char (forward)
-    "ctrl+h": "backspace",         # backward-delete-char
-    "ctrl+k": "killline",          # kill-line
-    "ctrl+u": "unixlinediscard",   # unix-line-discard
-    "ctrl+w": "backwardkillword",  # unix-word-rubout
-    "ctrl+i": "tab",               # complete (autocomplete is TASK-003)
-    "ctrl+l": "redraw",            # clear-screen / redraw only
-    "meta+d": "killword",          # kill-word (forward)
-    "meta+backspace": "backwardkillword",  # backward-kill-word
+# Raw ctrl+c byte. The configured QUIT_KEY is the readable token "ctrl+c"; a live
+# blessed keystroke delivers it as this control byte under term.raw().
+_CTRL_C = "\x03"
+
+# blessed Keystroke.name → action (multi-byte named escape sequences). Tab
+# (KEY_TAB) is intentionally absent: in BROWSING it is reserved for the TASK-003
+# bang-autocomplete metafilter and is a no-op until then.
+_NAME_ACTIONS: dict[str, type] = {
+    "KEY_LEFT": MoveCursorLeft,
+    "KEY_RIGHT": MoveCursorRight,
+    "KEY_HOME": MoveCursorHome,
+    "KEY_END": MoveCursorEnd,
+    "KEY_BACKSPACE": Backspace,
+    "KEY_DELETE": DeleteChar,
+    "KEY_ESCAPE": ClearFilter,
 }
 
-# blessed Keystroke.name values for the multi-byte escape sequences and named
-# keys the BROWSING filter cares about, mapped to canonical semantic tokens.
-_BLESSED_KEY_NAMES = {
-    "KEY_LEFT": "left",
-    "KEY_RIGHT": "right",
-    "KEY_UP": "up",
-    "KEY_DOWN": "down",
-    "KEY_HOME": "home",
-    "KEY_END": "end",
-    "KEY_DELETE": "delete",
-    "KEY_TAB": "tab",
-    "KEY_ESCAPE": "esc",
-    "KEY_BACKSPACE": "backspace",
-    "KEY_ENTER": "enter",
+# ESC-prefixed meta sequences → action (checked before the lone ESC below).
+_META_ACTIONS: dict[str, type] = {
+    "\x1bd": KillWord,        # meta+d         -> kill-word (forward)
+    "\x1b\x7f": BackwardKillWord,  # meta+backspace -> backward-kill-word
+    "\x1b\x08": BackwardKillWord,  # meta+ctrl+h variant
 }
 
-# Normalised tokens that map directly to a zero-argument action.
-_KEY_ACTIONS = {
-    "left": MoveCursorLeft,
-    "right": MoveCursorRight,
-    "home": MoveCursorHome,
-    "end": MoveCursorEnd,
-    "backspace": Backspace,
-    "delete": DeleteChar,
-    "killline": KillLine,
-    "unixlinediscard": UnixLineDiscard,
-    "killword": KillWord,
-    "backwardkillword": BackwardKillWord,
-    "redraw": Redraw,
-    "esc": ClearFilter,
+# Single control characters / readline aliases → action.
+_CTRL_ACTIONS: dict[str, type] = {
+    "\x01": MoveCursorHome,    # ctrl+a  beginning-of-line
+    "\x05": MoveCursorEnd,     # ctrl+e  end-of-line
+    "\x02": MoveCursorLeft,    # ctrl+b  backward-char
+    "\x06": MoveCursorRight,   # ctrl+f  forward-char
+    "\x04": DeleteChar,        # ctrl+d  delete-char (forward)
+    "\x08": Backspace,         # ctrl+h  backward-delete-char
+    "\x7f": Backspace,         # DEL     backward-delete-char
+    "\x0b": KillLine,          # ctrl+k  kill-line
+    "\x15": UnixLineDiscard,   # ctrl+u  unix-line-discard
+    "\x17": BackwardKillWord,  # ctrl+w  unix-word-rubout
+    "\x0c": Redraw,            # ctrl+l  clear-screen / redraw only
+    "\x1b": ClearFilter,       # ESC     clear filter
 }
 
-
-def normalise_key(key: str) -> str:
-    """Collapse a readline alias onto its canonical TUI key token (FR29)."""
-    return _READLINE_ALIASES.get(key, key)
+# Tab / ctrl+i: reserved for TASK-003 bang autocomplete, a no-op for now.
+_TAB_TEXT = "\t"
 
 
-def key_to_action(key: str) -> Optional[Action]:
-    """Map a normalised BROWSING key token to an action, or ``None`` for a no-op.
+def is_quit_key(key) -> bool:
+    """Return True when ``key`` is the configured quit key.
 
-    ``None`` covers every key not handled by the Epic-2 filter foundation —
-    including Tab (bang autocomplete is TASK-003) and the no-op readline
-    families — so the loop leaves state and output unchanged (FR30). A bare
-    ``!`` is an ordinary printable character and inserts literally.
+    Accepts the live ctrl+c control byte as well as the readable ``"ctrl+c"``
+    token, so both the terminal reader and headless tests can signal a quit.
     """
-    factory = _KEY_ACTIONS.get(key)
-    if factory is not None:
-        return factory()
-    if len(key) == 1 and key.isprintable():
-        return InsertChar(key)
+    text = str(key)
+    return text == _CTRL_C or text == QUIT_KEY
+
+
+def key_to_action(key) -> Optional[Action]:
+    """Normalise a keypress into an action, or ``None`` for a no-op (FR30).
+
+    ``key`` may be a ``blessed.Keystroke`` (whose ``.name`` identifies multi-byte
+    escape sequences such as the arrow keys) or any string-like value, so the one
+    function serves both the live loop and headless tests. Named keys resolve via
+    ``.name``; control chords and meta sequences via the raw key text; a single
+    printable character — including a literal ``!`` (spec §3.3) — inserts. Tab,
+    the quit key, the no-op readline families, and anything unrecognised return
+    ``None``.
+    """
+    name = getattr(key, "name", None)
+    text = str(key)
+
+    if name in _NAME_ACTIONS:
+        return _NAME_ACTIONS[name]()
+
+    # Tab is reserved (TASK-003); never inserts or acts here.
+    if name == "KEY_TAB" or text == _TAB_TEXT:
+        return None
+
+    if text in _META_ACTIONS:
+        return _META_ACTIONS[text]()
+    if text in _CTRL_ACTIONS:
+        return _CTRL_ACTIONS[text]()
+
+    if len(text) == 1 and " " <= text <= "~":
+        return InsertChar(text)
+
     return None
 
 
@@ -119,15 +130,15 @@ def run(
     config: AppConfig,
     mappings: list[Mapping],
     *,
-    keys: Optional[Iterable[str]] = None,
+    keys: Optional[Iterable] = None,
     render: Optional[Callable[[list[str]], None]] = None,
 ) -> list[Mapping] | None:
     """Drive the blocking event loop until the quit key or end of input.
 
-    ``keys`` supplies semantic key tokens (defaulting to the live ``blessed``
-    terminal reader); ``render`` receives each rendered frame (defaulting to an
-    inline in-place repaint). Both are injectable so the loop is exercisable
-    without a real TTY.
+    ``keys`` supplies keystrokes (defaulting to the live ``blessed`` terminal
+    reader); ``render`` receives each rendered frame (defaulting to an inline
+    in-place repaint). Both are injectable so the loop is exercisable without a
+    real TTY.
 
     Returns the resolved mappings on a clean end-of-input exit, or ``None`` when
     the user quits with the configured quit key (cancellation).
@@ -140,9 +151,8 @@ def run(
     state = make_initial_state(config, mappings)
     render(render_lines(state))
 
-    for raw_key in keys:
-        key = normalise_key(raw_key)
-        if key == QUIT_KEY:
+    for key in keys:
+        if is_quit_key(key):
             return None
 
         action = key_to_action(key)
@@ -190,13 +200,13 @@ class _InlineRenderer:
         self._prev_line_count = len(lines)
 
 
-def _terminal_keys() -> Iterable[str]:
-    """Yield semantic key tokens from a live ``blessed`` terminal until EOF.
+def _terminal_keys() -> Iterable:
+    """Yield live ``blessed`` keystrokes until EOF.
 
     ``blessed`` owns escape-sequence decoding; ``term.raw()`` delivers control
     chords (including ctrl+c as the quit key) as keystrokes rather than signals,
-    and avoids the alternate screen buffer. Keystrokes that decode to no known
-    token are swallowed so the caller treats them as no-ops.
+    and avoids the alternate screen buffer. Each keystroke is yielded straight to
+    :func:`key_to_action`, which performs all normalisation.
     """
     term = blessed.Terminal()
     if not term.is_a_tty:  # nothing interactive to read from
@@ -207,28 +217,4 @@ def _terminal_keys() -> Iterable[str]:
             key = term.inkey()
             if not key:  # timeout / empty read
                 continue
-            token = _blessed_to_token(key)
-            if token is not None:
-                yield token
-
-
-def _blessed_to_token(key) -> Optional[str]:
-    """Translate a blessed ``Keystroke`` into a semantic key token.
-
-    Named escape sequences (arrows, Tab, Esc, Backspace, Enter) resolve via
-    ``Keystroke.name``; control chords collapse to ``ctrl+<letter>`` tokens so
-    readline aliases such as ctrl+b/ctrl+f/ctrl+h reach :func:`normalise_key`;
-    remaining single printable characters pass through unchanged.
-    """
-    if key.name in _BLESSED_KEY_NAMES:
-        return _BLESSED_KEY_NAMES[key.name]
-
-    if len(key) == 1:
-        code = ord(key)
-        if code == 127:  # DEL -> backspace
-            return "backspace"
-        if 1 <= code <= 26:  # ctrl+a .. ctrl+z (e.g. \t -> ctrl+i, ^C -> ctrl+c)
-            return f"ctrl+{chr(code + 96)}"
-        if key.isprintable():
-            return str(key)
-    return None
+            yield key

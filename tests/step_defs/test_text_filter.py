@@ -8,7 +8,7 @@ action is dispatched through ``reduce``. The resulting state is rendered with
 """
 from pytest_bdd import given, when, then, parsers, scenarios
 
-from mapping_resolution_tui.loop import key_to_action, normalise_key
+from mapping_resolution_tui.loop import key_to_action
 from mapping_resolution_tui.reducer import reduce
 from mapping_resolution_tui.renderer import render_lines
 from mapping_resolution_tui.selectors import select_visible_rows
@@ -16,9 +16,13 @@ from tests.conftest import make_pyte_screen
 
 scenarios("../features/text_filter.feature")
 
+# Raw key text for the named keys the scenarios press.
+_BACKSPACE = "\x7f"
+_ESC = "\x1b"
+
 
 def _dispatch_key(state, key):
-    action = key_to_action(normalise_key(key))
+    action = key_to_action(key)
     if action is None:
         return state
     return reduce(state, action)
@@ -38,12 +42,12 @@ def reviewer_types(state, text):
 
 @when("the reviewer presses backspace", target_fixture="state")
 def reviewer_backspaces(state):
-    return _dispatch_key(state, "backspace")
+    return _dispatch_key(state, _BACKSPACE)
 
 
 @when("the reviewer presses esc", target_fixture="state")
 def reviewer_presses_esc(state):
-    return _dispatch_key(state, "esc")
+    return _dispatch_key(state, _ESC)
 
 
 @then(parsers.parse("the visible ordinals are {ordinals}"))

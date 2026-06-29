@@ -1,11 +1,12 @@
 """
-Unit tests for the blocking event loop and input layer (TASK-001/TASK-002).
+Unit tests for the blocking event loop and unified input layer (TASK-001/002).
 
-Covers readline alias normalisation (FR29), key->action mapping, the
-read -> normalise -> dispatch -> render cycle, clean quit, and the FR30
-guarantee that unsupported keys (and the no-op readline families) leave state
-and rendered output unchanged. The loop is driven through its injectable
-``keys``/``render`` seams so no real TTY is required.
+A single table-driven ``key_to_action`` normalises every keypress — named escape
+sequences via ``Keystroke.name`` and readline control chords / meta sequences via
+the raw key text — directly into an action (FR29). Unsupported keys and the no-op
+readline families return ``None`` so the loop leaves state and output unchanged
+(FR30). The loop is driven through its injectable ``keys``/``render`` seams, with
+``Key`` standing in for a blessed ``Keystroke`` (a str carrying a ``.name``).
 """
 
 import pytest
@@ -29,6 +30,27 @@ from mapping_resolution_tui.actions import (
 from tests.fixtures.storyboard import make_config, make_mappings
 
 
+class Key(str):
+    """Minimal stand-in for a blessed Keystroke: a str carrying a ``.name``."""
+
+    def __new__(cls, text="", name=""):
+        obj = super().__new__(cls, text)
+        obj.name = name
+        return obj
+
+
+# Raw control bytes / sequences, named for readability.
+CTRL_A, CTRL_B, CTRL_D, CTRL_E, CTRL_F = "\x01", "\x02", "\x04", "\x05", "\x06"
+CTRL_H, CTRL_K, CTRL_L, CTRL_U, CTRL_W = "\x08", "\x0b", "\x0c", "\x15", "\x17"
+CTRL_C, DEL, ESC, TAB = "\x03", "\x7f", "\x1b", "\t"
+META_D, META_BS = "\x1bd", "\x1b\x7f"
+# No-op readline families (abort, quoted-insert, undo, transpose, yank, search).
+CTRL_G, CTRL_Q, CTRL_V, CTRL_R, CTRL_T, CTRL_Y, CTRL_US = (
+    "\x07", "\x11", "\x16", "\x12", "\x14", "\x19", "\x1f",
+)
+CTRL_X = "\x18"
+
+
 def run_keys(keys):
     """Run the loop over a fixed key sequence, returning (result, frames)."""
     frames: list[list[str]] = []
@@ -45,59 +67,48 @@ def filter_line(frame):
     return next(line for line in frame if "Filter:" in line)
 
 
-# ── normalisation (FR29) ─────────────────────────────────────────────────────
+# ── quit-key detection ────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize(
-    "alias, canonical",
-    [
-        ("ctrl+a", "home"),
-        ("ctrl+e", "end"),
-        ("ctrl+b", "left"),
-        ("ctrl+f", "right"),
-        ("ctrl+d", "delete"),
-        ("ctrl+h", "backspace"),
-        ("ctrl+k", "killline"),
-        ("ctrl+u", "unixlinediscard"),
-        ("ctrl+w", "backwardkillword"),
-        ("ctrl+i", "tab"),
-        ("ctrl+l", "redraw"),
-        ("meta+d", "killword"),
-        ("meta+backspace", "backwardkillword"),
-    ],
-)
-def test_normalise_key_collapses_readline_aliases(alias, canonical):
-    assert loop.normalise_key(alias) == canonical
+def test_is_quit_key_accepts_raw_ctrl_c_and_readable_token():
+    assert loop.is_quit_key(CTRL_C) is True
+    assert loop.is_quit_key("ctrl+c") is True
+    assert loop.is_quit_key("a") is False
+    assert loop.is_quit_key(Key(name="KEY_LEFT")) is False
 
 
-def test_normalise_key_passes_through_unknown_tokens():
-    assert loop.normalise_key("left") == "left"
-    assert loop.normalise_key("a") == "a"
-    assert loop.normalise_key("f1") == "f1"
-    # no-op readline families are not aliased; they pass through to a None action
-    for token in ("ctrl+g", "ctrl+q", "ctrl+v", "ctrl+_", "ctrl+t", "ctrl+y", "ctrl+r"):
-        assert loop.normalise_key(token) == token
-
-
-# ── key -> action mapping ────────────────────────────────────────────────────
+# ── key -> action mapping (one unified, table-driven function) ────────────────
 
 @pytest.mark.parametrize(
     "key, expected",
     [
-        ("left", MoveCursorLeft()),
-        ("right", MoveCursorRight()),
-        ("home", MoveCursorHome()),
-        ("end", MoveCursorEnd()),
-        ("backspace", Backspace()),
-        ("delete", DeleteChar()),
-        ("killline", KillLine()),
-        ("unixlinediscard", UnixLineDiscard()),
-        ("killword", KillWord()),
-        ("backwardkillword", BackwardKillWord()),
-        ("redraw", Redraw()),
-        ("esc", ClearFilter()),
+        # named escape sequences via Keystroke.name
+        (Key(name="KEY_LEFT"), MoveCursorLeft()),
+        (Key(name="KEY_RIGHT"), MoveCursorRight()),
+        (Key(name="KEY_HOME"), MoveCursorHome()),
+        (Key(name="KEY_END"), MoveCursorEnd()),
+        (Key(name="KEY_BACKSPACE"), Backspace()),
+        (Key(name="KEY_DELETE"), DeleteChar()),
+        (Key(name="KEY_ESCAPE"), ClearFilter()),
+        # readline control chords via raw text
+        (CTRL_A, MoveCursorHome()),
+        (CTRL_E, MoveCursorEnd()),
+        (CTRL_B, MoveCursorLeft()),
+        (CTRL_F, MoveCursorRight()),
+        (CTRL_D, DeleteChar()),
+        (CTRL_H, Backspace()),
+        (DEL, Backspace()),
+        (CTRL_K, KillLine()),
+        (CTRL_U, UnixLineDiscard()),
+        (CTRL_W, BackwardKillWord()),
+        (CTRL_L, Redraw()),
+        (ESC, ClearFilter()),
+        # meta / Alt word kills
+        (META_D, KillWord()),
+        (META_BS, BackwardKillWord()),
+        # printable insertion (incl. a literal bang)
         ("a", InsertChar("a")),
         ("3", InsertChar("3")),
-        ("!", InsertChar("!")),  # bang is an ordinary printable character
+        ("!", InsertChar("!")),
     ],
 )
 def test_key_to_action_maps_supported_keys(key, expected):
@@ -107,10 +118,15 @@ def test_key_to_action_maps_supported_keys(key, expected):
 @pytest.mark.parametrize(
     "key",
     [
-        "up", "down", "enter", "f1", "ctrl+x",
-        "tab",  # bang autocomplete is TASK-003; Tab is a no-op here
+        Key(name="KEY_UP"),
+        Key(name="KEY_DOWN"),
+        Key(name="KEY_ENTER"),
+        CTRL_X,
+        CTRL_C,                  # quit is handled by is_quit_key, not key_to_action
+        Key(name="KEY_TAB"),     # bang autocomplete is TASK-003; Tab is a no-op
+        TAB,                     # the raw \t form is likewise a no-op
         # no-op readline families:
-        "ctrl+g", "ctrl+q", "ctrl+v", "ctrl+_", "ctrl+t", "ctrl+y", "ctrl+r",
+        CTRL_G, CTRL_Q, CTRL_V, CTRL_US, CTRL_T, CTRL_Y, CTRL_R,
     ],
 )
 def test_key_to_action_returns_none_for_unsupported_keys(key):
@@ -140,24 +156,30 @@ def test_bang_inserts_a_literal_character_via_loop():
 
 def test_readline_alias_moves_cursor_end_to_end():
     # type "a", then ctrl+b (backward-char) should move the cursor left.
-    _, frames = run_keys(["a", "ctrl+b"])
+    _, frames = run_keys(["a", CTRL_B])
     assert len(frames) == 3  # initial + insert + cursor move
 
 
 def test_ctrl_w_deletes_previous_word_via_loop():
-    _, frames = run_keys(["a", "b", " ", "c", "ctrl+w"])
+    _, frames = run_keys(["a", "b", " ", "c", CTRL_W])
     assert "Filter: ab " in filter_line(frames[-1])
+
+
+def test_named_arrow_key_moves_cursor_via_loop():
+    # A blessed-style named keystroke drives the same action as ctrl+b.
+    _, frames = run_keys(["a", Key(name="KEY_LEFT")])
+    assert len(frames) == 3  # initial + insert + cursor move
 
 
 def test_unsupported_keys_do_not_rerender():
     # FR30: an unsupported key produces no new frame and no state change.
-    _, frames = run_keys(["up", "f1", "ctrl+x"])
+    _, frames = run_keys([Key(name="KEY_UP"), CTRL_X, Key(name="KEY_TAB")])
     assert len(frames) == 1  # only the initial frame
 
 
 @pytest.mark.parametrize(
     "family_key",
-    ["ctrl+g", "ctrl+q", "ctrl+v", "ctrl+_", "ctrl+t", "ctrl+y", "ctrl+r", "tab"],
+    [CTRL_G, CTRL_Q, CTRL_V, CTRL_US, CTRL_T, CTRL_Y, CTRL_R, TAB],
 )
 def test_noop_readline_families_leave_state_and_output_unchanged(family_key):
     # Establish a non-trivial filter, then fire the no-op key: no new frame.
@@ -168,7 +190,7 @@ def test_noop_readline_families_leave_state_and_output_unchanged(family_key):
 
 def test_ctrl_l_rerenders_only_without_mutating_state():
     # ctrl+l re-renders (a new identical frame) but never mutates state.
-    _, frames = run_keys(["a", "b", "ctrl+l"])
+    _, frames = run_keys(["a", "b", CTRL_L])
     assert len(frames) == 4  # initial + 2 inserts + 1 redraw
     assert frames[-1] == frames[-2]  # redraw produced an identical frame
 
@@ -177,19 +199,19 @@ def test_recognised_noop_action_does_not_rerender():
     # Esc clears the filter, but on an already-empty filter that mutation is a
     # no-op (the reducer returns the same state object), so the loop must not
     # repaint — only the initial frame is produced.
-    _, frames = run_keys(["esc"])
+    _, frames = run_keys([ESC])
     assert len(frames) == 1
 
 
 def test_redundant_clear_after_typing_still_rerenders_once_then_skips():
     # First esc clears the typed text (a real change → repaint); a second esc is
     # a no-op on the now-empty filter and produces no further frame.
-    _, frames = run_keys(["a", "esc", "esc"])
+    _, frames = run_keys(["a", ESC, ESC])
     assert len(frames) == 3  # initial + insert + first (effective) clear
 
 
 def test_quit_key_exits_cleanly_with_none():
-    result, frames = run_keys(["a", "ctrl+c", "b"])
+    result, frames = run_keys(["a", CTRL_C, "b"])
     assert result is None
     # the trailing "b" after the quit key is never processed
     assert len(frames) == 2  # initial + the "a" insert
