@@ -121,12 +121,16 @@ def _with_filter(state: AppState, *, raw: str, cursor: int) -> AppState:
 
     This runs the full post-mutation sequence (spec §3.4 / S5.1): the filter is
     re-derived (clamping ``filter.cursor`` and re-deriving ``collision_only`` /
-    ``text``), the visible rows are recomputed, and the selection is clamped so
-    it never points at a row the new filter hides — keeping the row cursor on a
-    visible row (e.g. engaging the collision metafilter from frame 1a moves the
-    selection to the first collision row, frame 2).
+    ``text``). If the filter text has changed, the visible rows are recomputed,
+    and the selection snaps to the first visible row with scroll reset to 0.
+    Cursor-only moves pass the same raw and bypass the clamp.
     """
+    filter_changed = raw != state.filter.raw
     interim = replace(state, filter=_derive_filter(raw=raw, cursor=cursor))
+    
+    if not filter_changed:
+        return interim
+
     selection = _clamp_selection(interim)
     if selection is interim.selection:
         return interim
@@ -136,36 +140,19 @@ def _with_filter(state: AppState, *, raw: str, cursor: int) -> AppState:
 def _clamp_selection(state: AppState) -> SelectionState:
     """Clamp the selection onto the visible rows for ``state`` (spec §3.4 / S8.2).
 
-    ``selected_ordinal`` is left unchanged when it is still visible; otherwise it
-    snaps to the first visible row, or to ``None`` when no rows match. The scroll
-    window is then *anchored* so the selected row is always rendered (S8.2): a
-    selection above the window pulls ``scroll_offset`` up to it, one below pushes
-    it down to the last visible line. Finally ``scroll_offset`` is clamped into
-    ``[0, max(0, len(visible) - capacity)]``. Returns the existing
-    :class:`SelectionState` object unchanged when nothing moves, so the loop's
-    identity-based no-op check still holds.
+    Snaps to the first visible row, or to ``None`` when no rows match. The scroll
+    window is always reset to 0. Returns the existing :class:`SelectionState`
+    object unchanged when nothing moves.
     """
     selection = state.selection
     visible = select_visible_rows(state)
 
     if not visible:
         selected = None
-    elif any(m.ordinal == selection.selected_ordinal for m in visible):
-        selected = selection.selected_ordinal
     else:
         selected = visible[0].ordinal
 
-    capacity = select_body_capacity(state.terminal.height)
-    scroll = selection.scroll_offset
-    if selected is not None and capacity > 0:
-        # Anchored body allocation: keep the selected row inside the window so
-        # widening the result set never scrolls the row cursor off-screen.
-        index = next(i for i, m in enumerate(visible) if m.ordinal == selected)
-        if index < scroll:
-            scroll = index
-        elif index >= scroll + capacity:
-            scroll = index - capacity + 1
-    scroll = min(max(0, scroll), max(0, len(visible) - capacity))
+    scroll = 0
 
     if selected == selection.selected_ordinal and scroll == selection.scroll_offset:
         return selection
