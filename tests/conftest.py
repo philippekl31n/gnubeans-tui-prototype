@@ -71,13 +71,13 @@ def frame_esc_clear_lines():
     all rows are restored, so the frame is bit-identical to frame 1a.
     """
     from tests.fixtures.storyboard import make_config, make_mappings
-    from mapping_resolution_tui.actions import ClearFilter, InsertChar
+    from mapping_resolution_tui.actions import Escape, InsertChar
     from mapping_resolution_tui.reducer import make_initial_state, reduce
     from mapping_resolution_tui.renderer import render_lines
 
     state = make_initial_state(make_config(), make_mappings(), frame_height=15)
     state = reduce(state, InsertChar("1"))
-    state = reduce(state, ClearFilter())
+    state = reduce(state, Escape())
     return render_lines(state)
 
 
@@ -143,6 +143,76 @@ def frame_3_screen(frame_3_lines):
 
 
 @pytest.fixture
+def frame_4_lines():
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.actions import AutocompleteBang, AcceptLine, MoveSelectionDown
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    state = reduce(state, AutocompleteBang())
+    state = reduce(state, MoveSelectionDown())
+    state = reduce(state, AcceptLine())
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_4_screen(frame_4_lines):
+    return make_pyte_screen(frame_4_lines)
+
+
+@pytest.fixture
+def frame_5_lines():
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.actions import AutocompleteBang, AcceptLine, MoveSelectionDown, InsertChar
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    state = reduce(state, AutocompleteBang())
+    state = reduce(state, MoveSelectionDown())
+    state = reduce(state, AcceptLine())
+    state = reduce(state, InsertChar("A"))
+    state = reduce(state, InsertChar("T"))
+    state = reduce(state, InsertChar("T"))
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_5_screen(frame_5_lines):
+    return make_pyte_screen(frame_5_lines)
+
+@pytest.fixture
+def frame_8_lines():
+    """Frame 8: single-character text filter '1' over a collision-free dataset.
+
+    The AT-T collision (ordinal 3) is resolved to 'ATT' as the storyboard does
+    before frame 8, then the reviewer types '1'. Visible rows narrow to ordinals
+    1, 4 (token C100-F), 10, and 11.
+    """
+    from dataclasses import replace
+
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.actions import InsertChar
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    mappings = [
+        replace(m, target_value="ATT") if m.ordinal == 3 else m
+        for m in state.mappings
+    ]
+    state = replace(state, mappings=mappings)
+    state = reduce(state, InsertChar("1"))
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_8_screen(frame_8_lines):
+    return make_pyte_screen(frame_8_lines)
+
+
+@pytest.fixture
 def frame_13_lines():
     """Frame 13: a text filter that matches no rows (empty result).
 
@@ -174,6 +244,68 @@ def frame_13_lines():
 def frame_13_screen(frame_13_lines):
     return make_pyte_screen(frame_13_lines)
 
+@pytest.fixture
+def frame_9_lines():
+    from dataclasses import replace
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.actions import AcceptLine
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    # Assume we cleared collisions and set target for ordinal 3
+    mappings = [replace(m, target_value="ATT") if m.ordinal == 3 else m for m in state.mappings]
+    state = replace(state, mappings=mappings)
+    
+    # Ordinal 1 is APPLE and selected
+    state = reduce(state, AcceptLine())
+    return render_lines(state)
+
+@pytest.fixture
+def frame_9_screen(frame_9_lines):
+    return make_pyte_screen(frame_9_lines)
+
+@pytest.fixture
+def frame_10_lines():
+    from dataclasses import replace
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.actions import AcceptLine, InsertChar
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    mappings = [replace(m, target_value="ATT") if m.ordinal == 3 else m for m in state.mappings]
+    state = replace(state, mappings=mappings)
+    
+    state = reduce(state, AcceptLine())
+    for char in "44PL":
+        state = reduce(state, InsertChar(char))
+    return render_lines(state)
+
+@pytest.fixture
+def frame_10_screen(frame_10_lines):
+    return make_pyte_screen(frame_10_lines)
+
+@pytest.fixture
+def frame_11_lines():
+    from dataclasses import replace
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.actions import AcceptLine, InsertChar
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    mappings = [replace(m, target_value="ATT") if m.ordinal == 3 else m for m in state.mappings]
+    state = replace(state, mappings=mappings)
+    
+    state = reduce(state, AcceptLine())
+    for char in "44PL56789012345678901234":
+        state = reduce(state, InsertChar(char))
+    return render_lines(state)
+
+@pytest.fixture
+def frame_11_screen(frame_11_lines):
+    return make_pyte_screen(frame_11_lines)
 
 @pytest.fixture
 def assert_snapshot(update_snapshots):

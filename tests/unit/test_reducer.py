@@ -18,7 +18,7 @@ from mapping_resolution_tui.actions import (
     AutocompleteBang,
     Backspace,
     BackwardKillWord,
-    ClearFilter,
+    Escape,
     DeleteChar,
     InsertChar,
     KillLine,
@@ -338,7 +338,7 @@ def test_redraw_does_not_mutate_state(state):
 def test_clear_filter_resets_raw_and_cursor(state):
     s = type_text(state, "ab")
     s = reduce(s, InsertChar("!"))  # raw now "ab!"
-    s = reduce(s, ClearFilter())
+    s = reduce(s, Escape())
 
     assert s.filter.raw == ""
     assert s.filter.collision_only is False
@@ -362,7 +362,7 @@ def test_clear_filter_returns_selection_and_scroll_to_the_top(short_state):
     # Regression for the demo bug where Esc left the selection scrolled off-view.
     s = reduce(short_state, InsertChar("9"))
     assert s.selection.selected_ordinal == 9
-    s = reduce(s, ClearFilter())
+    s = reduce(s, Escape())
     assert visible_ordinals(s) == list(range(1, 12))
     assert s.selection.selected_ordinal == 1
     assert s.selection.scroll_offset == 0
@@ -383,7 +383,7 @@ def test_widening_the_filter_resets_selection_and_scroll(short_state):
 # mutation that changes nothing must return the input state unchanged.
 
 def test_clear_filter_on_empty_is_a_noop(state):
-    same = reduce(state, ClearFilter())
+    same = reduce(state, Escape())
     assert same is state
 
 

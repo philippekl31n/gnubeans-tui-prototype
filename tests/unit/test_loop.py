@@ -15,16 +15,19 @@ from mapping_resolution_tui import loop
 from mapping_resolution_tui.actions import (
     AutocompleteBang,
     Backspace,
-    BackwardKillWord,
-    ClearFilter,
+    Escape,
+    AcceptLine,
     DeleteChar,
     InsertChar,
     KillLine,
     KillWord,
+    BackwardKillWord,
     MoveCursorEnd,
     MoveCursorHome,
     MoveCursorLeft,
     MoveCursorRight,
+    MoveSelectionUp,
+    MoveSelectionDown,
     Redraw,
     UnixLineDiscard,
 )
@@ -89,7 +92,9 @@ def test_is_quit_key_accepts_raw_ctrl_c_and_readable_token():
         (Key(name="KEY_END"), MoveCursorEnd()),
         (Key(name="KEY_BACKSPACE"), Backspace()),
         (Key(name="KEY_DELETE"), DeleteChar()),
-        (Key(name="KEY_ESCAPE"), ClearFilter()),
+        (Key(name="KEY_ESCAPE"), Escape()),
+        (Key(name="KEY_ENTER"), AcceptLine()),
+        (Key(name="KEY_UP"), MoveSelectionUp()),
         # readline control chords via raw text
         (CTRL_A, MoveCursorHome()),
         (CTRL_E, MoveCursorEnd()),
@@ -102,7 +107,9 @@ def test_is_quit_key_accepts_raw_ctrl_c_and_readable_token():
         (CTRL_U, UnixLineDiscard()),
         (CTRL_W, BackwardKillWord()),
         (CTRL_L, Redraw()),
-        (ESC, ClearFilter()),
+        (ESC, Escape()),
+        ("\r", AcceptLine()),
+        ("\n", AcceptLine()),
         # meta / Alt word kills
         (META_D, KillWord()),
         (META_BS, BackwardKillWord()),
@@ -122,7 +129,6 @@ def test_key_to_action_maps_supported_keys(key, expected):
 @pytest.mark.parametrize(
     "key",
     [
-        Key(name="KEY_ENTER"),
         CTRL_X,
         CTRL_C,                  # quit is handled by is_quit_key, not key_to_action
         # no-op readline families:
@@ -173,7 +179,7 @@ def test_named_arrow_key_moves_cursor_via_loop():
 
 def test_unsupported_keys_do_not_rerender():
     # FR30: an unsupported key produces no new frame and no state change.
-    _, frames = run_keys([Key(name="KEY_ENTER"), CTRL_X, CTRL_G])
+    _, frames = run_keys([CTRL_X, CTRL_G])
     assert len(frames) == 1  # only the initial frame
 
 

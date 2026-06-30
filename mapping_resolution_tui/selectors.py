@@ -89,11 +89,8 @@ def select_current_target_value(mapping: Mapping) -> str:
 
 
 def select_active_sources(mapping: Mapping) -> list[Source]:
-    return [
-        source
-        for source in mapping.sources
-        if select_source_effective_value(source) is not None
-    ]
+    """Return all sources with non-empty effective values."""
+    return [s for s in mapping.sources if select_source_effective_value(s)]
 
 
 def select_ghost_suffix(state: "AppState", mapping: Mapping) -> str:
@@ -337,12 +334,34 @@ def select_footer_content(state: "AppState") -> FooterContent:
             else FooterHint.EDIT_MAPPINGS
         )
         return FooterContent(hints=(FooterHint.SCROLL, FooterHint.PAGE_SCROLL, action))
-    return FooterContent(hints=(
-        FooterHint.TYPE_TO_EDIT,
-        FooterHint.SELECT_SOURCE,
-        FooterHint.SUBMIT,
-        FooterHint.CANCEL,
-    ))
+    hints: list[FooterHint] = []
+    error: str | None = None
+    
+    if state.edit and state.edit.validation.status == "INVALID":
+        error = state.edit.validation.error_message
+    else:
+        hints.append(FooterHint.TYPE_TO_EDIT)
+        
+    hints.append(FooterHint.SELECT_SOURCE)
+    
+    if state.edit and state.edit.validation.status == "VALID":
+        mapping = next(m for m in state.mappings if m.ordinal == state.edit.mapping_ordinal)
+        
+        effective_text = state.edit.buffer + select_ghost_suffix(state, mapping) if not state.edit.buffer else state.edit.buffer
+        if not state.edit.buffer and mapping.target_value is None:
+            effective_text = select_ghost_suffix(state, mapping)
+            
+        is_collision = False
+        for m in state.mappings:
+            if m.ordinal != mapping.ordinal and select_current_target_value(m) == effective_text:
+                is_collision = True
+                break
+                
+        if not is_collision and effective_text != mapping.target_value:
+            hints.append(FooterHint.SUBMIT)
+            
+    hints.append(FooterHint.CANCEL)
+    return FooterContent(hints=tuple(hints), error=error)
 
 
 def validate_mapping_invariants(config: AppConfig, mapping: Mapping) -> None:

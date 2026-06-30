@@ -13,7 +13,8 @@ from mapping_resolution_tui.actions import (
     AutocompleteBang,
     Backspace,
     BackwardKillWord,
-    ClearFilter,
+    Escape,
+    AcceptLine,
     DeleteChar,
     InsertChar,
     KillLine,
@@ -260,7 +261,43 @@ def _forward_word_end(raw: str, cursor: int) -> int:
 # ── per-action handlers ─────────────────────────────────────────────────────
 
 
+def _validate_edit(state: AppState, edit: EditState, new_buffer: str) -> EditState:
+    from mapping_resolution_tui.state import TargetValidationContext
+    from mapping_resolution_tui.selectors import select_default_source_value
+    mapping = next(m for m in state.mappings if m.ordinal == edit.mapping_ordinal)
+    
+    effective_text = new_buffer
+    if mapping.target_value is None:
+        default_val = select_default_source_value(mapping)
+        if default_val.startswith(new_buffer):
+            effective_text = default_val
+        
+    is_empty_target = mapping.target_value is None and new_buffer == ""
+    context = TargetValidationContext(
+        is_concrete_buffer=not is_empty_target,
+        is_ghost_only_default=is_empty_target,
+        mapping=mapping,
+    )
+    validation = state.config.target_policy.validate(effective_text, context)
+    return replace(edit, buffer=new_buffer, validation=validation)
+
 def _reduce_insert_char(state: AppState, action: InsertChar) -> AppState:
+    if state.mode == Mode.EDITING:
+        edit = state.edit
+        from mapping_resolution_tui.state import FocusRegion
+        new_buffer = edit.buffer[:edit.cursor] + action.char + edit.buffer[edit.cursor:]
+        if len(new_buffer) > state.config.target_policy.max_token_length:
+            return state  # Discard if too long (max_length_flash_until to be added later)
+            
+        new_edit = replace(
+            edit,
+            cursor=edit.cursor + len(action.char),
+            focus_region=FocusRegion.TOKEN_INPUT,
+            source_pointer_index=None,
+            source_entry_buffer=None,
+        )
+        return replace(state, edit=_validate_edit(state, new_edit, new_buffer))
+        
     cursor = state.filter.cursor
     raw = state.filter.raw
     new_raw = raw[:cursor] + action.char + raw[cursor:]
@@ -268,22 +305,45 @@ def _reduce_insert_char(state: AppState, action: InsertChar) -> AppState:
 
 
 def _reduce_move_cursor_left(state: AppState, action: MoveCursorLeft) -> AppState:
+    if state.mode == Mode.EDITING:
+        return replace(state, edit=replace(state.edit, cursor=max(0, state.edit.cursor - 1)))
     return _with_filter(state, raw=state.filter.raw, cursor=state.filter.cursor - 1)
 
 
 def _reduce_move_cursor_right(state: AppState, action: MoveCursorRight) -> AppState:
+    if state.mode == Mode.EDITING:
+        return replace(state, edit=replace(state.edit, cursor=min(len(state.edit.buffer), state.edit.cursor + 1)))
     return _with_filter(state, raw=state.filter.raw, cursor=state.filter.cursor + 1)
 
 
 def _reduce_move_cursor_home(state: AppState, action: MoveCursorHome) -> AppState:
+    if state.mode == Mode.EDITING:
+        return replace(state, edit=replace(state.edit, cursor=0))
     return _with_filter(state, raw=state.filter.raw, cursor=0)
 
 
 def _reduce_move_cursor_end(state: AppState, action: MoveCursorEnd) -> AppState:
+    if state.mode == Mode.EDITING:
+        return replace(state, edit=replace(state.edit, cursor=len(state.edit.buffer)))
     return _with_filter(state, raw=state.filter.raw, cursor=len(state.filter.raw))
 
 
 def _reduce_backspace(state: AppState, action: Backspace) -> AppState:
+    if state.mode == Mode.EDITING:
+        edit = state.edit
+        if edit.cursor == 0:
+            return state
+        from mapping_resolution_tui.state import FocusRegion
+        new_buffer = edit.buffer[:edit.cursor - 1] + edit.buffer[edit.cursor:]
+        new_edit = replace(
+            edit,
+            cursor=edit.cursor - 1,
+            focus_region=FocusRegion.TOKEN_INPUT,
+            source_pointer_index=None,
+            source_entry_buffer=None,
+        )
+        return replace(state, edit=_validate_edit(state, new_edit, new_buffer))
+        
     cursor = state.filter.cursor
     raw = state.filter.raw
     if cursor == 0:
@@ -293,6 +353,20 @@ def _reduce_backspace(state: AppState, action: Backspace) -> AppState:
 
 
 def _reduce_delete_char(state: AppState, action: DeleteChar) -> AppState:
+    if state.mode == Mode.EDITING:
+        edit = state.edit
+        if edit.cursor >= len(edit.buffer):
+            return state
+        from mapping_resolution_tui.state import FocusRegion
+        new_buffer = edit.buffer[:edit.cursor] + edit.buffer[edit.cursor + 1:]
+        new_edit = replace(
+            edit,
+            focus_region=FocusRegion.TOKEN_INPUT,
+            source_pointer_index=None,
+            source_entry_buffer=None,
+        )
+        return replace(state, edit=_validate_edit(state, new_edit, new_buffer))
+        
     cursor = state.filter.cursor
     raw = state.filter.raw
     if cursor >= len(raw):
@@ -302,6 +376,20 @@ def _reduce_delete_char(state: AppState, action: DeleteChar) -> AppState:
 
 
 def _reduce_kill_line(state: AppState, action: KillLine) -> AppState:
+    if state.mode == Mode.EDITING:
+        edit = state.edit
+        if edit.cursor >= len(edit.buffer):
+            return state
+        from mapping_resolution_tui.state import FocusRegion
+        new_buffer = edit.buffer[:edit.cursor]
+        new_edit = replace(
+            edit,
+            focus_region=FocusRegion.TOKEN_INPUT,
+            source_pointer_index=None,
+            source_entry_buffer=None,
+        )
+        return replace(state, edit=_validate_edit(state, new_edit, new_buffer))
+        
     cursor = state.filter.cursor
     if cursor >= len(state.filter.raw):
         return state  # no-op: nothing after the cursor to kill
@@ -309,6 +397,21 @@ def _reduce_kill_line(state: AppState, action: KillLine) -> AppState:
 
 
 def _reduce_unix_line_discard(state: AppState, action: UnixLineDiscard) -> AppState:
+    if state.mode == Mode.EDITING:
+        edit = state.edit
+        if edit.cursor == 0:
+            return state
+        from mapping_resolution_tui.state import FocusRegion
+        new_buffer = edit.buffer[edit.cursor:]
+        new_edit = replace(
+            edit,
+            cursor=0,
+            focus_region=FocusRegion.TOKEN_INPUT,
+            source_pointer_index=None,
+            source_entry_buffer=None,
+        )
+        return replace(state, edit=_validate_edit(state, new_edit, new_buffer))
+        
     cursor = state.filter.cursor
     if cursor == 0:
         return state  # no-op: nothing before the cursor to discard
@@ -316,6 +419,21 @@ def _reduce_unix_line_discard(state: AppState, action: UnixLineDiscard) -> AppSt
 
 
 def _reduce_kill_word(state: AppState, action: KillWord) -> AppState:
+    if state.mode == Mode.EDITING:
+        edit = state.edit
+        end = _forward_word_end(edit.buffer, edit.cursor)
+        if end == edit.cursor:
+            return state
+        from mapping_resolution_tui.state import FocusRegion
+        new_buffer = edit.buffer[:edit.cursor] + edit.buffer[end:]
+        new_edit = replace(
+            edit,
+            focus_region=FocusRegion.TOKEN_INPUT,
+            source_pointer_index=None,
+            source_entry_buffer=None,
+        )
+        return replace(state, edit=_validate_edit(state, new_edit, new_buffer))
+        
     cursor = state.filter.cursor
     raw = state.filter.raw
     end = _forward_word_end(raw, cursor)
@@ -326,6 +444,22 @@ def _reduce_kill_word(state: AppState, action: KillWord) -> AppState:
 
 
 def _reduce_backward_kill_word(state: AppState, action: BackwardKillWord) -> AppState:
+    if state.mode == Mode.EDITING:
+        edit = state.edit
+        start = _backward_word_start(edit.buffer, edit.cursor)
+        if start == edit.cursor:
+            return state
+        from mapping_resolution_tui.state import FocusRegion
+        new_buffer = edit.buffer[:start] + edit.buffer[edit.cursor:]
+        new_edit = replace(
+            edit,
+            cursor=start,
+            focus_region=FocusRegion.TOKEN_INPUT,
+            source_pointer_index=None,
+            source_entry_buffer=None,
+        )
+        return replace(state, edit=_validate_edit(state, new_edit, new_buffer))
+        
     cursor = state.filter.cursor
     raw = state.filter.raw
     start = _backward_word_start(raw, cursor)
@@ -349,7 +483,11 @@ def _reduce_redraw(state: AppState, action: Redraw) -> AppState:
     return state  # ctrl+l re-renders only; never mutates state (spec S5.1)
 
 
-def _reduce_clear_filter(state: AppState, action: ClearFilter) -> AppState:
+def _reduce_escape(state: AppState, action: Escape) -> AppState:
+    if state.mode == Mode.EDITING:
+        # Cancel edit
+        return replace(state, mode=Mode.BROWSING, edit=None)
+        
     if state.filter.raw == "":
         return state  # no-op: filter already empty (cursor is clamped to 0)
     # Esc clears the filter AND returns the browse view to the top: selection to
@@ -363,6 +501,56 @@ def _reduce_clear_filter(state: AppState, action: ClearFilter) -> AppState:
         cleared,
         selection=SelectionState(selected_ordinal=first_ordinal, scroll_offset=0),
     )
+
+
+def _reduce_accept_line(state: AppState, action: AcceptLine) -> AppState:
+    if state.mode == Mode.BROWSING:
+        visible = select_visible_rows(state)
+        if not visible:
+            return state
+            
+        selected_ordinal = state.selection.selected_ordinal
+        mapping = next((m for m in visible if m.ordinal == selected_ordinal), None)
+        if not mapping:
+            return state
+            
+        from mapping_resolution_tui.state import EditState, FocusRegion, TargetValidationContext
+        from mapping_resolution_tui.selectors import select_ghost_suffix
+        # Initialize edit state with current target_value or empty string
+        buffer_val = mapping.target_value if mapping.target_value is not None else ""
+        
+        from mapping_resolution_tui.selectors import select_default_source_value
+        is_empty_target = mapping.target_value is None and buffer_val == ""
+        effective_text = buffer_val
+        if is_empty_target:
+            effective_text = select_default_source_value(mapping)
+            
+        context = TargetValidationContext(
+            is_concrete_buffer=not is_empty_target,
+            is_ghost_only_default=is_empty_target,
+            mapping=mapping,
+        )
+        validation = state.config.target_policy.validate(effective_text, context)
+        
+        return replace(
+            state,
+            mode=Mode.EDITING,
+            edit=EditState(
+                mapping_ordinal=selected_ordinal,
+                buffer=buffer_val,
+                cursor=len(buffer_val),
+                focus_region=FocusRegion.TOKEN_INPUT,
+                source_pointer_index=None,
+                source_entry_buffer=None,
+                validation=validation,
+                max_length_flash_until=None,
+            )
+        )
+    elif state.mode == Mode.EDITING:
+        # Just validate for now, actual submit comes later
+        return state
+        
+    return state
 
 
 def _reduce_move_selection_up(state: AppState, action: MoveSelectionUp) -> AppState:
@@ -395,7 +583,8 @@ _HANDLERS = {
     BackwardKillWord: _reduce_backward_kill_word,
     AutocompleteBang: _reduce_autocomplete_bang,
     Redraw: _reduce_redraw,
-    ClearFilter: _reduce_clear_filter,
+    Escape: _reduce_escape,
+    AcceptLine: _reduce_accept_line,
     MoveSelectionUp: _reduce_move_selection_up,
     MoveSelectionDown: _reduce_move_selection_down,
     PageUp: _reduce_page_up,

@@ -4,7 +4,7 @@ Renderer module: converts AppState into a list of styled terminal lines.
 
 import re
 
-from mapping_resolution_tui.state import AppState, FooterHint
+from mapping_resolution_tui.state import AppState, FooterHint, Mode
 
 from mapping_resolution_tui.selectors import (
     select_body_capacity,
@@ -19,6 +19,7 @@ from mapping_resolution_tui.selectors import (
     select_unresolved_collision_count,
     select_unresolved_collision_ordinals,
     select_visible_rows,
+    select_edit_render_row,
 )
 
 _BOLD = "\x1b[1m"
@@ -121,20 +122,26 @@ def render_lines(state: AppState) -> list[str]:
         )
 
     # ── prompt ────────────────────────────────────────────────────────────────
-    prompt_content = select_filter_prompt(state, unresolved_count)
-    if prompt_content.filter_raw == "!":
-        # Metafilter only (spec §6.5): the literal ! is followed by the dim
-        # "Type to filter" ghost, the caret shown as its reverse-video first
-        # character — never a trailing cursor block after the ! itself.
-        first, rest = "T", "ype to filter"
-        prompt = f"  Filter: !{_REV}{first}{_RESET}{_DIM}{rest}{_RESET}"
-    elif prompt_content.filter_raw:
-        body = _render_filter_cursor(prompt_content.filter_raw, prompt_content.filter_cursor)
-        prompt = f"  Filter: {body}"
+    if state.mode == Mode.EDITING:
+        mapping = next(m for m in state.mappings if m.ordinal == state.edit.mapping_ordinal)
+        from mapping_resolution_tui.selectors import select_default_source_value
+        default_val = select_default_source_value(mapping)
+        prompt = f'  Editing mapping for "{default_val}":'
     else:
-        hint_text = "Tab to view collisions" if prompt_content.collision_hint_visible else "Type to filter"
-        first, rest = hint_text[0], hint_text[1:]
-        prompt = f"  Filter: {_REV}{first}{_RESET}{_DIM}{rest}{_RESET}"
+        prompt_content = select_filter_prompt(state, unresolved_count)
+        if prompt_content.filter_raw == "!":
+            # Metafilter only (spec §6.5): the literal ! is followed by the dim
+            # "Type to filter" ghost, the caret shown as its reverse-video first
+            # character — never a trailing cursor block after the ! itself.
+            first, rest = "T", "ype to filter"
+            prompt = f"  Filter: !{_REV}{first}{_RESET}{_DIM}{rest}{_RESET}"
+        elif prompt_content.filter_raw:
+            body = _render_filter_cursor(prompt_content.filter_raw, prompt_content.filter_cursor)
+            prompt = f"  Filter: {body}"
+        else:
+            hint_text = "Tab to view collisions" if prompt_content.collision_hint_visible else "Type to filter"
+            first, rest = hint_text[0], hint_text[1:]
+            prompt = f"  Filter: {_REV}{first}{_RESET}{_DIM}{rest}{_RESET}"
 
     # ── table header ──────────────────────────────────────────────────────────
     source_label = config.source_column_label
@@ -158,27 +165,102 @@ def render_lines(state: AppState) -> list[str]:
         is_selected = mapping.ordinal == state.selection.selected_ordinal
         collision = "!" if mapping.ordinal in collision_ordinals else " "
         cursor = "▸" if is_selected else " "
-        target = select_current_target_value(mapping)
-        source = select_source_display(select_default_source(mapping))
+        
+        if state.mode == Mode.EDITING and is_selected:
+            edit_content = select_edit_render_row(state, mapping)
+            buffer = edit_content.buffer_text
+            ghost = edit_content.ghost_suffix
+            cursor_idx = edit_content.cursor_offset
+            
+            ordinal_display = str(mapping.ordinal).rjust(ordinal_width)
+            
+            # Combine buffer and ghost, apply cursor reverse-video
+            token_display_list = []
+            full_text = buffer + ghost
+            for i, ch in enumerate(full_text):
+                if i == cursor_idx:
+                    token_display_list.append(f"{_REV}{ch}{_RESET}")
+                elif i >= len(buffer):
+                    token_display_list.append(f"{_DIM}{ch}{_RESET}")
+                else:
+                    token_display_list.append(ch)
+            if cursor_idx >= len(full_text):
+                token_display_list.append(f"{_REV} {_RESET}")
+            
+            token_display = "".join(token_display_list)
+            
+            # Calculate lengths
+            unformatted_len = len(full_text)
+            if cursor_idx >= len(full_text):
+                unformatted_len += 1
+                
+            val_icon = edit_content.validation_icon or ""
+            
+            first_src = edit_content.visible_sources[0] if edit_content.visible_sources else None
+            first_source_str = select_source_display(first_src.source) if first_src else ""
+            ptr_0 = "▸" if (first_src and first_src.is_pointed) else " "
+            gap_str_0 = f"{ptr_0} " if ptr_0 != " " else "  "
+            
+            # The fixed width area before ┃ is exactly max_token_length + 3
+            # It consists of:
+            # 1. token_display (ANSI formatted, unformatted length is `unformatted_len`)
+            # 2. Spaces up to max_token_length + 1
+            # 3. gap_str_0 (2 chars)
+            # 4. val_icon overwrites a character at `unformatted_len + 1` (capped at max_token_length + 1)
+            
+            area_len = max_token_length + 3
+            icon_idx = min(unformatted_len + 1, max_token_length + 1)
+            
+            # Build the unformatted remainder (everything after token_display)
+            remainder = [" "] * (area_len - unformatted_len)
+            
+            # Place gap_str_0 at the end of the remainder
+            remainder[-2] = gap_str_0[0]
+            remainder[-1] = gap_str_0[1]
+            
+            # Place val_icon
+            if val_icon:
+                rem_idx = icon_idx - unformatted_len
+                if 0 <= rem_idx < len(remainder):
+                    remainder[rem_idx] = val_icon
+                    
+            token_cell_with_gap = token_display + "".join(remainder)
+            
+            row = (
+                f"{cursor} {ordinal_display}{' ' * _ORDINAL_GAP}"
+                f"{collision}{token_cell_with_gap}┃ {first_source_str}"
+            )
+            body_lines.append(row)
+            
+            # Subsequent lines for other sources
+            padding_len = ordinal_width + _ORDINAL_GAP + max_token_length + 3
+            padding = " " * padding_len
+            for src in edit_content.visible_sources[1:]:
+                ptr = "▸" if src.is_pointed else " "
+                gap_str = f"{ptr} " if ptr != " " else "  "
+                body_lines.append(f"{padding}{gap_str}┃ {select_source_display(src.source)}")
+                
+        else:
+            target = select_current_target_value(mapping)
+            source = select_source_display(select_default_source(mapping))
 
-        # Bold the matched spans in the ordinal display and target token cell.
-        # Both span computations live in selectors; the ordinal spans are already
-        # shifted into the right-aligned field, so they apply to the padded cell.
-        ordinal_display = str(mapping.ordinal).rjust(ordinal_width)
-        ordinal_cell = _apply_bold_spans(
-            ordinal_display,
-            select_ordinal_match_spans(mapping.ordinal, filter_text, ordinal_width),
-        )
-        token_pad = " " * max(0, max_token_length - len(target))
-        token_cell = _apply_bold_spans(
-            target, select_match_spans(target, filter_text)
-        ) + token_pad
+            ordinal_display = str(mapping.ordinal).rjust(ordinal_width)
+            ordinal_cell = _apply_bold_spans(
+                ordinal_display,
+                select_ordinal_match_spans(mapping.ordinal, filter_text, ordinal_width),
+            )
+            token_pad = " " * max(0, max_token_length - len(target))
+            token_cell = _apply_bold_spans(
+                target, select_match_spans(target, filter_text)
+            ) + token_pad
 
-        row = (
-            f"{cursor} {ordinal_cell}{' ' * _ORDINAL_GAP}"
-            f"{collision}{token_cell}{' ' * _SOURCE_GAP}{source}"
-        )
-        body_lines.append(row)
+            row = (
+                f"{cursor} {ordinal_cell}{' ' * _ORDINAL_GAP}"
+                f"{collision}{token_cell}{' ' * _SOURCE_GAP}{source}"
+            )
+            if state.mode == Mode.EDITING:
+                row = f"{_DIM}{row}{_RESET}"
+            body_lines.append(row)
 
     if not shown:
         body_lines.append("")

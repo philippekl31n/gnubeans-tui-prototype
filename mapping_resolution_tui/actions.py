@@ -96,8 +96,20 @@ class Redraw:
 
 
 @dataclass(frozen=True)
-class ClearFilter:
-    """Clear ``filter.raw`` and reset ``filter.cursor`` to 0 (Esc)."""
+class Escape:
+    """Clear ``filter.raw`` and reset ``filter.cursor`` to 0 (Esc).
+    
+    In EDITING mode, this cancels the edit and returns to BROWSING mode.
+    """
+
+
+@dataclass(frozen=True)
+class AcceptLine:
+    """Accept the current line (Enter / Return).
+    
+    In BROWSING mode, enters EDITING mode for the selected row.
+    In EDITING mode, validates and submits the edit.
+    """
 
 
 @dataclass(frozen=True)
@@ -135,7 +147,8 @@ Action = (
     | BackwardKillWord
     | AutocompleteBang
     | Redraw
-    | ClearFilter
+    | Escape
+    | AcceptLine
     | MoveSelectionUp
     | MoveSelectionDown
     | PageUp
