@@ -177,21 +177,26 @@ def render_lines(state: AppState) -> list[str]:
             # Combine buffer and ghost, apply cursor reverse-video
             token_display_list = []
             full_text = buffer + ghost
+            
+            visual_cursor = cursor_idx
+            if cursor_idx == len(full_text) and len(buffer) == max_token_length and not ghost:
+                visual_cursor = max_token_length - 1
+
             for i, ch in enumerate(full_text):
-                if i == cursor_idx:
+                if i == visual_cursor:
                     token_display_list.append(f"{_REV}{ch}{_RESET}")
                 elif i >= len(buffer):
                     token_display_list.append(f"{_DIM}{ch}{_RESET}")
                 else:
                     token_display_list.append(ch)
-            if cursor_idx >= len(full_text):
+            if cursor_idx >= len(full_text) and visual_cursor == cursor_idx:
                 token_display_list.append(f"{_REV} {_RESET}")
             
             token_display = "".join(token_display_list)
             
             # Calculate lengths
             unformatted_len = len(full_text)
-            if cursor_idx >= len(full_text):
+            if cursor_idx >= len(full_text) and visual_cursor == cursor_idx:
                 unformatted_len += 1
                 
             val_icon = edit_content.validation_icon or ""
