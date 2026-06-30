@@ -13,6 +13,7 @@ import pytest
 
 from mapping_resolution_tui import loop
 from mapping_resolution_tui.actions import (
+    AcceptLine,
     AutocompleteBang,
     Backspace,
     BackwardKillWord,
@@ -44,6 +45,7 @@ class Key(str):
 CTRL_A, CTRL_B, CTRL_D, CTRL_E, CTRL_F = "\x01", "\x02", "\x04", "\x05", "\x06"
 CTRL_H, CTRL_K, CTRL_L, CTRL_U, CTRL_W = "\x08", "\x0b", "\x0c", "\x15", "\x17"
 CTRL_C, DEL, ESC, TAB = "\x03", "\x7f", "\x1b", "\t"
+CTRL_J, CTRL_M = "\x0a", "\x0d"  # accept-line aliases (Enter)
 META_D, META_BS = "\x1bd", "\x1b\x7f"
 # No-op readline families (abort, quoted-insert, undo, transpose, yank, search).
 CTRL_G, CTRL_Q, CTRL_V, CTRL_R, CTRL_T, CTRL_Y, CTRL_US = (
@@ -109,6 +111,10 @@ def test_is_quit_key_accepts_raw_ctrl_c_and_readable_token():
         # Tab / ctrl+i -> bang autocomplete (the reducer applies the ghost gate)
         (Key(name="KEY_TAB"), AutocompleteBang()),
         (TAB, AutocompleteBang()),
+        # Enter / ctrl+j / ctrl+m -> accept-line (edit selected / submit)
+        (Key(name="KEY_ENTER"), AcceptLine()),
+        (CTRL_M, AcceptLine()),
+        (CTRL_J, AcceptLine()),
         # printable insertion (incl. a literal bang)
         ("a", InsertChar("a")),
         ("3", InsertChar("3")),
@@ -122,7 +128,6 @@ def test_key_to_action_maps_supported_keys(key, expected):
 @pytest.mark.parametrize(
     "key",
     [
-        Key(name="KEY_ENTER"),
         CTRL_X,
         CTRL_C,                  # quit is handled by is_quit_key, not key_to_action
         # no-op readline families:
@@ -173,7 +178,7 @@ def test_named_arrow_key_moves_cursor_via_loop():
 
 def test_unsupported_keys_do_not_rerender():
     # FR30: an unsupported key produces no new frame and no state change.
-    _, frames = run_keys([Key(name="KEY_ENTER"), CTRL_X, CTRL_G])
+    _, frames = run_keys([CTRL_X, CTRL_G])
     assert len(frames) == 1  # only the initial frame
 
 

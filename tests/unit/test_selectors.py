@@ -713,3 +713,101 @@ def test_edit_render_row_surfaces_policy_validation_result():
     assert row.validation_icon == "✗"
     assert row.validation_error == "must start with A-Z"
     assert row.ghost_suffix == ""
+
+
+# ── live collision recompute for rendering (TASK-006, spec §3.2 / FR8) ────────
+
+
+def test_render_collision_ordinals_browsing_matches_committed():
+    from mapping_resolution_tui.reducer import make_initial_state
+    from mapping_resolution_tui.selectors import (
+        select_render_collision_ordinals,
+        select_unresolved_collision_ordinals,
+    )
+    from tests.fixtures.storyboard import make_config, make_mappings
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+
+    assert select_render_collision_ordinals(state) == frozenset({2, 3})
+    assert select_render_collision_ordinals(state) == (
+        select_unresolved_collision_ordinals(state.mappings)
+    )
+
+
+def test_render_collision_ordinals_substitutes_live_buffer():
+    from mapping_resolution_tui.selectors import select_render_collision_ordinals
+
+    # Editing the AT-T collision row (ordinal 3) with buffer "ATT" resolves the
+    # collision live: both AT-T markers disappear.
+    state = _editing_state(buffer="ATT", cursor=3, ordinal=3)
+
+    assert select_render_collision_ordinals(state) == frozenset()
+
+
+def test_render_collision_ordinals_empty_buffer_falls_back_to_default():
+    from mapping_resolution_tui.selectors import select_render_collision_ordinals
+
+    # An empty buffer reverts to the default "AT-T", so the pair still collides.
+    state = _editing_state(buffer="", cursor=0, ordinal=3)
+
+    assert select_render_collision_ordinals(state) == frozenset({2, 3})
+
+
+# ── EDITING footer submit-gating + error (TASK-006, spec §6.6) ───────────────
+
+
+def test_footer_editing_valid_buffer_offers_submit():
+    from mapping_resolution_tui.selectors import select_footer_content
+    from mapping_resolution_tui.state import FooterHint, ValidationState
+
+    state = _editing_state(
+        buffer="ATT",
+        cursor=3,
+        validation=ValidationState(status="VALID", icon="✓", error_message=None),
+    )
+
+    footer = select_footer_content(state)
+
+    assert footer.hints == (
+        FooterHint.TYPE_TO_EDIT,
+        FooterHint.SELECT_SOURCE,
+        FooterHint.SUBMIT,
+        FooterHint.CANCEL,
+    )
+    assert footer.error is None
+
+
+def test_footer_editing_empty_buffer_omits_submit():
+    from mapping_resolution_tui.selectors import select_footer_content
+    from mapping_resolution_tui.state import FooterHint
+
+    state = _editing_state(buffer="", cursor=0)  # default validation is EMPTY
+
+    footer = select_footer_content(state)
+
+    assert footer.hints == (
+        FooterHint.TYPE_TO_EDIT,
+        FooterHint.SELECT_SOURCE,
+        FooterHint.CANCEL,
+    )
+    assert footer.error is None
+
+
+def test_footer_editing_invalid_buffer_leads_with_error():
+    from mapping_resolution_tui.selectors import select_footer_content
+    from mapping_resolution_tui.state import FooterHint, ValidationState
+
+    state = _editing_state(
+        buffer="44PL",
+        cursor=4,
+        validation=ValidationState(
+            status="INVALID", icon="✗", error_message="must start with A-Z"
+        ),
+    )
+
+    footer = select_footer_content(state)
+
+    assert footer.hints == (FooterHint.SELECT_SOURCE, FooterHint.CANCEL)
+    assert footer.error == "must start with A-Z"
+    assert FooterHint.SUBMIT not in footer.hints
+    assert FooterHint.TYPE_TO_EDIT not in footer.hints

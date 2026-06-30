@@ -20,6 +20,7 @@ from typing import Callable, Iterable, Optional
 import blessed
 
 from mapping_resolution_tui.actions import (
+    AcceptLine,
     Action,
     AutocompleteBang,
     Backspace,
@@ -60,6 +61,7 @@ _NAME_ACTIONS: dict[str, type] = {
     "KEY_BACKSPACE": Backspace,
     "KEY_DELETE": DeleteChar,
     "KEY_ESCAPE": ClearFilter,
+    "KEY_ENTER": AcceptLine,
     "KEY_UP": MoveSelectionUp,
     "KEY_DOWN": MoveSelectionDown,
     "KEY_SUP": PageUp,
@@ -94,6 +96,8 @@ _CTRL_ACTIONS: dict[str, type] = {
     "\x10": PageUp,            # ctrl+p  previous-history -> PageUp
     "\x0e": PageDown,          # ctrl+n  next-history -> PageDown
     "\x0c": Redraw,            # ctrl+l  clear-screen / redraw only
+    "\x0d": AcceptLine,        # ctrl+m / Enter  accept-line
+    "\x0a": AcceptLine,        # ctrl+j          accept-line
     "\x1b": ClearFilter,       # ESC     clear filter
 }
 

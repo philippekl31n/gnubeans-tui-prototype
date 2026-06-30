@@ -4,20 +4,24 @@ Renderer module: converts AppState into a list of styled terminal lines.
 
 import re
 
-from mapping_resolution_tui.state import AppState, FooterHint
+from mapping_resolution_tui.state import AppState, FocusRegion, FooterHint, Mode
 
 from mapping_resolution_tui.selectors import (
+    EditRenderRow,
+    EditSourceRow,
     select_body_capacity,
     select_body_rows,
     select_current_target_value,
     select_default_source,
+    select_default_source_value,
+    select_edit_render_row,
     select_filter_prompt,
     select_footer_content,
     select_match_spans,
     select_ordinal_match_spans,
+    select_render_collision_ordinals,
     select_source_display,
     select_unresolved_collision_count,
-    select_unresolved_collision_ordinals,
     select_visible_rows,
 )
 
@@ -83,13 +87,175 @@ def _render_filter_cursor(raw: str, cursor: int) -> str:
     return "".join(out)
 
 
+# ── EDITING row rendering (spec §6.3 / §7) ───────────────────────────────────
+
+
+class _ColumnRow:
+    """Left-to-right row builder that tracks the current 0-based display column.
+
+    ANSI styling is zero-width, so styled spans advance the column only by their
+    visible width; ``pad_to`` fills spaces up to a target column. This lets the
+    edit row place the cursor, validation icon, source pointer, divider, and
+    source text at the exact §6.3 columns regardless of inline styling.
+    """
+
+    def __init__(self) -> None:
+        self._parts: list[str] = []
+        self.col = 0
+
+    def pad_to(self, target_col: int) -> None:
+        if target_col > self.col:
+            self._parts.append(" " * (target_col - self.col))
+            self.col = target_col
+
+    def emit(self, text: str, width: int, pre: str = "", post: str = "") -> None:
+        self._parts.append(pre + text + post)
+        self.col += width
+
+    def build(self) -> str:
+        return "".join(self._parts)
+
+
+def _render_edit_token_row(
+    render_row: EditRenderRow,
+    ordinal_str: str,
+    W: int,
+    M: int,
+    collision: str,
+) -> str:
+    """Render the token-input row of the expanded edit block (spec §6.3 / §7).
+
+    Lays out the row cursor, ordinal, collision marker, the buffer with its
+    reverse-video cursor, the derived ghost suffix (dim), the validation icon
+    (two columns past the cursor, capped at the token-field end), and the first
+    active source after the divider.
+    """
+    token0 = 5 + W           # token field start
+    pointer0 = 6 + W + M     # source pointer / capped-icon column
+    div0 = 8 + W + M         # source divider column
+    src0 = 10 + W + M        # source text column
+
+    buffer = render_row.buffer
+    ghost = render_row.ghost_suffix
+    cursor = render_row.cursor
+    # A ghost-only/empty buffer carries no concrete value, so no icon renders.
+    icon = render_row.validation_icon if buffer != "" else None
+
+    row = _ColumnRow()
+    cursor_glyph = "▸" if render_row.focus_region == FocusRegion.TOKEN_INPUT else " "
+    row.emit(cursor_glyph, 1)
+    row.emit(" ", 1)
+    row.emit(ordinal_str.rjust(W), W)
+    row.emit(" " * _ORDINAL_GAP, _ORDINAL_GAP)
+    row.emit(collision, 1)
+    # token field: buffer (reverse-video at cursor) then ghost suffix
+    for i, ch in enumerate(buffer):
+        if i == cursor:
+            row.emit(ch, 1, _REV, _RESET)
+        else:
+            row.emit(ch, 1)
+    if cursor == len(buffer):
+        if ghost:
+            row.emit(ghost[0], 1, _REV, _RESET)
+            if len(ghost) > 1:
+                row.emit(ghost[1:], len(ghost) - 1, _DIM, _RESET)
+        else:
+            row.emit(" ", 1, _REV, _RESET)
+    # validation icon: cursor + 2, capped at the token-field end (spec §6.3)
+    if icon is not None:
+        icon_col = min(token0 + cursor + 2, pointer0)
+        if icon_col >= row.col:
+            row.pad_to(icon_col)
+            row.emit(icon, 1)
+    # first active source shares the token-input display row (spec §8.2)
+    if render_row.sources:
+        first = render_row.sources[0]
+        if first.is_pointer:
+            row.pad_to(pointer0)
+            row.emit("▸", 1)
+        row.pad_to(div0)
+        row.emit("┃", 1)
+        row.pad_to(src0)
+        row.emit(first.display, len(first.display))
+    return row.build()
+
+
+def _render_edit_source_row(source: EditSourceRow, W: int, M: int) -> str:
+    """Render an additional source line of the expanded edit block (spec §7.4)."""
+    pointer0 = 6 + W + M
+    div0 = 8 + W + M
+    src0 = 10 + W + M
+    row = _ColumnRow()
+    if source.is_pointer:
+        row.pad_to(pointer0)
+        row.emit("▸", 1)
+    row.pad_to(div0)
+    row.emit("┃", 1)
+    row.pad_to(src0)
+    row.emit(source.display, len(source.display))
+    return row.build()
+
+
+def _render_dim_context_row(
+    mapping, W: int, M: int, collision_ordinals: frozenset[int]
+) -> str:
+    """Render a non-edited context row, super-dimmed, with no row cursor (frame 9).
+
+    Surrounding rows render in the browsing grid but fully dim while a row is
+    expanded for editing; the collision marker uses the live edit-aware ordinals.
+    """
+    collision = "!" if mapping.ordinal in collision_ordinals else " "
+    ordinal_display = str(mapping.ordinal).rjust(W)
+    target = select_current_target_value(mapping)
+    token_cell = target + " " * max(0, M - len(target))
+    source = select_source_display(select_default_source(mapping))
+    row = (
+        f"  {ordinal_display}{' ' * _ORDINAL_GAP}"
+        f"{collision}{token_cell}{' ' * _SOURCE_GAP}{source}"
+    )
+    return f"{_DIM}{row}{_RESET}"
+
+
+def _render_editing_body(
+    state: AppState, W: int, M: int, collision_ordinals: frozenset[int]
+) -> list[str]:
+    """Allocate and render the EDITING table body (spec §8.2 anchored block).
+
+    The expanded edit block for the selected mapping anchors the body as high as
+    possible; following context rows fill the remaining capacity (dim). Preceding
+    rows are never backfilled above the anchor.
+    """
+    visible = select_visible_rows(state)
+    edited_ordinal = state.edit.mapping_ordinal
+    anchor_index = next(
+        (i for i, m in enumerate(visible) if m.ordinal == edited_ordinal), None
+    )
+    if anchor_index is None:
+        return [""]
+
+    edited = visible[anchor_index]
+    render_row = select_edit_render_row(state, edited)
+    anchor_block_len = max(1, len(render_row.sources))
+    capacity = select_body_capacity(state.terminal.height)
+    context_capacity = max(0, capacity - anchor_block_len)
+    after = visible[anchor_index + 1 : anchor_index + 1 + context_capacity]
+
+    collision = "!" if edited_ordinal in collision_ordinals else " "
+    lines = [_render_edit_token_row(render_row, str(edited.ordinal), W, M, collision)]
+    for source in render_row.sources[1:]:
+        lines.append(_render_edit_source_row(source, W, M))
+    for mapping in after:
+        lines.append(_render_dim_context_row(mapping, W, M, collision_ordinals))
+    return lines
+
+
 def render_lines(state: AppState) -> list[str]:
     config = state.config
     mappings = state.mappings
     height = state.terminal.height
 
     unresolved_count = select_unresolved_collision_count(mappings)
-    collision_ordinals = select_unresolved_collision_ordinals(mappings)
+    collision_ordinals = select_render_collision_ordinals(state)
     total = len(mappings)
 
     # Variable-width table grid (spec §6.3), driven by two parameters: the
@@ -122,7 +288,11 @@ def render_lines(state: AppState) -> list[str]:
 
     # ── prompt ────────────────────────────────────────────────────────────────
     prompt_content = select_filter_prompt(state, unresolved_count)
-    if prompt_content.filter_raw == "!":
+    if state.mode == Mode.EDITING and state.edit is not None:
+        # Editing prompt (spec §6.5): the default source value of the edited row.
+        edited = next(m for m in mappings if m.ordinal == state.edit.mapping_ordinal)
+        prompt = f'  Editing mapping for "{select_default_source_value(edited)}":'
+    elif prompt_content.filter_raw == "!":
         # Metafilter only (spec §6.5): the literal ! is followed by the dim
         # "Type to filter" ghost, the caret shown as its reverse-video first
         # character — never a trailing cursor block after the ! itself.
@@ -150,38 +320,45 @@ def render_lines(state: AppState) -> list[str]:
     table_header = f"{header_prefix}{target_label}{padding}{source_label}"
 
     # ── body rows ─────────────────────────────────────────────────────────────
-    shown = select_body_rows(state)
-
-    filter_text = state.filter.text
     body_lines: list[str] = []
-    for mapping in shown:
-        is_selected = mapping.ordinal == state.selection.selected_ordinal
-        collision = "!" if mapping.ordinal in collision_ordinals else " "
-        cursor = "▸" if is_selected else " "
-        target = select_current_target_value(mapping)
-        source = select_source_display(select_default_source(mapping))
-
-        # Bold the matched spans in the ordinal display and target token cell.
-        # Both span computations live in selectors; the ordinal spans are already
-        # shifted into the right-aligned field, so they apply to the padded cell.
-        ordinal_display = str(mapping.ordinal).rjust(ordinal_width)
-        ordinal_cell = _apply_bold_spans(
-            ordinal_display,
-            select_ordinal_match_spans(mapping.ordinal, filter_text, ordinal_width),
+    if state.mode == Mode.EDITING and state.edit is not None:
+        # EDITING renders an anchored expanded edit block plus dim context rows
+        # (spec §8.2); the browsing scroll-offset window does not apply.
+        body_lines = _render_editing_body(
+            state, ordinal_width, max_token_length, collision_ordinals
         )
-        token_pad = " " * max(0, max_token_length - len(target))
-        token_cell = _apply_bold_spans(
-            target, select_match_spans(target, filter_text)
-        ) + token_pad
+    else:
+        shown = select_body_rows(state)
+        filter_text = state.filter.text
+        for mapping in shown:
+            is_selected = mapping.ordinal == state.selection.selected_ordinal
+            collision = "!" if mapping.ordinal in collision_ordinals else " "
+            cursor = "▸" if is_selected else " "
+            target = select_current_target_value(mapping)
+            source = select_source_display(select_default_source(mapping))
 
-        row = (
-            f"{cursor} {ordinal_cell}{' ' * _ORDINAL_GAP}"
-            f"{collision}{token_cell}{' ' * _SOURCE_GAP}{source}"
-        )
-        body_lines.append(row)
+            # Bold the matched spans in the ordinal display and target token cell.
+            # Both span computations live in selectors; the ordinal spans are
+            # already shifted into the right-aligned field, so they apply to the
+            # padded cell.
+            ordinal_display = str(mapping.ordinal).rjust(ordinal_width)
+            ordinal_cell = _apply_bold_spans(
+                ordinal_display,
+                select_ordinal_match_spans(mapping.ordinal, filter_text, ordinal_width),
+            )
+            token_pad = " " * max(0, max_token_length - len(target))
+            token_cell = _apply_bold_spans(
+                target, select_match_spans(target, filter_text)
+            ) + token_pad
 
-    if not shown:
-        body_lines.append("")
+            row = (
+                f"{cursor} {ordinal_cell}{' ' * _ORDINAL_GAP}"
+                f"{collision}{token_cell}{' ' * _SOURCE_GAP}{source}"
+            )
+            body_lines.append(row)
+
+        if not shown:
+            body_lines.append("")
 
 
 

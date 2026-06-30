@@ -2,7 +2,7 @@
 Pure selectors for derived mapping state.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from mapping_resolution_tui.state import (
@@ -227,6 +227,28 @@ def select_unresolved_collision_ordinals(mappings: list[Mapping]) -> frozenset[i
     )
 
 
+def select_render_collision_ordinals(state: "AppState") -> frozenset[int]:
+    """Unresolved-collision ordinals for the rendered row markers (spec §3.2 / FR8).
+
+    In ``EDITING`` the edited mapping's live concrete value
+    (:func:`select_concrete_value`) is substituted for its committed target so the
+    ``!`` markers update on every keystroke — frame 5 drops both ``AT-T`` markers
+    the moment the buffer becomes ``ATT``. In every other mode this is the
+    committed :func:`select_unresolved_collision_ordinals`.
+    """
+    mappings = state.mappings
+    if state.mode == Mode.EDITING and state.edit is not None:
+        ordinal = state.edit.mapping_ordinal
+        edited = next((m for m in mappings if m.ordinal == ordinal), None)
+        if edited is not None:
+            concrete = select_concrete_value(state, edited)
+            mappings = [
+                replace(m, target_value=concrete) if m.ordinal == ordinal else m
+                for m in mappings
+            ]
+    return select_unresolved_collision_ordinals(mappings)
+
+
 def select_row_collision_metadata(
     mappings: list[Mapping],
     ordinal: int,
@@ -367,12 +389,27 @@ def select_footer_content(state: "AppState") -> FooterContent:
             else FooterHint.EDIT_MAPPINGS
         )
         return FooterContent(hints=(FooterHint.SCROLL, FooterHint.PAGE_SCROLL, action))
-    return FooterContent(hints=(
-        FooterHint.TYPE_TO_EDIT,
-        FooterHint.SELECT_SOURCE,
-        FooterHint.SUBMIT,
-        FooterHint.CANCEL,
-    ))
+
+    # EDITING: the submit affordance is gated on validation (spec §6.6 / §7.5).
+    # An INVALID buffer (including an over-limit flash) leads with the policy
+    # error and drops the "type to edit" hint; a VALID concrete buffer adds the
+    # submit hint; a ghost-only/empty or otherwise non-submittable buffer omits
+    # submit. Frames 4 (ghost-only) omit submit, 5 (valid) show it, 10/11 (invalid)
+    # surface the error line.
+    edit = state.edit
+    if edit.validation.status == "INVALID":
+        return FooterContent(
+            hints=(FooterHint.SELECT_SOURCE, FooterHint.CANCEL),
+            error=edit.validation.error_message,
+        )
+    hints = [FooterHint.TYPE_TO_EDIT, FooterHint.SELECT_SOURCE]
+    submittable = edit.validation.status == "VALID" and (
+        edit.buffer != "" or edit.source_pointer_index is not None
+    )
+    if submittable:
+        hints.append(FooterHint.SUBMIT)
+    hints.append(FooterHint.CANCEL)
+    return FooterContent(hints=tuple(hints))
 
 
 def validate_mapping_invariants(config: AppConfig, mapping: Mapping) -> None:

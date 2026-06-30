@@ -1,0 +1,11 @@
+❯ Reviewing 11 commodity mappings. ctrl+s submit  ·  ctrl+c cancel
+  Editing mapping for "APPLE":
+
+   #   Beancount Token            GnuCash Source
+▸  1   44PL56789012345678901234 ✗ ┃ cmdty_id: "AAPL"
+                                  ┃ user_symbol: "APPLE"
+   4   C100-F                     cmdty_id: "100-F" → "C100-F"
+  10   VTSAX                      cmdty_id: "VTSAX"
+  11   VWUSX                      cmdty_id: "VWUSX"
+
+  Error: 24 chars max  ·  ↑↓ select source  ·  esc cancel

@@ -91,6 +91,16 @@ class AutocompleteBang:
 
 
 @dataclass(frozen=True)
+class AcceptLine:
+    """Accept the current input line (Enter / ctrl+j / ctrl+m, readline ``accept-line``).
+
+    In ``BROWSING`` this edits the selected row, transitioning to ``EDITING`` when
+    a row is selected (spec §4.2 / §7.1). In ``EDITING`` it submits the edit when
+    validation is ``VALID`` (spec §4.2; the submit path is owned by TASK-008).
+    """
+
+
+@dataclass(frozen=True)
 class Redraw:
     """Re-render the current state without mutating it (ctrl+l)."""
 
@@ -134,6 +144,7 @@ Action = (
     | KillWord
     | BackwardKillWord
     | AutocompleteBang
+    | AcceptLine
     | Redraw
     | ClearFilter
     | MoveSelectionUp
