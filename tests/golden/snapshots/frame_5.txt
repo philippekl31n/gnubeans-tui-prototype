@@ -4,6 +4,6 @@
    #   Beancount Token            GnuCash Source
    2  !AT-T                       cmdty_id: "AT&T" → "AT-T"
 ▸  3  !ATT  ✓                     ┃ cmdty_id: "AT-T"
-                                 ┃ user_symbol: (not set)
+                                  ┃ user_symbol: (not set)
 
   type to edit  ·  ↑↓ select source  ·  ↵ submit  ·  esc cancel

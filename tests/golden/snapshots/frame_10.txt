@@ -3,7 +3,7 @@
 
    #   Beancount Token            GnuCash Source
 ▸  1   44PL  ✗                    ┃ cmdty_id: "AAPL"
-                                 ┃ user_symbol: "APPLE"
+                                  ┃ user_symbol: "APPLE"
    2   AT-T                       cmdty_id: "AT&T" → "AT-T"
    3   ATT                        cmdty_id: "AT-T"
    4   C100-F                     cmdty_id: "100-F" → "C100-F"
