@@ -252,7 +252,7 @@ Below are the exact visual states the TUI must accurately render across its life
   Editing mapping for "APPLE":
 
    #   Beancount Token            GnuCash Source
-▸  1   44PL56789012345678901234* *✗ ┃ cmdty_id: "AAPL"
+▸  1   44PL5678901234567890123*4* ✗ ┃ cmdty_id: "AAPL"
                                   ┃ user_symbol: "APPLE"
   __ 4   C100-F                     cmdty_id: "100-F" → "C100-F"__
   __10   VTSAX                      cmdty_id: "VTSAX"__
@@ -260,7 +260,7 @@ Below are the exact visual states the TUI must accurately render across its life
 
   Error: 24 chars max  ·  ↑↓ select source  ·  esc cancel
 ```
-- When the user types the 24th character in a Beancount Token input buffer, the cursor advances to column 32 of the display, but the input status icon (`✗` above) stops at column 33, breaking the ‘two spaces to the right of the cursor’ rule
+- When the user types the 24th character in a Beancount Token input buffer, the cursor clamps to the final character of the token to indicate maximum capacity, and the input status icon (`✗` above) remains at column 33, maintaining the ‘two spaces to the right of the cursor’ rule
 - When the user types the 25th character in a Beancount Token input buffer, the character is discarded, the Invalid-input icon (`✗`) flashes in column 33, and the error message "Error: 24 chars max" appears briefly before fading out/fading to the last error message pushed to the stack
 
 > TRANSITION to 9: User types any combination of `backspace` and/or readline keybindings to erase the current Beancount Token value

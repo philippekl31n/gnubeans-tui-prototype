@@ -114,8 +114,8 @@ tasks:
         suffix streaming"
       - "Golden frame frame_10 committed: invalid input 44PL, error icon,
         error 'Error: must start with A-Z'"
-      - "Golden frame frame_11 committed: 24-character buffer, max-length
-        flash 'Error: 24 chars max'"
+      - "Golden frame frame_11 committed: 24-character buffer, cursor clamped
+        to final character, max-length flash 'Error: 24 chars max'"
       - "All existing golden tests continue to pass"
     definition_of_done:
       - "Feature is implemented and tested"

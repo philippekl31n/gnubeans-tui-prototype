@@ -651,7 +651,7 @@ later columns right by the same amount.
 | Ordinal | 3..(2+W) | 3..4 | Left edge anchored at column 3; digits right-aligned within the field, so a value shorter than `W` is left-padded with spaces. |
 | Collision marker `!` | 5+W | 7 | `!` when row Token value collides with another, else space. |
 | Token field | (6+W)..(5+W+M) | 8..31 | `M` display columns. |
-| Edit cursor at offset L | (6+W)+L | 8+L | Reverse-video char at offset L, or reverse-video space at the end. |
+| Edit cursor at offset L | (6+W)+L | 8+L | Reverse-video char at offset L; if buffer is at max length, clamps to the last character instead of a space at the end. |
 | Validation icon (normal) | edit cursor + 2 | — | `✓`/`✗`, except the max-length cap below. |
 | Validation icon (max cap) | 7+W+M | 33 | At the token-field end + 2 when the buffer is at `M`. |
 | Source pointer `▸` | 7+W+M | 33 | Before the divider in expanded edit rows; overwrites the validation icon when both appear in the same cell. |
@@ -762,7 +762,8 @@ literal `targetValue` is a prefix of `defaultSourceValue`.
 
 The reverse-video cursor MUST render at `edit.cursor`. If ghost text is active and `edit.cursor` is at
 the end of the buffer, the cursor MUST cover the next ghost character. If no ghost text is active and
-`edit.cursor == edit.buffer.length`, the cursor MUST be a reverse-video space after the buffer. If
+`edit.cursor == edit.buffer.length`, the cursor MUST be a reverse-video space after the buffer, UNLESS the
+buffer is at maximum capacity, in which case the cursor MUST clamp to cover the final character of the buffer. If
 `edit.cursor < edit.buffer.length`, the cursor MUST cover the character at `edit.cursor`. Frame 4
 displays `A` as the cursor and `T-T` as dim ghost text for row 3 because its `targetValue` is null.
 Frame 9 displays `APPLE` as ghost text when row 1's `targetValue` is null. If row 1 later has literal
@@ -926,8 +927,8 @@ Storyboard commodity fixture validation:
 
 - Frame 10: after typing the first `4`, the commodity target policy MUST return error
   `must start with A-Z`; `✗` MUST appear two spaces to the right of the reverse-video cursor.
-- Frame 11: after the 24th character, the cursor reaches the configured max target boundary and `✗`
-  MUST render at the capped icon column. A 25th character MUST be discarded, flash `✗` at the capped
+- Frame 11: after the 24th character, the cursor reaches the configured max target boundary and visually
+  clamps to the final character of the buffer. `✗` MUST render at the capped icon column. A 25th character MUST be discarded, flash `✗` at the capped
   icon column, and set transient error `24 chars max`.
 - The max-length flash and policy-provided max-length error MUST be visible on the immediate render
   after the discarded over-limit character. The storyboard does not require a wall-clock fade duration;
