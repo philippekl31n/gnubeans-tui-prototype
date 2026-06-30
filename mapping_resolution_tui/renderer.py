@@ -233,7 +233,8 @@ def render_lines(state: AppState) -> list[str]:
             body_lines.append(row)
             
             # Subsequent lines for other sources
-            padding_len = ordinal_width + _ORDINAL_GAP + max_token_length + 3
+            # padding must equal: cursor(1) + space(1) + ordinal(4) + gap(3) + collision(1) + token(24) + space(1) = 35
+            padding_len = 1 + 1 + ordinal_width + _ORDINAL_GAP + 1 + max_token_length + 1
             padding = " " * padding_len
             for src in edit_content.visible_sources[1:]:
                 ptr = "▸" if src.is_pointed else " "
