@@ -6,6 +6,8 @@ Data only — no application initialization logic.
 import random
 import re
 
+from dataclasses import replace
+
 from mapping_resolution_tui.state import (
     AppConfig,
     Mapping,
@@ -49,7 +51,7 @@ def make_config() -> AppConfig:
 
 
 def _canonical_mappings() -> list[Mapping]:
-    return [
+    mappings = [
         Mapping(
             sources=[
                 Source(label="cmdty_id", original_value="AAPL", sanitized_value=None),
@@ -109,6 +111,23 @@ def _canonical_mappings() -> list[Mapping]:
             target_value=None,
         ),
     ]
+    # Every mapping carries both configured source slots (spec §8.7: the storyboard
+    # fixture has two sources per mapping). Where no user-assigned symbol exists the
+    # user_symbol source is (not set) — inactive for autofill/ghost, but still shown
+    # in the expanded edit row's source list (frame 4's `user_symbol: (not set)`).
+    return [_ensure_user_symbol_slot(mapping) for mapping in mappings]
+
+
+def _ensure_user_symbol_slot(mapping: Mapping) -> Mapping:
+    if any(source.label == "user_symbol" for source in mapping.sources):
+        return mapping
+    return replace(
+        mapping,
+        sources=[
+            *mapping.sources,
+            Source(label="user_symbol", original_value=None, sanitized_value=None),
+        ],
+    )
 
 
 def make_mappings() -> list[Mapping]:

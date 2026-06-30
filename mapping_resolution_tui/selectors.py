@@ -167,17 +167,29 @@ def select_edit_render_row(state: "AppState", mapping: Mapping) -> EditRenderRow
 
     The sole selector the renderer calls for the expanded row: it packages the
     buffer text, derived ghost suffix, cursor offset, validation icon and error
-    message, focus region, and the active sources annotated with the pointer
+    message, focus region, and the mapping's sources annotated with the pointer
     position.
+
+    Every source is listed in mapping order — including inactive ``(not set)``
+    sources, which display in the source column but are not autofill/ghost
+    candidates (spec §2.3; frame 4's ``user_symbol: (not set)``). The edit pointer
+    still moves over :func:`select_active_sources` only (spec §7.4), so
+    ``is_pointer`` marks the active source the pointer rests on by identity.
     """
     edit = state.edit
     pointer_index = edit.source_pointer_index
+    active_sources = select_active_sources(mapping)
+    pointer_source = (
+        active_sources[pointer_index]
+        if pointer_index is not None and 0 <= pointer_index < len(active_sources)
+        else None
+    )
     sources = tuple(
         EditSourceRow(
             display=select_source_display(source),
-            is_pointer=pointer_index is not None and index == pointer_index,
+            is_pointer=source is pointer_source,
         )
-        for index, source in enumerate(select_active_sources(mapping))
+        for source in mapping.sources
     )
     return EditRenderRow(
         buffer=edit.buffer,

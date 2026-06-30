@@ -221,9 +221,11 @@ def _render_editing_body(
 ) -> list[str]:
     """Allocate and render the EDITING table body (spec §8.2 anchored block).
 
-    The expanded edit block for the selected mapping anchors the body as high as
-    possible; following context rows fill the remaining capacity (dim). Preceding
-    rows are never backfilled above the anchor.
+    The expanded edit block for the selected mapping is kept visible; following
+    context rows fill the remaining capacity first, then preceding context rows
+    fill what is left (closest rows first), all rendered super-dim. The storyboard
+    keeps surrounding rows visible around the edit — frame 4 shows the preceding
+    AT-T collision row above the expanded row.
     """
     visible = select_visible_rows(state)
     edited_ordinal = state.edit.mapping_ordinal
@@ -238,10 +240,16 @@ def _render_editing_body(
     anchor_block_len = max(1, len(render_row.sources))
     capacity = select_body_capacity(state.terminal.height)
     context_capacity = max(0, capacity - anchor_block_len)
+
     after = visible[anchor_index + 1 : anchor_index + 1 + context_capacity]
+    remaining = context_capacity - len(after)
+    before = visible[max(0, anchor_index - remaining) : anchor_index]
 
     collision = "!" if edited_ordinal in collision_ordinals else " "
-    lines = [_render_edit_token_row(render_row, str(edited.ordinal), W, M, collision)]
+    lines = [
+        _render_dim_context_row(mapping, W, M, collision_ordinals) for mapping in before
+    ]
+    lines.append(_render_edit_token_row(render_row, str(edited.ordinal), W, M, collision))
     for source in render_row.sources[1:]:
         lines.append(_render_edit_source_row(source, W, M))
     for mapping in after:
