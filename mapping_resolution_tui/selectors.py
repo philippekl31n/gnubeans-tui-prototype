@@ -137,14 +137,16 @@ def select_edit_render_row(state: "AppState", mapping: Mapping) -> EditRowConten
         raise ValueError("Cannot select edit render row when not editing")
 
     ghost_suffix = select_ghost_suffix(state, mapping)
-    active_sources = select_active_sources(mapping)
-    visible_sources = tuple(
-        VisibleSource(
-            source=src,
-            is_pointed=(i == state.edit.source_pointer_index)
-        )
-        for i, src in enumerate(active_sources)
-    )
+    visible_list = []
+    active_idx = 0
+    for src in mapping.sources:
+        if select_source_effective_value(src):
+            is_pointed = (active_idx == state.edit.source_pointer_index)
+            active_idx += 1
+        else:
+            is_pointed = False
+        visible_list.append(VisibleSource(source=src, is_pointed=is_pointed))
+    visible_sources = tuple(visible_list)
     
     return EditRowContent(
         buffer_text=state.edit.buffer,

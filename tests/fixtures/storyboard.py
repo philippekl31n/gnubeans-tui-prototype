@@ -60,7 +60,10 @@ def _canonical_mappings() -> list[Mapping]:
             target_value=None,
         ),
         Mapping(
-            sources=[Source(label="cmdty_id", original_value="AT&T", sanitized_value="AT-T")],
+            sources=[
+                Source(label="cmdty_id", original_value="AT&T", sanitized_value="AT-T"),
+                Source(label="user_symbol", original_value=None, sanitized_value=None),
+            ],
             default_source_label="cmdty_id",
             target_value=None,
         ),
@@ -73,22 +76,34 @@ def _canonical_mappings() -> list[Mapping]:
             target_value=None,
         ),
         Mapping(
-            sources=[Source(label="cmdty_id", original_value="100-F", sanitized_value="C100-F")],
+            sources=[
+                Source(label="cmdty_id", original_value="100-F", sanitized_value="C100-F"),
+                Source(label="user_symbol", original_value=None, sanitized_value=None),
+            ],
             default_source_label="cmdty_id",
             target_value=None,
         ),
         Mapping(
-            sources=[Source(label="cmdty_id", original_value="GOOGL", sanitized_value=None)],
+            sources=[
+                Source(label="cmdty_id", original_value="GOOGL", sanitized_value=None),
+                Source(label="user_symbol", original_value=None, sanitized_value=None),
+            ],
             default_source_label="cmdty_id",
             target_value=None,
         ),
         Mapping(
-            sources=[Source(label="cmdty_id", original_value="MSFT", sanitized_value=None)],
+            sources=[
+                Source(label="cmdty_id", original_value="MSFT", sanitized_value=None),
+                Source(label="user_symbol", original_value=None, sanitized_value=None),
+            ],
             default_source_label="cmdty_id",
             target_value=None,
         ),
         Mapping(
-            sources=[Source(label="cmdty_id", original_value="NVDA", sanitized_value=None)],
+            sources=[
+                Source(label="cmdty_id", original_value="NVDA", sanitized_value=None),
+                Source(label="user_symbol", original_value=None, sanitized_value=None),
+            ],
             default_source_label="cmdty_id",
             target_value=None,
         ),
@@ -98,17 +113,26 @@ def _canonical_mappings() -> list[Mapping]:
             target_value=None,
         ),
         Mapping(
-            sources=[Source(label="cmdty_id", original_value="QQQ", sanitized_value=None)],
+            sources=[
+                Source(label="cmdty_id", original_value="QQQ", sanitized_value=None),
+                Source(label="user_symbol", original_value=None, sanitized_value=None),
+            ],
             default_source_label="cmdty_id",
             target_value=None,
         ),
         Mapping(
-            sources=[Source(label="cmdty_id", original_value="VTSAX", sanitized_value=None)],
+            sources=[
+                Source(label="cmdty_id", original_value="VTSAX", sanitized_value=None),
+                Source(label="user_symbol", original_value=None, sanitized_value=None),
+            ],
             default_source_label="cmdty_id",
             target_value=None,
         ),
         Mapping(
-            sources=[Source(label="cmdty_id", original_value="VWUSX", sanitized_value=None)],
+            sources=[
+                Source(label="cmdty_id", original_value="VWUSX", sanitized_value=None),
+                Source(label="user_symbol", original_value=None, sanitized_value=None),
+            ],
             default_source_label="cmdty_id",
             target_value=None,
         ),
