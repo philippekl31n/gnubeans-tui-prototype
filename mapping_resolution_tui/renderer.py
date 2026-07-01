@@ -11,6 +11,7 @@ from mapping_resolution_tui.selectors import (
     select_body_rows,
     select_current_target_value,
     select_default_source,
+    select_default_source_value,
     select_filter_prompt,
     select_footer_content,
     select_match_spans,
@@ -124,7 +125,6 @@ def render_lines(state: AppState) -> list[str]:
     # ── prompt ────────────────────────────────────────────────────────────────
     if state.mode == Mode.EDITING:
         mapping = next(m for m in state.mappings if m.ordinal == state.edit.mapping_ordinal)
-        from mapping_resolution_tui.selectors import select_default_source_value
         default_val = select_default_source_value(mapping)
         prompt = f'  Editing mapping for "{default_val}":'
     else:
