@@ -268,6 +268,20 @@ def _validate_edit(state: AppState, edit: EditState, new_buffer: str) -> EditSta
 _FLASH_DURATION = 1.0
 
 
+def _exit_source_list(edit: EditState) -> EditState:
+    """Clear SOURCE_LIST navigation and return focus to TOKEN_INPUT (spec S5.1 / S7.2).
+
+    Shared by every path that commits or rejects an edit-buffer mutation, so the
+    drop of source_pointer_index/source_entry_buffer can't drift between them.
+    """
+    return replace(
+        edit,
+        focus_region=FocusRegion.TOKEN_INPUT,
+        source_pointer_index=None,
+        source_entry_buffer=None,
+    )
+
+
 def _apply_edit_buffer(state: AppState, new_buffer: str, new_cursor: int) -> AppState:
     """Commit an accepted edit-buffer mutation.
 
@@ -276,16 +290,9 @@ def _apply_edit_buffer(state: AppState, new_buffer: str, new_cursor: int) -> App
     in-progress source-list navigation, reset focus to the token input, and
     clear the max-length flash since an accepted change supersedes it (FR20).
     """
-    edit = state.edit
+    edit = _exit_source_list(state.edit)
     cursor = max(0, min(new_cursor, len(new_buffer)))
-    new_edit = replace(
-        edit,
-        cursor=cursor,
-        focus_region=FocusRegion.TOKEN_INPUT,
-        source_pointer_index=None,
-        source_entry_buffer=None,
-        max_length_flash_until=None,
-    )
+    new_edit = replace(edit, cursor=cursor, max_length_flash_until=None)
     return replace(state, edit=_validate_edit(state, new_edit, new_buffer))
 
 
@@ -481,8 +488,7 @@ def _reduce_token_insert_char(state: AppState, char: str, now: Optional[float]) 
         return replace(
             state,
             edit=replace(
-                edit,
-                focus_region=FocusRegion.TOKEN_INPUT,
+                _exit_source_list(edit),
                 validation=validation,
                 max_length_flash_until=flash_until,
             ),
