@@ -169,8 +169,16 @@ def run(
     Returns the resolved mappings on a clean end-of-input exit, or ``None`` when
     the user quits with the configured quit key (cancellation).
     """
+    def get_timeout() -> float | None:
+        from mapping_resolution_tui.state import Mode
+        if state.mode == Mode.EDITING and state.edit and state.edit.max_length_flash_until is not None:
+            import time
+            if state.edit.max_length_flash_until > time.time():
+                return 1.0 / 30.0
+        return None
+
     if keys is None:
-        keys = _terminal_keys()
+        keys = _terminal_keys(get_timeout=get_timeout)
     if render is None:
         render = _InlineRenderer()
 
@@ -178,6 +186,10 @@ def run(
     render(render_lines(state))
 
     for key in keys:
+        if key is None:
+            render(render_lines(state))
+            continue
+
         if is_quit_key(key):
             return None
 
@@ -226,7 +238,7 @@ class _InlineRenderer:
         self._prev_line_count = len(lines)
 
 
-def _terminal_keys() -> Iterable:
+def _terminal_keys(get_timeout: Callable[[], float | None] = lambda: None) -> Iterable:
     """Yield live ``blessed`` keystrokes until EOF.
 
     ``blessed`` owns escape-sequence decoding; ``term.raw()`` delivers control
@@ -240,7 +252,10 @@ def _terminal_keys() -> Iterable:
 
     with term.raw(), term.hidden_cursor():
         while True:
-            key = term.inkey()
+            timeout = get_timeout()
+            key = term.inkey(timeout=timeout)
             if not key:  # timeout / empty read
+                if timeout is not None:
+                    yield None
                 continue
             yield key

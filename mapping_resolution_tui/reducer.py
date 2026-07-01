@@ -59,6 +59,8 @@ _WORD_CHARS = frozenset(
     "0123456789_-"
 )
 
+_FLASH_DURATION = 0.150
+
 
 def make_initial_state(
     config: AppConfig,
@@ -279,15 +281,32 @@ def _validate_edit(state: AppState, edit: EditState, new_buffer: str) -> EditSta
         mapping=mapping,
     )
     validation = state.config.target_policy.validate(effective_text, context)
-    return replace(edit, buffer=new_buffer, validation=validation)
+    return replace(edit, buffer=new_buffer, validation=validation, max_length_flash_until=None)
 
-def _reduce_insert_char(state: AppState, action: InsertChar) -> AppState:
+def _reduce_insert_char(state: AppState, action: InsertChar, now: Optional[float] = None) -> AppState:
     if state.mode == Mode.EDITING:
         edit = state.edit
-        from mapping_resolution_tui.state import FocusRegion
+        from mapping_resolution_tui.state import FocusRegion, TargetValidationContext
         new_buffer = edit.buffer[:edit.cursor] + action.char + edit.buffer[edit.cursor:]
         if len(new_buffer) > state.config.target_policy.max_token_length:
-            return state  # Discard if too long (max_length_flash_until to be added later)
+            mapping = next(m for m in state.mappings if m.ordinal == edit.mapping_ordinal)
+            context = TargetValidationContext(
+                is_concrete_buffer=True,
+                is_ghost_only_default=False,
+                mapping=mapping,
+            )
+            validation = state.config.target_policy.validate(new_buffer, context)
+            import time
+            current_time = time.time() if now is None else now
+            flash_until = current_time + _FLASH_DURATION
+            return replace(
+                state,
+                edit=replace(
+                    edit,
+                    validation=validation,
+                    max_length_flash_until=flash_until,
+                ),
+            )
             
         new_edit = replace(
             edit,
@@ -295,6 +314,7 @@ def _reduce_insert_char(state: AppState, action: InsertChar) -> AppState:
             focus_region=FocusRegion.TOKEN_INPUT,
             source_pointer_index=None,
             source_entry_buffer=None,
+            max_length_flash_until=None,
         )
         return replace(state, edit=_validate_edit(state, new_edit, new_buffer))
         
@@ -592,7 +612,7 @@ _HANDLERS = {
 }
 
 
-def reduce(state: AppState, action: Action) -> AppState:
+def reduce(state: AppState, action: Action, now: Optional[float] = None) -> AppState:
     """Pure dispatch: route ``action`` to its handler, returning new state.
 
     Every handler returns a fresh frozen :class:`AppState`; the input ``state``
@@ -602,4 +622,6 @@ def reduce(state: AppState, action: Action) -> AppState:
     handler = _HANDLERS.get(type(action))
     if handler is None:
         return state
+    if type(action) is InsertChar:
+        return handler(state, action, now=now)
     return handler(state, action)

@@ -301,7 +301,31 @@ def frame_11_lines():
     state = reduce(state, AcceptLine())
     for char in "44PL56789012345678901234":
         state = reduce(state, InsertChar(char))
-    return render_lines(state)
+    state = reduce(state, InsertChar("5"), now=0.0)  # 25th char: discarded, arms the flash (FR20)
+    return render_lines(state, now=0.2)
+
+@pytest.fixture
+def frame_11_burst_lines():
+    from dataclasses import replace
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.actions import AcceptLine, InsertChar
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    mappings = [replace(m, target_value="ATT") if m.ordinal == 3 else m for m in state.mappings]
+    state = replace(state, mappings=mappings)
+    
+    state = reduce(state, AcceptLine())
+    for char in "44PL56789012345678901234":
+        state = reduce(state, InsertChar(char))
+    state = reduce(state, InsertChar("5"), now=0.0)  # 25th char: discarded, arms the flash (FR20)
+    # Render at exactly 0.0 to capture the start of the burst
+    return render_lines(state, now=0.0)
+
+@pytest.fixture
+def frame_11_burst_screen(frame_11_burst_lines):
+    return make_pyte_screen(frame_11_burst_lines)
 
 @pytest.fixture
 def frame_11_screen(frame_11_lines):

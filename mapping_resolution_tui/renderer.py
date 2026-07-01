@@ -84,10 +84,24 @@ def _render_filter_cursor(raw: str, cursor: int) -> str:
     return "".join(out)
 
 
-def render_lines(state: AppState) -> list[str]:
+def render_lines(state: AppState, now: float | None = None) -> list[str]:
     config = state.config
     mappings = state.mappings
     height = state.terminal.height
+
+    is_burst = False
+    burst_ansi = ""
+    if state.mode == Mode.EDITING and state.edit and state.edit.max_length_flash_until is not None:
+        import time
+        current_time = time.time() if now is None else now
+        if current_time < state.edit.max_length_flash_until:
+            is_burst = True
+            progress = 1.0 - (state.edit.max_length_flash_until - current_time) / 0.150
+            progress = max(0.0, min(1.0, progress))
+            r = 255 - int(55 * progress)
+            g = 255 - int(255 * progress)
+            b = 255 - int(255 * progress)
+            burst_ansi = f"\x1b[38;2;{r};{g};{b}m\x1b[1m"
 
     unresolved_count = select_unresolved_collision_count(mappings)
     collision_ordinals = select_unresolved_collision_ordinals(mappings)
@@ -227,7 +241,7 @@ def render_lines(state: AppState) -> list[str]:
             if val_icon:
                 rem_idx = icon_idx - unformatted_len
                 if 0 <= rem_idx < len(remainder):
-                    remainder[rem_idx] = val_icon
+                    remainder[rem_idx] = f"{burst_ansi}{val_icon}{_RESET}" if is_burst else val_icon
                     
             token_cell_with_gap = token_display + "".join(remainder)
             
@@ -277,7 +291,10 @@ def render_lines(state: AppState) -> list[str]:
     footer_content = select_footer_content(state)
     hints_list = []
     if footer_content.error:
-        hints_list.append(f"Error: {footer_content.error}")
+        error_str = f"Error: {footer_content.error}"
+        if is_burst:
+            error_str = f"{burst_ansi}{error_str}{_RESET}"
+        hints_list.append(error_str)
     
     for hint in footer_content.hints:
         key, label = _FOOTER_HINT_DISPLAY[hint]
