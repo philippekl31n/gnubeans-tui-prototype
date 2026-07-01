@@ -177,3 +177,189 @@ def test_over_limit_reject_exits_source_list():
     assert flashed.edit.focus_region == FocusRegion.TOKEN_INPUT
     assert flashed.edit.source_pointer_index is None
     assert flashed.edit.source_entry_buffer is None
+
+def test_repeated_over_limit_rearms_the_flash_window():
+    # Each rejected over-limit char re-arms max_length_flash_until from `now`,
+    # not just the first one (FR20).
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = reduce(state, KeyEvent.ENTER)
+
+    for ch in "ABCDEFGHIJKLMNOPQRSTUVWX":
+        state = reduce(state, ch)
+
+    first = reduce(state, "Y", now=100.0)
+    assert first.edit.max_length_flash_until == 101.0
+
+    second = reduce(first, "Z", now=200.0)
+    assert second.edit.max_length_flash_until == 201.0
+
+
+def test_enter_edit_is_noop_without_a_selection():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = _select(state, None)
+
+    result = reduce(state, KeyEvent.ENTER)
+
+    assert result is state
+    assert result.mode == Mode.BROWSING
+    assert result.edit is None
+
+
+def test_enter_edit_preserves_filter_state():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = reduce(state, KeyEvent.TAB)  # autocompletes filter.raw = "!"
+    assert state.filter.raw == "!"
+
+    state = reduce(state, KeyEvent.ENTER)
+
+    assert state.mode == Mode.EDITING
+    assert state.filter.raw == "!"  # entering EDITING never touches the filter
+
+
+# ── readline aliases (FR18) ───────────────────────────────────────────────────
+
+def _typed(state, text):
+    for ch in text:
+        state = reduce(state, ch)
+    return state
+
+def test_cursor_home_and_end_move_to_buffer_boundaries():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = reduce(state, KeyEvent.ENTER)
+    state = _typed(state, "AAPL")
+    assert state.edit.cursor == 4
+
+    state = reduce(state, KeyEvent.CURSOR_HOME)
+    assert state.edit.cursor == 0
+
+    state = reduce(state, KeyEvent.CURSOR_END)
+    assert state.edit.cursor == 4
+
+
+def test_cursor_left_clamps_at_zero():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = reduce(state, KeyEvent.ENTER)
+    assert state.edit.cursor == 0
+
+    state = reduce(state, KeyEvent.CURSOR_LEFT)
+    assert state.edit.cursor == 0
+
+
+def test_cursor_right_clamps_at_buffer_end():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = reduce(state, KeyEvent.ENTER)
+    state = _typed(state, "AB")
+    assert state.edit.cursor == 2
+
+    state = reduce(state, KeyEvent.CURSOR_RIGHT)
+    assert state.edit.cursor == 2
+
+
+def test_kill_line_clears_after_cursor():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = reduce(state, KeyEvent.ENTER)
+    state = _typed(state, "ABCD")
+    state = reduce(state, KeyEvent.CURSOR_HOME)
+    state = reduce(state, KeyEvent.CURSOR_RIGHT)
+    state = reduce(state, KeyEvent.CURSOR_RIGHT)  # cursor at 2
+
+    state = reduce(state, KeyEvent.KILL_LINE)
+
+    assert state.edit.buffer == "AB"
+    assert state.edit.cursor == 2
+
+
+def test_unix_line_discard_clears_before_cursor():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = reduce(state, KeyEvent.ENTER)
+    state = _typed(state, "ABCD")
+    state = reduce(state, KeyEvent.CURSOR_HOME)
+    state = reduce(state, KeyEvent.CURSOR_RIGHT)
+    state = reduce(state, KeyEvent.CURSOR_RIGHT)  # cursor at 2
+
+    state = reduce(state, KeyEvent.UNIX_LINE_DISCARD)
+
+    assert state.edit.buffer == "CD"
+    assert state.edit.cursor == 0
+
+
+def test_kill_word_deletes_the_word_ahead_of_the_cursor():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = reduce(state, KeyEvent.ENTER)
+    state = _typed(state, "AAPL XYZ")
+    state = reduce(state, KeyEvent.CURSOR_HOME)
+
+    state = reduce(state, KeyEvent.KILL_WORD)
+
+    assert state.edit.buffer == " XYZ"
+    assert state.edit.cursor == 0
+
+
+def test_backward_kill_word_deletes_the_word_behind_the_cursor():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = reduce(state, KeyEvent.ENTER)
+    state = _typed(state, "AAPL XYZ")  # cursor already at the end
+
+    state = reduce(state, KeyEvent.BACKWARD_KILL_WORD)
+
+    assert state.edit.buffer == "AAPL "
+    assert state.edit.cursor == 5
+
+
+def test_delete_char_removes_the_character_at_the_cursor():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = reduce(state, KeyEvent.ENTER)
+    state = _typed(state, "ABCD")
+    state = reduce(state, KeyEvent.CURSOR_HOME)
+    state = reduce(state, KeyEvent.CURSOR_RIGHT)  # cursor at 1
+
+    state = reduce(state, KeyEvent.DELETE_CHAR)
+
+    assert state.edit.buffer == "ACD"
+    assert state.edit.cursor == 1
+
+
+def test_delete_char_at_end_of_buffer_is_noop():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = reduce(state, KeyEvent.ENTER)
+    state = _typed(state, "AB")
+
+    result = reduce(state, KeyEvent.DELETE_CHAR)
+
+    assert result is state
+
+
+def test_backspace_on_empty_buffer_is_noop():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = reduce(state, KeyEvent.ENTER)
+    assert state.edit.buffer == ""
+
+    result = reduce(state, KeyEvent.BACKSPACE)
+
+    assert result is state

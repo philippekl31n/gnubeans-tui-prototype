@@ -53,3 +53,12 @@ def edit_buffer_should_be(ctx, expected):
 def edit_cursor_should_be(ctx, expected):
     assert ctx.state.edit is not None
     assert ctx.state.edit.cursor == expected
+
+@then('the edit should be cleared')
+def edit_should_be_cleared(ctx):
+    assert ctx.state.edit is None
+
+@then(parsers.parse('the edit validation error should be "{expected}"'))
+def edit_validation_error_should_be(ctx, expected):
+    assert ctx.state.edit is not None
+    assert ctx.state.edit.validation.error_message == expected
