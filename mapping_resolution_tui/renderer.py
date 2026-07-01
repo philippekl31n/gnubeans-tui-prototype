@@ -201,9 +201,9 @@ def render_lines(state: AppState) -> list[str]:
                 
             val_icon = edit_content.validation_icon or ""
             
-            first_src = edit_content.visible_sources[0] if edit_content.visible_sources else None
-            first_source_str = select_source_display(first_src.source) if first_src else ""
-            ptr_0 = "▸" if (first_src and first_src.is_pointed) else " "
+            first_src = edit_content.sources[0] if edit_content.sources else None
+            first_source_str = first_src.display if first_src else ""
+            ptr_0 = "▸" if (first_src and first_src.is_pointer) else " "
             gap_str_0 = f"{ptr_0} " if ptr_0 != " " else "  "
             
             # The fixed width area before ┃ is exactly max_token_length + 3
@@ -241,10 +241,10 @@ def render_lines(state: AppState) -> list[str]:
             # padding must equal: cursor(1) + space(1) + ordinal(4) + gap(3) + collision(1) + token(24) + space(1) = 35
             padding_len = 1 + 1 + ordinal_width + _ORDINAL_GAP + 1 + max_token_length + 1
             padding = " " * padding_len
-            for src in edit_content.visible_sources[1:]:
-                ptr = "▸" if src.is_pointed else " "
+            for src in edit_content.sources[1:]:
+                ptr = "▸" if src.is_pointer else " "
                 gap_str = f"{ptr} " if ptr != " " else "  "
-                body_lines.append(f"{padding}{gap_str}┃ {select_source_display(src.source)}")
+                body_lines.append(f"{padding}{gap_str}┃ {src.display}")
                 
         else:
             target = select_current_target_value(mapping)

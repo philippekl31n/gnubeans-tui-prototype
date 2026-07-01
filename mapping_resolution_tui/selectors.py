@@ -28,9 +28,9 @@ class RowCollisionMetadata:
 
 
 @dataclass(frozen=True)
-class VisibleSource:
-    source: Source
-    is_pointed: bool
+class EditSourceRow:
+    display: str
+    is_pointer: bool
 
 
 @dataclass(frozen=True)
@@ -41,7 +41,7 @@ class EditRowContent:
     validation_icon: str | None
     validation_error: str | None
     focus_region: FocusRegion
-    visible_sources: tuple[VisibleSource, ...]
+    sources: tuple[EditSourceRow, ...]
 
 
 def select_source_effective_value(source: Source) -> str | None:
@@ -134,26 +134,29 @@ def select_edit_render_row(state: "AppState", mapping: Mapping) -> EditRowConten
     if state.edit is None:
         raise ValueError("Cannot select edit render row when not editing")
 
-    ghost_suffix = select_ghost_suffix(state, mapping)
-    visible_list = []
-    active_idx = 0
-    for src in mapping.sources:
-        if select_source_effective_value(src):
-            is_pointed = (active_idx == state.edit.source_pointer_index)
-            active_idx += 1
-        else:
-            is_pointed = False
-        visible_list.append(VisibleSource(source=src, is_pointed=is_pointed))
-    visible_sources = tuple(visible_list)
-    
+    active_sources = select_active_sources(mapping)
+    pointer_index = state.edit.source_pointer_index
+    pointer_source = (
+        active_sources[pointer_index]
+        if pointer_index is not None and 0 <= pointer_index < len(active_sources)
+        else None
+    )
+    sources = tuple(
+        EditSourceRow(
+            display=select_source_display(src),
+            is_pointer=src is pointer_source,
+        )
+        for src in mapping.sources
+    )
+
     return EditRowContent(
         buffer_text=state.edit.buffer,
-        ghost_suffix=ghost_suffix,
+        ghost_suffix=select_ghost_suffix(state, mapping),
         cursor_offset=state.edit.cursor,
         validation_icon=state.edit.validation.icon,
         validation_error=state.edit.validation.error_message,
         focus_region=state.edit.focus_region,
-        visible_sources=visible_sources,
+        sources=sources,
     )
 
 

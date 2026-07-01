@@ -9,7 +9,7 @@ from mapping_resolution_tui.selectors import (
     select_concrete_value,
     select_source_pointer_value,
     select_edit_render_row,
-    VisibleSource,
+    EditSourceRow,
     EditRowContent,
 )
 
@@ -116,11 +116,11 @@ def test_select_edit_render_row(mock_state, sample_mapping):
     assert row.validation_error == "Too short"
     assert row.focus_region == FocusRegion.TOKEN_INPUT
     
-    assert len(row.visible_sources) == 2
-    assert row.visible_sources[0].source.original_value == "AAPL"
-    assert row.visible_sources[0].is_pointed is False
-    assert row.visible_sources[1].source.original_value == "APPLE"
-    assert row.visible_sources[1].is_pointed is True
+    assert len(row.sources) == 2
+    assert row.sources[0].display == 'cmdty_id: "AAPL"'
+    assert row.sources[0].is_pointer is False
+    assert row.sources[1].display == 'user_symbol: "APPLE"'
+    assert row.sources[1].is_pointer is True
 
 def test_select_edit_render_row_raises_when_not_editing(sample_mapping):
     state = Mock(spec=AppState)
