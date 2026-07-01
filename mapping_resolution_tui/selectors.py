@@ -122,13 +122,11 @@ def select_concrete_value(state: "AppState", mapping: Mapping) -> str:
 
 def select_source_pointer_value(state: "AppState", mapping: Mapping) -> str | None:
     """Return the effective value of the source at edit.source_pointer_index."""
-    if state.edit is None or state.edit.source_pointer_index is None:
+    if (edit := state.edit) is None or edit.source_pointer_index is None:
         return None
     active_sources = select_active_sources(mapping)
-    index = state.edit.source_pointer_index
-    if 0 <= index < len(active_sources):
-        return select_source_effective_value(active_sources[index])
-    return None
+    index = edit.source_pointer_index
+    return select_source_effective_value(active_sources[index]) if 0 <= index < len(active_sources) else None
 
 
 def select_edit_render_row(state: "AppState", mapping: Mapping) -> EditRowContent:
