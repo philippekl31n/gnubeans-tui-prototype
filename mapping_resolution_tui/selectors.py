@@ -18,7 +18,7 @@ from mapping_resolution_tui.state import (
 )
 
 if TYPE_CHECKING:
-    from mapping_resolution_tui.state import AppState
+    from mapping_resolution_tui.state import AppState, EditState
 
 
 @dataclass(frozen=True)
@@ -364,6 +364,20 @@ def select_filter_prompt(state: "AppState", unresolved_count: int) -> FilterProm
     )
 
 
+def select_edit_is_submittable(state: "AppState", edit: "EditState") -> bool:
+    """SUBMIT is offered only for a valid, non-colliding, actually-changed edit.
+
+    ``target_policy.validate`` only checks token format, so the collision and
+    no-op-edit checks below are the only enforcement of those two rules.
+    """
+    if edit.validation.status != "VALID":
+        return False
+    mapping = next(m for m in state.mappings if m.ordinal == edit.mapping_ordinal)
+    if mapping.ordinal in select_render_collision_ordinals(state):
+        return False
+    return select_concrete_value(state, mapping) != mapping.target_value
+
+
 def select_footer_content(state: "AppState") -> FooterContent:
     if state.mode == Mode.BROWSING:
         if not select_visible_rows(state):
@@ -371,7 +385,7 @@ def select_footer_content(state: "AppState") -> FooterContent:
                 hints=(FooterHint.CLEAR_FILTER,),
                 error="no matching rows",
             )
-            
+
         hints: list[FooterHint] = [FooterHint.PAGE_SCROLL, FooterHint.EDIT_SELECTED]
         if state.filter.text or state.filter.collision_only:
             hints.append(FooterHint.CLEAR_FILTER)
@@ -383,26 +397,22 @@ def select_footer_content(state: "AppState") -> FooterContent:
             else FooterHint.EDIT_MAPPINGS
         )
         return FooterContent(hints=(FooterHint.SCROLL, FooterHint.PAGE_SCROLL, action))
-    hints: list[FooterHint] = []
-    error: str | None = None
-    
-    if state.edit and state.edit.validation.status == "INVALID":
-        error = state.edit.validation.error_message
-    else:
-        hints.append(FooterHint.TYPE_TO_EDIT)
-        
-    hints.append(FooterHint.SELECT_SOURCE)
-    
-    if state.edit and state.edit.validation.status == "VALID":
-        mapping = next(m for m in state.mappings if m.ordinal == state.edit.mapping_ordinal)
-        effective_text = select_concrete_value(state, mapping)
 
-        is_collision = mapping.ordinal in select_render_collision_ordinals(state)
-        if not is_collision and effective_text != mapping.target_value:
-            hints.append(FooterHint.SUBMIT)
-            
+    if state.edit is None:
+        raise ValueError("Cannot select footer content when not editing")
+    edit = state.edit
+
+    if edit.validation.status == "INVALID":
+        return FooterContent(
+            hints=(FooterHint.SELECT_SOURCE, FooterHint.CANCEL),
+            error=edit.validation.error_message,
+        )
+
+    hints = [FooterHint.TYPE_TO_EDIT, FooterHint.SELECT_SOURCE]
+    if select_edit_is_submittable(state, edit):
+        hints.append(FooterHint.SUBMIT)
     hints.append(FooterHint.CANCEL)
-    return FooterContent(hints=tuple(hints), error=error)
+    return FooterContent(hints=tuple(hints))
 
 
 def validate_mapping_invariants(config: AppConfig, mapping: Mapping) -> None:

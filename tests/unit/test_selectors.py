@@ -399,6 +399,87 @@ def test_render_collision_ordinals_reacts_live_to_edit_buffer():
     assert select_render_collision_ordinals(state) == frozenset()
 
 
+def test_edit_is_submittable_false_when_validation_invalid():
+    from unittest.mock import Mock
+
+    from mapping_resolution_tui.state import AppState, EditState, Mode, ValidationState
+    from mapping_resolution_tui.selectors import select_edit_is_submittable
+
+    mappings = _story_1_4_mappings()
+    state = Mock(spec=AppState)
+    state.mode = Mode.EDITING
+    state.mappings = mappings
+    state.edit = Mock(spec=EditState)
+    state.edit.mapping_ordinal = 1
+    state.edit.buffer = "APPLE2"
+    state.edit.validation = ValidationState(status="INVALID", icon=None, error_message="bad token")
+
+    assert select_edit_is_submittable(state, state.edit) is False
+
+
+def test_edit_is_submittable_false_when_effective_value_unchanged():
+    from dataclasses import replace
+    from unittest.mock import Mock
+
+    from mapping_resolution_tui.state import AppState, EditState, Mode, ValidationState
+    from mapping_resolution_tui.selectors import select_edit_is_submittable
+
+    # Mapping 5 already has a committed target of "MSFT"; retyping the same
+    # value is valid and non-colliding but is not a change, so it must not
+    # be submittable.
+    mappings = [
+        replace(m, target_value="MSFT") if m.ordinal == 5 else m
+        for m in _story_1_4_mappings()
+    ]
+    state = Mock(spec=AppState)
+    state.mode = Mode.EDITING
+    state.mappings = mappings
+    state.edit = Mock(spec=EditState)
+    state.edit.mapping_ordinal = 5
+    state.edit.buffer = "MSFT"
+    state.edit.validation = ValidationState(status="VALID", icon="✓", error_message=None)
+
+    assert select_edit_is_submittable(state, state.edit) is False
+
+
+def test_edit_is_submittable_false_when_result_collides():
+    from unittest.mock import Mock
+
+    from mapping_resolution_tui.state import AppState, EditState, Mode, ValidationState
+    from mapping_resolution_tui.selectors import select_edit_is_submittable
+
+    # Mapping 3's default "AT-T" already collides with mapping 2's effective
+    # "AT-T"; retyping that same colliding value must not be submittable.
+    mappings = _story_1_4_mappings()
+    state = Mock(spec=AppState)
+    state.mode = Mode.EDITING
+    state.mappings = mappings
+    state.edit = Mock(spec=EditState)
+    state.edit.mapping_ordinal = 3
+    state.edit.buffer = "AT-T"
+    state.edit.validation = ValidationState(status="VALID", icon="✓", error_message=None)
+
+    assert select_edit_is_submittable(state, state.edit) is False
+
+
+def test_edit_is_submittable_true_when_valid_changed_and_non_colliding():
+    from unittest.mock import Mock
+
+    from mapping_resolution_tui.state import AppState, EditState, Mode, ValidationState
+    from mapping_resolution_tui.selectors import select_edit_is_submittable
+
+    mappings = _story_1_4_mappings()
+    state = Mock(spec=AppState)
+    state.mode = Mode.EDITING
+    state.mappings = mappings
+    state.edit = Mock(spec=EditState)
+    state.edit.mapping_ordinal = 1
+    state.edit.buffer = "APPLE2"
+    state.edit.validation = ValidationState(status="VALID", icon="✓", error_message=None)
+
+    assert select_edit_is_submittable(state, state.edit) is True
+
+
 def test_initial_display_sort_uses_default_sources_not_literal_target_values():
     from dataclasses import replace
 
