@@ -563,7 +563,9 @@ parse/filter visible rows
 clamp selection
 ```
 
-After any edit-input readline mutation:
+After any edit-input readline function that mutates `edit.buffer` (`backward-delete-char`,
+`delete-char`, `kill-line`, `unix-line-discard`, `backward-kill-line`, `kill-word`,
+`backward-kill-word`/`unix-word-rubout`, and ghost completion via `complete`/Tab, §7.3):
 
 ```text
 if focusRegion == SOURCE_LIST:
@@ -571,15 +573,20 @@ if focusRegion == SOURCE_LIST:
   sourcePointerIndex = null
   sourceEntryBuffer = null
 
+apply the mutation to edit.buffer
 edit.cursor = clamp(edit.cursor, 0, edit.buffer.length)
 validate via config.targetPolicy.validate(edit.concreteValue, context)
 recompute collisions using edit.buffer for edited mapping
 ```
 
-Every edit-input readline mutation MUST exit `SOURCE_LIST` first, clear `sourcePointerIndex`, clear
-`sourceEntryBuffer`, apply the mutation to `edit.buffer`, clamp `edit.cursor`, validate, and recompute
-collisions. Every filter-input readline mutation MUST parse/filter, clamp selection, and clamp
-`filter.cursor`.
+This sequence applies only to the buffer-mutating functions listed above. It does NOT apply to
+`backward-char`, `forward-char`, `beginning-of-line`, or `end-of-line` — those move `edit.cursor`
+only and remain no-ops (not `SOURCE_LIST` exits) per the table above; they MUST NOT clear
+`sourcePointerIndex` or `sourceEntryBuffer`. It also does NOT apply to `↑`/`↓`, which are excluded
+from this table entirely (line 517) and instead follow the source-pointer protocol in §7.4 — `↑`/`↓`
+are how `SOURCE_LIST` is entered and navigated, not something they exit.
+
+Every filter-input readline mutation MUST parse/filter, clamp selection, and clamp `filter.cursor`.
 
 Tests MUST cover the supported aliases (`ctrl+j`, `ctrl+m`, `ctrl+i`, `ctrl+?`, `ctrl+p`, `ctrl+n`,
 `ctrl+b`, `ctrl+f`, `ctrl+a`, `ctrl+e`, `ctrl+d`, `ctrl+k`, `ctrl+u`, `ctrl+w`) and at least one no-op
