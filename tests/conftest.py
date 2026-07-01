@@ -302,6 +302,45 @@ def _build_frame_12b_state():
     return reduce(_build_frame_9_state(), MoveSelectionUp())
 
 
+def _build_frame_esc_from_edit_state():
+    """Frame esc-from-edit: cancelling an edit restores the pre-edit browsing frame.
+
+    From frame 12b (editing ordinal 1 with the buffer autofilled to ``APPLE`` via
+    source navigation) the reviewer presses Esc: the buffer and all source-nav
+    state are discarded, ``edit`` is cleared, and the app returns to ``BROWSING``.
+    Because no editing transition ever mutates ``filter.*`` or the selection, the
+    result is bit-identical to frame 8 — the ``1`` text filter, the selection on
+    ordinal 1, and the collision-free dataset are all preserved (FR16).
+    """
+    from mapping_resolution_tui.actions import ClearFilter
+    from mapping_resolution_tui.reducer import reduce
+
+    return reduce(_build_frame_12b_state(), ClearFilter())
+
+
+def _build_frame_submit_no_resolution_state():
+    """Frame submit-no-resolution: a valid submit that leaves collisions returns to BROWSING.
+
+    Over the fresh dataset (the AT-T collision on ordinals 2/3 still stands) the
+    reviewer edits ordinal 1 and submits ``APPL`` (the storyboard's literal
+    APPLE-truncation). The commit writes ``APPL`` to the mapping target, but the
+    AT-T collision remains, so ``select_unresolved_collision_count`` stays
+    positive and the app returns to ``BROWSING`` (not CONFIRMING). The rendered
+    frame recomputes the collision markers from the committed mappings: ordinal 1
+    now shows ``APPL`` with no marker, while ordinals 2/3 stay flagged (FR16/FR22).
+    """
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.actions import AcceptLine, InsertChar
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    state = reduce(state, AcceptLine())  # enter EDITING on the selected ordinal 1
+    for ch in "APPL":
+        state = reduce(state, InsertChar(ch))
+    state = reduce(state, AcceptLine())  # submit "APPL" -> BROWSING (AT-T remains)
+    return state
+
+
 @pytest.fixture
 def frame_4_lines():
     from mapping_resolution_tui.renderer import render_lines
@@ -395,6 +434,31 @@ def frame_12b_lines():
 @pytest.fixture
 def frame_12b_screen(frame_12b_lines):
     return make_pyte_screen(frame_12b_lines)
+
+
+# ── submit / cancel golden frames (TASK-008, spec §4.2 / §9) ─────────────────
+
+
+@pytest.fixture
+def frame_esc_from_edit_lines():
+    from mapping_resolution_tui.renderer import render_lines
+    return render_lines(_build_frame_esc_from_edit_state())
+
+
+@pytest.fixture
+def frame_esc_from_edit_screen(frame_esc_from_edit_lines):
+    return make_pyte_screen(frame_esc_from_edit_lines)
+
+
+@pytest.fixture
+def frame_submit_no_resolution_lines():
+    from mapping_resolution_tui.renderer import render_lines
+    return render_lines(_build_frame_submit_no_resolution_state())
+
+
+@pytest.fixture
+def frame_submit_no_resolution_screen(frame_submit_no_resolution_lines):
+    return make_pyte_screen(frame_submit_no_resolution_lines)
 
 
 @pytest.fixture

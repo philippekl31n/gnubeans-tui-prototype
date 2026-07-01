@@ -242,14 +242,21 @@ def select_unresolved_collision_ordinals(mappings: list[Mapping]) -> frozenset[i
 def select_render_collision_ordinals(state: "AppState") -> frozenset[int]:
     """Unresolved-collision ordinals for the rendered row markers (spec §3.2 / FR8).
 
-    In ``EDITING`` the edited mapping's live concrete value
-    (:func:`select_concrete_value`) is substituted for its committed target so the
-    ``!`` markers update on every keystroke — frame 5 drops both ``AT-T`` markers
-    the moment the buffer becomes ``ATT``. In every other mode this is the
-    committed :func:`select_unresolved_collision_ordinals`.
+    In ``EDITING`` with a non-empty buffer the edited mapping's live concrete
+    value (``edit.buffer``, via :func:`select_concrete_value`) is substituted for
+    its committed target so the ``!`` markers update on every keystroke — frame 5
+    drops both ``AT-T`` markers the moment the buffer becomes ``ATT``.
+
+    An empty buffer is treated as unresolved: no live value is substituted, so
+    the edited mapping keeps its committed ``current_target_value`` and any
+    committed collision it belongs to stays flagged. Crucially the empty buffer
+    does NOT fall back to the default source value (which could falsely resolve a
+    literal-target collision); clearing the buffer never resolves a conflict —
+    frame 4's empty AT-T buffer keeps both markers set. In every other mode this
+    is the committed :func:`select_unresolved_collision_ordinals`.
     """
     mappings = state.mappings
-    if state.mode == Mode.EDITING and state.edit is not None:
+    if state.mode == Mode.EDITING and state.edit is not None and state.edit.buffer != "":
         ordinal = state.edit.mapping_ordinal
         edited = next((m for m in mappings if m.ordinal == ordinal), None)
         if edited is not None:
