@@ -171,38 +171,41 @@ def sort_mappings_for_initial_display(mappings: list[Mapping]) -> tuple[Mapping,
     )
 
 
-def select_collision_groups(mappings: list[Mapping]) -> tuple[tuple[str, tuple[int, ...]], ...]:
+def select_collision_groups(state: "AppState") -> tuple[tuple[str, tuple[int, ...]], ...]:
     ordinals_by_target: dict[str, list[int]] = {}
-    for mapping in mappings:
-        target_value = select_current_target_value(mapping)
+    for mapping in state.mappings:
+        if state.edit is not None and mapping.ordinal == state.edit.mapping_ordinal:
+            target_value = state.edit.buffer
+        else:
+            target_value = select_current_target_value(mapping)
         ordinals_by_target.setdefault(target_value, []).append(mapping.ordinal)
 
-    return tuple(
-        (target_value, tuple(sorted(ordinals)))
-        for target_value, ordinals in sorted(ordinals_by_target.items())
-        if len(ordinals) > 1
-    )
+    groups = []
+    for target_value, ordinals in sorted(ordinals_by_target.items()):
+        if len(ordinals) > 1 or (state.edit is not None and target_value == "" and state.edit.mapping_ordinal in ordinals):
+            groups.append((target_value, tuple(sorted(ordinals))))
+    return tuple(groups)
 
 
-def select_unresolved_collision_count(mappings: list[Mapping]) -> int:
-    return len(select_collision_groups(mappings))
+def select_unresolved_collision_count(state: "AppState") -> int:
+    return len(select_collision_groups(state))
 
 
-def select_unresolved_collision_ordinals(mappings: list[Mapping]) -> frozenset[int]:
+def select_unresolved_collision_ordinals(state: "AppState") -> frozenset[int]:
     return frozenset(
         ordinal
-        for _, ordinals in select_collision_groups(mappings)
+        for _, ordinals in select_collision_groups(state)
         for ordinal in ordinals
     )
 
 
 def select_row_collision_metadata(
-    mappings: list[Mapping],
+    state: "AppState",
     ordinal: int,
 ) -> RowCollisionMetadata:
     return RowCollisionMetadata(
         ordinal=ordinal,
-        is_unresolved=ordinal in select_unresolved_collision_ordinals(mappings),
+        is_unresolved=ordinal in select_unresolved_collision_ordinals(state),
     )
 
 
@@ -220,7 +223,7 @@ def select_collision_ghost_visible(state: "AppState") -> bool:
     """
     return (
         state.filter.raw == ""
-        and select_unresolved_collision_count(state.mappings) > 0
+        and select_unresolved_collision_count(state) > 0
     )
 
 
@@ -228,7 +231,7 @@ def select_visible_rows(state: "AppState") -> list[Mapping]:
     rows: list[Mapping] = list(state.mappings)
 
     if state.filter.collision_only:
-        collision_ordinals = select_unresolved_collision_ordinals(state.mappings)
+        collision_ordinals = select_unresolved_collision_ordinals(state)
         rows = [m for m in rows if m.ordinal in collision_ordinals]
 
     if state.filter.text:
@@ -346,21 +349,8 @@ def select_footer_content(state: "AppState") -> FooterContent:
         
     hints.append(FooterHint.SELECT_SOURCE)
     
-    if state.edit and state.edit.validation.status == "VALID":
-        mapping = next(m for m in state.mappings if m.ordinal == state.edit.mapping_ordinal)
-        
-        effective_text = state.edit.buffer + select_ghost_suffix(state, mapping) if not state.edit.buffer else state.edit.buffer
-        if not state.edit.buffer and mapping.target_value is None:
-            effective_text = select_ghost_suffix(state, mapping)
-            
-        is_collision = False
-        for m in state.mappings:
-            if m.ordinal != mapping.ordinal and select_current_target_value(m) == effective_text:
-                is_collision = True
-                break
-                
-        if not is_collision and effective_text != mapping.target_value:
-            hints.append(FooterHint.SUBMIT)
+    if state.edit and state.edit.validation.status == "VALID" and state.edit.buffer:
+        hints.append(FooterHint.SUBMIT)
             
     hints.append(FooterHint.CANCEL)
     return FooterContent(hints=tuple(hints), error=error)

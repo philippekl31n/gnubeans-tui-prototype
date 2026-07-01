@@ -1,0 +1,7 @@
+❯ Reviewing 11 commodity mappings. 2 unresolved collisions. ctrl+c cancel
+  Filter: APPLE
+
+   #   Beancount Token            GnuCash Source
+
+
+  Error: no matching rows  ·  esc clear filter

@@ -596,10 +596,32 @@ def _reduce_accept_line(state: AppState, action: AcceptLine) -> AppState:
             )
         )
     elif state.mode == Mode.EDITING:
-        # Just validate for now, actual submit comes later
-        return state
-        
-    return state
+        if state.edit is None or state.edit.validation.status != "VALID" or not state.edit.buffer:
+            return state
+
+        new_mappings = []
+        for mapping in state.mappings:
+            if mapping.ordinal == state.edit.mapping_ordinal:
+                new_mappings.append(replace(mapping, target_value=state.edit.buffer))
+            else:
+                new_mappings.append(mapping)
+
+        new_state = replace(state, mode=Mode.BROWSING, mappings=new_mappings, edit=None)
+
+        from mapping_resolution_tui.selectors import select_unresolved_collision_count
+        from mapping_resolution_tui.state import ConfirmationState, ConfirmationKind, ConfirmationChoice
+
+        if select_unresolved_collision_count(new_state) == 0:
+            return replace(
+                new_state,
+                mode=Mode.CONFIRMING,
+                confirmation=ConfirmationState(
+                    kind=ConfirmationKind.ACCEPT,
+                    choice=ConfirmationChoice.NO,
+                    second_ctrl_c_armed=False,
+                )
+            )
+        return new_state
 
 
 def _reduce_move_selection_up(state: AppState, action: MoveSelectionUp) -> AppState:

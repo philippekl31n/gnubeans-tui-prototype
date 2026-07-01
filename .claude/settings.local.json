@@ -4,7 +4,8 @@
       "Bash(git *)",
       "Bash(python3 /Users/phlip/Projects/gnubeans-tui-prototype/_bmad/scripts/resolve_customization.py --skill /Users/phlip/Projects/gnubeans-tui-prototype/.claude/skills/bmad-dev-story --key workflow)",
       "Bash(python -m pytest --tb=short -q)",
-      "Bash(.venv/bin/pytest --tb=short -q)"
+      "Bash(.venv/bin/pytest --tb=short -q)",
+      "Bash(gh pr *)"
     ]
   }
 }

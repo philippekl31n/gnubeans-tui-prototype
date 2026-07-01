@@ -103,8 +103,8 @@ def render_lines(state: AppState, now: float | None = None) -> list[str]:
             b = 255 - int(255 * progress)
             burst_ansi = f"\x1b[38;2;{r};{g};{b}m\x1b[1m"
 
-    unresolved_count = select_unresolved_collision_count(mappings)
-    collision_ordinals = select_unresolved_collision_ordinals(mappings)
+    unresolved_count = select_unresolved_collision_count(state)
+    collision_ordinals = select_unresolved_collision_ordinals(state)
     total = len(mappings)
 
     # Variable-width table grid (spec §6.3), driven by two parameters: the

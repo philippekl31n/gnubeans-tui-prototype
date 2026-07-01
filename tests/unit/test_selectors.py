@@ -3,6 +3,27 @@ import pytest
 from mapping_resolution_tui.state import AppConfig, Mapping, Source
 
 
+def _make_state():
+    from mapping_resolution_tui.state import AppState, ResultState, TerminalState, FilterState, SelectionState, ConfirmationState, ConfirmationKind, ConfirmationChoice, AppConfig, TargetPolicy
+    from mapping_resolution_tui.reducer import make_initial_state
+    return make_initial_state(
+        AppConfig(
+            entity_name_singular="foo",
+            entity_name_plural="foos",
+            mapping_noun_singular="foo",
+            mapping_noun_plural="foos",
+            target_column_label="target",
+            source_column_label="source",
+            accept_prompt="accept?",
+            exit_prompt="exit?",
+            created_message=lambda c: f"{c}",
+            source_labels=["cmdty_id", "user_symbol"],
+            target_policy=TargetPolicy(max_token_length=10, validate=lambda v, c: None)
+        ),
+        _story_1_4_mappings(),
+        frame_height=15
+    )
+
 def _story_1_4_mappings() -> list[Mapping]:
     return [
         Mapping(
@@ -324,10 +345,10 @@ def test_collision_groups_and_count_detect_initial_at_t_collision():
         select_unresolved_collision_count,
     )
 
-    groups = select_collision_groups(_story_1_4_mappings())
+    groups = select_collision_groups(_make_state())
 
     assert groups == (("AT-T", (2, 3)),)
-    assert select_unresolved_collision_count(_story_1_4_mappings()) == 1
+    assert select_unresolved_collision_count(_make_state()) == 1
 
 
 def test_unresolved_collision_ordinals_include_only_collision_group_members():
@@ -336,14 +357,14 @@ def test_unresolved_collision_ordinals_include_only_collision_group_members():
         select_unresolved_collision_ordinals,
     )
 
-    ordinals = select_unresolved_collision_ordinals(_story_1_4_mappings())
+    ordinals = select_unresolved_collision_ordinals(_make_state())
 
     assert ordinals == frozenset({2, 3})
-    assert select_row_collision_metadata(_story_1_4_mappings(), 2).is_unresolved is True
-    assert select_row_collision_metadata(_story_1_4_mappings(), 3).is_unresolved is True
-    assert select_row_collision_metadata(_story_1_4_mappings(), 1).is_unresolved is False
-    assert select_row_collision_metadata(_story_1_4_mappings(), 4).is_unresolved is False
-    assert select_row_collision_metadata(_story_1_4_mappings(), 5).is_unresolved is False
+    assert select_row_collision_metadata(_make_state(), 2).is_unresolved is True
+    assert select_row_collision_metadata(_make_state(), 3).is_unresolved is True
+    assert select_row_collision_metadata(_make_state(), 1).is_unresolved is False
+    assert select_row_collision_metadata(_make_state(), 4).is_unresolved is False
+    assert select_row_collision_metadata(_make_state(), 5).is_unresolved is False
 
 
 def test_initial_display_sort_uses_default_sources_not_literal_target_values():
@@ -351,10 +372,10 @@ def test_initial_display_sort_uses_default_sources_not_literal_target_values():
 
     from mapping_resolution_tui.selectors import sort_mappings_for_initial_display
 
-    mappings = _story_1_4_mappings()
+    state = _make_state()
     target_overridden_mappings = [
         replace(mapping, target_value="ZZZ") if mapping.ordinal == 2 else mapping
-        for mapping in mappings
+        for mapping in state.mappings
     ]
 
     assert [mapping.ordinal for mapping in sort_mappings_for_initial_display(target_overridden_mappings)] == [
@@ -373,15 +394,15 @@ def test_collision_selectors_are_repeatable_and_do_not_store_state_on_mappings()
         select_unresolved_collision_ordinals,
     )
 
-    mappings = _story_1_4_mappings()
+    state = _make_state()
 
-    assert select_collision_groups(mappings) == select_collision_groups(mappings)
-    assert select_unresolved_collision_count(mappings) == 1
-    assert select_unresolved_collision_count(mappings) == 1
-    assert select_unresolved_collision_ordinals(mappings) == frozenset({2, 3})
-    assert all(not hasattr(mapping, "collision_groups") for mapping in mappings)
-    assert all(not hasattr(mapping, "unresolved_collisions") for mapping in mappings)
-    assert all(not hasattr(mapping, "unresolved_collision_count") for mapping in mappings)
+    assert select_collision_groups(state) == select_collision_groups(state)
+    assert select_unresolved_collision_count(state) == 1
+    assert select_unresolved_collision_count(state) == 1
+    assert select_unresolved_collision_ordinals(state) == frozenset({2, 3})
+    assert all(not hasattr(mapping, "collision_groups") for mapping in state.mappings)
+    assert all(not hasattr(mapping, "unresolved_collisions") for mapping in state.mappings)
+    assert all(not hasattr(mapping, "unresolved_collision_count") for mapping in state.mappings)
 
 
 # ── filter parse / highlight selectors (TASK-002, spec §3.3) ─────────────────

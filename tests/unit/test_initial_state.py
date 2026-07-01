@@ -76,20 +76,20 @@ def test_initial_display_first_row_is_ordinal_1():
 def test_initial_unresolved_collision_count_is_1():
     from mapping_resolution_tui.selectors import select_unresolved_collision_count
     state = _make_state()
-    assert select_unresolved_collision_count(state.mappings) == 1
+    assert select_unresolved_collision_count(state) == 1
 
 
 def test_initial_ordinals_2_and_3_are_marked_unresolved():
     from mapping_resolution_tui.selectors import select_row_collision_metadata
     state = _make_state()
-    assert select_row_collision_metadata(state.mappings, 2).is_unresolved is True
-    assert select_row_collision_metadata(state.mappings, 3).is_unresolved is True
+    assert select_row_collision_metadata(state, 2).is_unresolved is True
+    assert select_row_collision_metadata(state, 3).is_unresolved is True
 
 
 def test_initial_ordinal_1_is_not_unresolved():
     from mapping_resolution_tui.selectors import select_row_collision_metadata
     state = _make_state()
-    assert select_row_collision_metadata(state.mappings, 1).is_unresolved is False
+    assert select_row_collision_metadata(state, 1).is_unresolved is False
 
 
 # ── AC4: prompt and footer text ───────────────────────────────────────────────
@@ -97,7 +97,7 @@ def test_initial_ordinal_1_is_not_unresolved():
 def test_initial_prompt_communicates_tab_to_view_collisions():
     from mapping_resolution_tui.selectors import select_filter_prompt, select_unresolved_collision_count
     state = _make_state()
-    count = select_unresolved_collision_count(state.mappings)
+    count = select_unresolved_collision_count(state)
     assert select_filter_prompt(state, count).collision_hint_visible is True
 
 

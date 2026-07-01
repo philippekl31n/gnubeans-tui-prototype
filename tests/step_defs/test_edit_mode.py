@@ -53,3 +53,13 @@ def edit_buffer_should_be(ctx, expected):
 def edit_cursor_should_be(ctx, expected):
     assert ctx.state.edit is not None
     assert ctx.state.edit.cursor == expected
+
+@then(parsers.parse('the app should report {expected:d} unresolved collision group'))
+@then(parsers.parse('the app should report {expected:d} unresolved collision groups'))
+def app_should_report_unresolved_collisions(ctx, expected):
+    from mapping_resolution_tui.selectors import select_unresolved_collision_count
+    assert select_unresolved_collision_count(ctx.state) == expected
+
+@then('the app should be in CONFIRMING mode')
+def app_in_confirming_mode(ctx):
+    assert ctx.state.mode == Mode.CONFIRMING
