@@ -1,7 +1,7 @@
 # sprint-status.yaml
 # Epic 3 — Edit Target Tokens and Resolve Collisions
 # Drop into: docs/sprint-status-epic3.yaml
-# Updated: 2026-06-24
+# Updated: 2026-07-01
 
 schema_version: 1
 
@@ -44,6 +44,10 @@ tasks:
         value of the source at edit.source_pointer_index within
         select_active_sources(mapping), or None when source_pointer_index
         is None (FR21)"
+      - "select_source_pointer_value MUST bounds-check source_pointer_index
+        against len(select_active_sources(mapping)) and return None when the
+        index is out of range, rather than indexing directly and raising
+        IndexError (FR21)"
       - "select_edit_render_row(state, mapping) returns a dataclass with
         everything the renderer needs for the expanded edit row: buffer text,
         ghost suffix, cursor offset, validation icon and error message, focus
@@ -59,6 +63,13 @@ tasks:
         replicate its logic in the reducer submit handler"
       - "select_active_sources is already implemented; select_source_pointer_value
         should delegate to it rather than re-filtering"
+      - "The §7.4 source-pointer movement protocol keeps source_pointer_index
+        within range during navigation, but that invariant is enforced by the
+        reducer at write time, not guaranteed at read time — do not assume it
+        holds inside the selector. Treat 0 <= source_pointer_index <
+        len(active_sources) as a condition to check, not an assumption to
+        rely on, so a stale or otherwise out-of-range index degrades to None
+        instead of crashing the render loop"
       - "select_edit_render_row should be the only selector the renderer calls
         for the expanded row — keep rendering logic out of the selector itself"
 
