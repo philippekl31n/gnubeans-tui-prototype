@@ -306,6 +306,46 @@ def frame_11_screen(frame_11_lines):
     return make_pyte_screen(frame_11_lines)
 
 @pytest.fixture
+def frame_12a_lines():
+    from dataclasses import replace
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.events import KeyEvent
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    mappings = [replace(m, target_value="ATT") if m.ordinal == 3 else m for m in state.mappings]
+    state = replace(state, mappings=mappings)
+
+    state = reduce(state, KeyEvent.ENTER)
+    state = reduce(state, KeyEvent.SELECTION_DOWN)  # pointer -> source 0 ("AAPL")
+    return render_lines(state)
+
+@pytest.fixture
+def frame_12a_screen(frame_12a_lines):
+    return make_pyte_screen(frame_12a_lines)
+
+@pytest.fixture
+def frame_12b_lines():
+    from dataclasses import replace
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.events import KeyEvent
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    mappings = [replace(m, target_value="ATT") if m.ordinal == 3 else m for m in state.mappings]
+    state = replace(state, mappings=mappings)
+
+    state = reduce(state, KeyEvent.ENTER)
+    state = reduce(state, KeyEvent.SELECTION_UP)  # pointer -> source 1 ("APPLE")
+    return render_lines(state)
+
+@pytest.fixture
+def frame_12b_screen(frame_12b_lines):
+    return make_pyte_screen(frame_12b_lines)
+
+@pytest.fixture
 def assert_snapshot(update_snapshots):
     def _check(screen: pyte.Screen, snapshot_path: Path):
         actual = "\n".join(row.rstrip() for row in screen.display) + "\n"

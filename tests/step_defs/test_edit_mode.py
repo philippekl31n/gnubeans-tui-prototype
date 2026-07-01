@@ -1,5 +1,5 @@
 from pytest_bdd import given, when, then, parsers, scenarios
-from mapping_resolution_tui.state import Mode
+from mapping_resolution_tui.state import Mode, FocusRegion
 from mapping_resolution_tui.loop import key_to_event
 from mapping_resolution_tui.reducer import make_initial_state, reduce
 
@@ -62,3 +62,18 @@ def edit_should_be_cleared(ctx):
 def edit_validation_error_should_be(ctx, expected):
     assert ctx.state.edit is not None
     assert ctx.state.edit.validation.error_message == expected
+
+@then('the edit focus should be on the source list')
+def edit_focus_source_list(ctx):
+    assert ctx.state.edit is not None
+    assert ctx.state.edit.focus_region == FocusRegion.SOURCE_LIST
+
+@then('the edit focus should be on the token input')
+def edit_focus_token_input(ctx):
+    assert ctx.state.edit is not None
+    assert ctx.state.edit.focus_region == FocusRegion.TOKEN_INPUT
+
+@then(parsers.parse('the edit source pointer should be at {expected:d}'))
+def edit_source_pointer_should_be(ctx, expected):
+    assert ctx.state.edit is not None
+    assert ctx.state.edit.source_pointer_index == expected

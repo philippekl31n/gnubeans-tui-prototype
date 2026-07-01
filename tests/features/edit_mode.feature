@@ -40,3 +40,28 @@ Feature: Edit Mode
     And I type "ABCDEFGHIJKLMNOPQRSTUVWXY"
     Then the edit buffer should be "ABCDEFGHIJKLMNOPQRSTUVWX"
     And the edit validation error should be "24 chars max"
+
+  Scenario: Navigate down into the source list autofills the buffer
+    When I press "KEY_ENTER"
+    And I press "KEY_DOWN"
+    Then the edit focus should be on the source list
+    And the edit source pointer should be at 0
+    And the edit buffer should be "AAPL"
+
+  Scenario: Navigate up into the source list starts at the last source
+    When I press "KEY_ENTER"
+    And I press "KEY_UP"
+    Then the edit focus should be on the source list
+    And the edit source pointer should be at 1
+    And the edit buffer should be "APPLE"
+
+  Scenario: Navigating past the last source exits back to the token input
+    When I press "KEY_ENTER"
+    And I press "KEY_DOWN"
+    And I press "KEY_DOWN"
+    Then the edit focus should be on the source list
+    And the edit source pointer should be at 1
+    And the edit buffer should be "APPLE"
+    When I press "KEY_DOWN"
+    Then the edit focus should be on the token input
+    And the edit buffer should be empty

@@ -10,9 +10,11 @@ import time
 from mapping_resolution_tui.events import InputEvent, KeyEvent
 from mapping_resolution_tui.selectors import (
     parse_filter,
+    select_active_sources,
     select_body_capacity,
     select_collision_ghost_visible,
     select_default_source_value,
+    select_source_effective_value,
     select_unresolved_collision_count,
     select_visible_rows,
     sort_mappings_for_initial_display,
@@ -309,6 +311,47 @@ def _apply_edit_buffer(state: AppState, new_buffer: str, new_cursor: int) -> App
     return replace(state, edit=_validate_edit(state, new_edit, new_buffer))
 
 
+def _move_source_pointer(state: AppState, direction: int) -> AppState:
+    """Navigate SOURCE_LIST focus by one source, or enter it from TOKEN_INPUT
+    (spec S7.4). ``direction`` is -1 for Up, +1 for Down.
+
+    No active sources is a no-op. From TOKEN_INPUT, movement saves the current
+    buffer to source_entry_buffer and jumps straight to the first (Down) or
+    last (Up) active source. Within SOURCE_LIST, movement that would cross
+    either end restores source_entry_buffer and exits back to TOKEN_INPUT
+    (not a wrap); movement that stays in bounds advances the pointer by one.
+    Every move autofills buffer from the pointed source's effective value,
+    sets cursor to the end of the new buffer, and revalidates.
+    """
+    edit = state.edit
+    mapping = next(m for m in state.mappings if m.ordinal == edit.mapping_ordinal)
+    active_sources = select_active_sources(mapping)
+    if not active_sources:
+        return state
+
+    if edit.focus_region == FocusRegion.TOKEN_INPUT:
+        index = 0 if direction > 0 else len(active_sources) - 1
+        new_buffer = select_source_effective_value(active_sources[index])
+        entered = replace(
+            edit,
+            focus_region=FocusRegion.SOURCE_LIST,
+            source_pointer_index=index,
+            source_entry_buffer=edit.buffer,
+            cursor=len(new_buffer),
+        )
+        return replace(state, edit=_validate_edit(state, entered, new_buffer))
+
+    new_index = edit.source_pointer_index + direction
+    if new_index < 0 or new_index >= len(active_sources):
+        restored_buffer = edit.source_entry_buffer
+        exited = replace(_exit_source_list(edit), cursor=len(restored_buffer))
+        return replace(state, edit=_validate_edit(state, exited, restored_buffer))
+
+    new_buffer = select_source_effective_value(active_sources[new_index])
+    moved = replace(edit, source_pointer_index=new_index, cursor=len(new_buffer))
+    return replace(state, edit=_validate_edit(state, moved, new_buffer))
+
+
 # ── BROWSING filter handlers ──────────────────────────────────────────────────
 
 
@@ -563,6 +606,14 @@ def _reduce_token_delete_prev_word(state: AppState) -> AppState:
     return _apply_edit_buffer(state, new_buffer, start)
 
 
+def _reduce_token_source_up(state: AppState) -> AppState:
+    return _move_source_pointer(state, -1)
+
+
+def _reduce_token_source_down(state: AppState) -> AppState:
+    return _move_source_pointer(state, 1)
+
+
 def _reduce_cancel_edit(state: AppState) -> AppState:
     return replace(state, mode=Mode.BROWSING, edit=None)
 
@@ -610,8 +661,9 @@ _EDITING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
     KeyEvent.KILL_WORD:          _reduce_token_delete_next_word,
     KeyEvent.BACKWARD_KILL_WORD: _reduce_token_delete_prev_word,
     KeyEvent.REDRAW:             _reduce_redraw,
+    KeyEvent.SELECTION_UP:       _reduce_token_source_up,
+    KeyEvent.SELECTION_DOWN:     _reduce_token_source_down,
     # TAB → _reduce_token_autocomplete_suggestion (future)
-    # SELECTION_UP/DOWN → source-list navigation (future)
     # PAGE_UP/DOWN → no-op in EDITING for now
 }
 

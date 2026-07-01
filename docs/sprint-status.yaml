@@ -127,13 +127,12 @@ tasks:
   - key: TASK-007
     type: story
     title: Navigate alternative sources and autofill the edit buffer
-    status: todo
+    status: done
     assignee: null
     depends_on: [TASK-001, TASK-005]
     functional_requirements: [FR21]
     files:
       - mapping_resolution_tui/reducer.py
-      - mapping_resolution_tui/renderer.py
     golden_frames:
       - frame_12a  # Source pointer on first source; buffer matches source value; checkmark
       - frame_12b  # Source pointer on second source; buffer updated to match

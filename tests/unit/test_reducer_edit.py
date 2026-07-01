@@ -1,7 +1,7 @@
 import pytest
 from dataclasses import replace
 from mapping_resolution_tui.state import (
-    AppConfig, AppState, Mode, Mapping, EditState, FocusRegion, TargetValidationContext,
+    AppConfig, AppState, Mode, Mapping, EditState, FocusRegion, Source, TargetValidationContext,
 )
 from mapping_resolution_tui.events import KeyEvent
 from mapping_resolution_tui.reducer import make_initial_state, reduce
@@ -363,3 +363,184 @@ def test_backspace_on_empty_buffer_is_noop():
     result = reduce(state, KeyEvent.BACKSPACE)
 
     assert result is state
+
+
+# ── source-list navigation and autofill (TASK-007, FR21) ─────────────────────
+
+def _no_active_sources(state):
+    ordinal = state.selection.selected_ordinal
+    mappings = [
+        replace(
+            m,
+            sources=[replace(s, original_value=None, sanitized_value=None) for s in m.sources],
+            target_value="ZERO",
+        ) if m.ordinal == ordinal else m
+        for m in state.mappings
+    ]
+    return replace(state, mappings=mappings)
+
+
+def test_selection_down_from_token_input_enters_source_list_at_first_source():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = reduce(state, KeyEvent.ENTER)
+    assert state.edit.buffer == ""
+    assert state.edit.focus_region == FocusRegion.TOKEN_INPUT
+
+    result = reduce(state, KeyEvent.SELECTION_DOWN)
+
+    assert result.edit.focus_region == FocusRegion.SOURCE_LIST
+    assert result.edit.source_pointer_index == 0
+    assert result.edit.source_entry_buffer == ""
+    assert result.edit.buffer == "AAPL"
+    assert result.edit.cursor == 4
+    assert result.edit.validation.status == "VALID"
+    assert result.edit.validation.icon == "✓"
+
+
+def test_selection_up_from_token_input_enters_source_list_at_last_source():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = reduce(state, KeyEvent.ENTER)
+
+    result = reduce(state, KeyEvent.SELECTION_UP)
+
+    assert result.edit.focus_region == FocusRegion.SOURCE_LIST
+    assert result.edit.source_pointer_index == 1
+    assert result.edit.source_entry_buffer == ""
+    assert result.edit.buffer == "APPLE"
+    assert result.edit.cursor == 5
+    assert result.edit.validation.status == "VALID"
+    assert result.edit.validation.icon == "✓"
+
+
+def test_entering_source_list_saves_the_current_buffer_as_source_entry_buffer():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = reduce(state, KeyEvent.ENTER)
+    state = _typed(state, "Z")
+    assert state.edit.buffer == "Z"
+
+    result = reduce(state, KeyEvent.SELECTION_DOWN)
+
+    assert result.edit.source_entry_buffer == "Z"
+    assert result.edit.buffer == "AAPL"
+
+
+def test_selection_down_within_source_list_moves_pointer_and_autofills():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = reduce(state, KeyEvent.ENTER)
+    state = reduce(state, KeyEvent.SELECTION_DOWN)  # index 0, buffer "AAPL"
+    assert state.edit.source_pointer_index == 0
+
+    result = reduce(state, KeyEvent.SELECTION_DOWN)
+
+    assert result.edit.focus_region == FocusRegion.SOURCE_LIST
+    assert result.edit.source_pointer_index == 1
+    assert result.edit.buffer == "APPLE"
+    assert result.edit.cursor == 5
+    assert result.edit.source_entry_buffer == ""
+    assert result.edit.validation.status == "VALID"
+    assert result.edit.validation.icon == "✓"
+
+
+def test_selection_up_within_source_list_moves_pointer_and_autofills():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = reduce(state, KeyEvent.ENTER)
+    state = reduce(state, KeyEvent.SELECTION_UP)  # index 1, buffer "APPLE"
+    assert state.edit.source_pointer_index == 1
+
+    result = reduce(state, KeyEvent.SELECTION_UP)
+
+    assert result.edit.source_pointer_index == 0
+    assert result.edit.buffer == "AAPL"
+    assert result.edit.cursor == 4
+    assert result.edit.focus_region == FocusRegion.SOURCE_LIST
+
+
+def test_selection_up_at_first_source_exits_to_token_input_and_restores_buffer():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = reduce(state, KeyEvent.ENTER)
+    state = _typed(state, "Z")
+    state = reduce(state, KeyEvent.SELECTION_DOWN)  # enters SOURCE_LIST at index 0
+    assert state.edit.source_pointer_index == 0
+    assert state.edit.source_entry_buffer == "Z"
+
+    result = reduce(state, KeyEvent.SELECTION_UP)
+
+    assert result.edit.focus_region == FocusRegion.TOKEN_INPUT
+    assert result.edit.source_pointer_index is None
+    assert result.edit.source_entry_buffer is None
+    assert result.edit.buffer == "Z"
+    assert result.edit.cursor == 1
+    assert result.edit.validation.icon == "✓"
+
+
+def test_selection_down_at_last_source_exits_to_token_input_and_restores_buffer():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = reduce(state, KeyEvent.ENTER)
+    state = reduce(state, KeyEvent.SELECTION_UP)  # enters SOURCE_LIST at last index (1)
+    assert state.edit.source_pointer_index == 1
+    assert state.edit.source_entry_buffer == ""
+
+    result = reduce(state, KeyEvent.SELECTION_DOWN)
+
+    assert result.edit.focus_region == FocusRegion.TOKEN_INPUT
+    assert result.edit.source_pointer_index is None
+    assert result.edit.source_entry_buffer is None
+    assert result.edit.buffer == ""
+    assert result.edit.cursor == 0
+    assert result.edit.validation.icon is None  # restored empty buffer is ghost-only again
+
+
+def test_selection_down_is_noop_with_no_active_sources():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = _no_active_sources(state)
+    state = reduce(state, KeyEvent.ENTER)
+    assert state.edit.focus_region == FocusRegion.TOKEN_INPUT
+
+    result = reduce(state, KeyEvent.SELECTION_DOWN)
+
+    assert result is state
+
+
+def test_selection_up_is_noop_with_no_active_sources():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = _no_active_sources(state)
+    state = reduce(state, KeyEvent.ENTER)
+    assert state.edit.focus_region == FocusRegion.TOKEN_INPUT
+
+    result = reduce(state, KeyEvent.SELECTION_UP)
+
+    assert result is state
+
+
+def test_source_navigation_does_not_special_case_a_buffer_matching_a_source_value():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = reduce(state, KeyEvent.ENTER)
+    state = _typed(state, "AAPL")  # buffer coincidentally equals source[0]'s value
+    assert state.edit.buffer == "AAPL"
+
+    result = reduce(state, KeyEvent.SELECTION_DOWN)
+
+    assert result.edit.focus_region == FocusRegion.SOURCE_LIST
+    assert result.edit.source_pointer_index == 0
+    assert result.edit.source_entry_buffer == "AAPL"
+    assert result.edit.buffer == "AAPL"
