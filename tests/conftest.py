@@ -48,12 +48,12 @@ def frame_2_lines():
     the AT-T collision pair (ordinals 2 and 3) and selection clamps to row 2.
     """
     from tests.fixtures.storyboard import make_config, make_mappings
-    from mapping_resolution_tui.actions import AutocompleteBang
+    from mapping_resolution_tui.events import KeyEvent
     from mapping_resolution_tui.reducer import make_initial_state, reduce
     from mapping_resolution_tui.renderer import render_lines
 
     state = make_initial_state(make_config(), make_mappings(), frame_height=15)
-    state = reduce(state, AutocompleteBang())
+    state = reduce(state, KeyEvent.TAB)
     return render_lines(state)
 
 
@@ -71,13 +71,13 @@ def frame_esc_clear_lines():
     all rows are restored, so the frame is bit-identical to frame 1a.
     """
     from tests.fixtures.storyboard import make_config, make_mappings
-    from mapping_resolution_tui.actions import Escape, InsertChar
+    from mapping_resolution_tui.events import KeyEvent
     from mapping_resolution_tui.reducer import make_initial_state, reduce
     from mapping_resolution_tui.renderer import render_lines
 
     state = make_initial_state(make_config(), make_mappings(), frame_height=15)
-    state = reduce(state, InsertChar("1"))
-    state = reduce(state, Escape())
+    state = reduce(state, "1")
+    state = reduce(state, KeyEvent.ESCAPE)
     return render_lines(state)
 
 
@@ -97,7 +97,6 @@ def frame_8_lines():
     from dataclasses import replace
 
     from tests.fixtures.storyboard import make_config, make_mappings
-    from mapping_resolution_tui.actions import InsertChar
     from mapping_resolution_tui.reducer import make_initial_state, reduce
     from mapping_resolution_tui.renderer import render_lines
 
@@ -107,7 +106,7 @@ def frame_8_lines():
         for m in state.mappings
     ]
     state = replace(state, mappings=mappings)
-    state = reduce(state, InsertChar("1"))
+    state = reduce(state, "1")
     return render_lines(state)
 
 
@@ -127,13 +126,13 @@ def frame_3_lines():
     selection clamps from ordinal 2 to ordinal 3 (spec §3.4 / §10.1 frame 3).
     """
     from tests.fixtures.storyboard import make_config, make_mappings
-    from mapping_resolution_tui.actions import AutocompleteBang, InsertChar
+    from mapping_resolution_tui.events import KeyEvent
     from mapping_resolution_tui.reducer import make_initial_state, reduce
     from mapping_resolution_tui.renderer import render_lines
 
     state = make_initial_state(make_config(), make_mappings(), frame_height=15)
-    state = reduce(state, AutocompleteBang())
-    state = reduce(state, InsertChar("3"))
+    state = reduce(state, KeyEvent.TAB)
+    state = reduce(state, "3")
     return render_lines(state)
 
 
@@ -145,14 +144,14 @@ def frame_3_screen(frame_3_lines):
 @pytest.fixture
 def frame_4_lines():
     from tests.fixtures.storyboard import make_config, make_mappings
-    from mapping_resolution_tui.actions import AutocompleteBang, AcceptLine, MoveSelectionDown
+    from mapping_resolution_tui.events import KeyEvent
     from mapping_resolution_tui.reducer import make_initial_state, reduce
     from mapping_resolution_tui.renderer import render_lines
 
     state = make_initial_state(make_config(), make_mappings(), frame_height=15)
-    state = reduce(state, AutocompleteBang())
-    state = reduce(state, MoveSelectionDown())
-    state = reduce(state, AcceptLine())
+    state = reduce(state, KeyEvent.TAB)
+    state = reduce(state, KeyEvent.SELECTION_DOWN)
+    state = reduce(state, KeyEvent.ENTER)
     return render_lines(state)
 
 
@@ -164,17 +163,17 @@ def frame_4_screen(frame_4_lines):
 @pytest.fixture
 def frame_5_lines():
     from tests.fixtures.storyboard import make_config, make_mappings
-    from mapping_resolution_tui.actions import AutocompleteBang, AcceptLine, MoveSelectionDown, InsertChar
+    from mapping_resolution_tui.events import KeyEvent
     from mapping_resolution_tui.reducer import make_initial_state, reduce
     from mapping_resolution_tui.renderer import render_lines
 
     state = make_initial_state(make_config(), make_mappings(), frame_height=15)
-    state = reduce(state, AutocompleteBang())
-    state = reduce(state, MoveSelectionDown())
-    state = reduce(state, AcceptLine())
-    state = reduce(state, InsertChar("A"))
-    state = reduce(state, InsertChar("T"))
-    state = reduce(state, InsertChar("T"))
+    state = reduce(state, KeyEvent.TAB)
+    state = reduce(state, KeyEvent.SELECTION_DOWN)
+    state = reduce(state, KeyEvent.ENTER)
+    state = reduce(state, "A")
+    state = reduce(state, "T")
+    state = reduce(state, "T")
     return render_lines(state)
 
 
@@ -193,7 +192,6 @@ def frame_8_lines():
     from dataclasses import replace
 
     from tests.fixtures.storyboard import make_config, make_mappings
-    from mapping_resolution_tui.actions import InsertChar
     from mapping_resolution_tui.reducer import make_initial_state, reduce
     from mapping_resolution_tui.renderer import render_lines
 
@@ -203,7 +201,7 @@ def frame_8_lines():
         for m in state.mappings
     ]
     state = replace(state, mappings=mappings)
-    state = reduce(state, InsertChar("1"))
+    state = reduce(state, "1")
     return render_lines(state)
 
 
@@ -225,7 +223,6 @@ def frame_13_lines():
     from dataclasses import replace
 
     from tests.fixtures.storyboard import make_config, make_mappings
-    from mapping_resolution_tui.actions import InsertChar
     from mapping_resolution_tui.reducer import make_initial_state, reduce
     from mapping_resolution_tui.renderer import render_lines
 
@@ -235,8 +232,8 @@ def frame_13_lines():
         for m in state.mappings
     ]
     state = replace(state, mappings=mappings)
-    state = reduce(state, InsertChar("1"))
-    state = reduce(state, InsertChar("2"))
+    state = reduce(state, "1")
+    state = reduce(state, "2")
     return render_lines(state)
 
 
@@ -248,7 +245,7 @@ def frame_13_screen(frame_13_lines):
 def frame_9_lines():
     from dataclasses import replace
     from tests.fixtures.storyboard import make_config, make_mappings
-    from mapping_resolution_tui.actions import AcceptLine
+    from mapping_resolution_tui.events import KeyEvent
     from mapping_resolution_tui.reducer import make_initial_state, reduce
     from mapping_resolution_tui.renderer import render_lines
 
@@ -256,9 +253,9 @@ def frame_9_lines():
     # Assume we cleared collisions and set target for ordinal 3
     mappings = [replace(m, target_value="ATT") if m.ordinal == 3 else m for m in state.mappings]
     state = replace(state, mappings=mappings)
-    
+
     # Ordinal 1 is APPLE and selected
-    state = reduce(state, AcceptLine())
+    state = reduce(state, KeyEvent.ENTER)
     return render_lines(state)
 
 @pytest.fixture
@@ -269,17 +266,17 @@ def frame_9_screen(frame_9_lines):
 def frame_10_lines():
     from dataclasses import replace
     from tests.fixtures.storyboard import make_config, make_mappings
-    from mapping_resolution_tui.actions import AcceptLine, InsertChar
+    from mapping_resolution_tui.events import KeyEvent
     from mapping_resolution_tui.reducer import make_initial_state, reduce
     from mapping_resolution_tui.renderer import render_lines
 
     state = make_initial_state(make_config(), make_mappings(), frame_height=15)
     mappings = [replace(m, target_value="ATT") if m.ordinal == 3 else m for m in state.mappings]
     state = replace(state, mappings=mappings)
-    
-    state = reduce(state, AcceptLine())
+
+    state = reduce(state, KeyEvent.ENTER)
     for char in "44PL":
-        state = reduce(state, InsertChar(char))
+        state = reduce(state, char)
     return render_lines(state)
 
 @pytest.fixture
@@ -290,17 +287,17 @@ def frame_10_screen(frame_10_lines):
 def frame_11_lines():
     from dataclasses import replace
     from tests.fixtures.storyboard import make_config, make_mappings
-    from mapping_resolution_tui.actions import AcceptLine, InsertChar
+    from mapping_resolution_tui.events import KeyEvent
     from mapping_resolution_tui.reducer import make_initial_state, reduce
     from mapping_resolution_tui.renderer import render_lines
 
     state = make_initial_state(make_config(), make_mappings(), frame_height=15)
     mappings = [replace(m, target_value="ATT") if m.ordinal == 3 else m for m in state.mappings]
     state = replace(state, mappings=mappings)
-    
-    state = reduce(state, AcceptLine())
+
+    state = reduce(state, KeyEvent.ENTER)
     for char in "44PL56789012345678901234":
-        state = reduce(state, InsertChar(char))
+        state = reduce(state, char)
     return render_lines(state)
 
 @pytest.fixture

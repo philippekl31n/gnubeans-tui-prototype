@@ -8,7 +8,7 @@ action is dispatched through ``reduce``. The resulting state is rendered with
 """
 from pytest_bdd import given, when, then, parsers, scenarios
 
-from mapping_resolution_tui.loop import key_to_action
+from mapping_resolution_tui.loop import key_to_event
 from mapping_resolution_tui.reducer import reduce
 from mapping_resolution_tui.renderer import render_lines
 from mapping_resolution_tui.selectors import select_visible_rows
@@ -22,10 +22,10 @@ _ESC = "\x1b"
 
 
 def _dispatch_key(state, key):
-    action = key_to_action(key)
-    if action is None:
+    event = key_to_event(key)
+    if event is None:
         return state
-    return reduce(state, action)
+    return reduce(state, event)
 
 
 @given("the storyboard fixture is loaded in a 15-row terminal", target_fixture="state")

@@ -3,15 +3,16 @@ Main event loop and console entry point.
 
 The loop is a blocking Redux-style dispatcher:
 
-    read keypress -> key_to_action -> reduce -> render
+    read keypress -> key_to_event -> reduce -> render
 
 Input is a ``blessed.Keystroke`` (or, in tests, any string / string-like object
-carrying an optional ``.name``). A single, table-driven :func:`key_to_action`
+carrying an optional ``.name``). A single, table-driven :func:`key_to_event`
 normalises every keypress — named escape sequences via ``Keystroke.name`` and
-readline-style control chords / meta sequences via the raw key text — directly
-into an action, with no intermediate token vocabulary. Keys that map to no
-action are ignored and leave state and rendered output unchanged (FR30). The
-``keys`` and ``render`` seams on :func:`run` keep the loop drivable headless.
+readline-style control chords / meta sequences via the raw key text — into a
+mode-neutral :class:`~mapping_resolution_tui.events.KeyEvent` or a bare ``str``
+for a printable character. Keys that map to no event are ignored and leave state
+and rendered output unchanged (FR30). The ``keys`` and ``render`` seams on
+:func:`run` keep the loop drivable headless.
 """
 
 import sys
@@ -19,29 +20,8 @@ from typing import Callable, Iterable, Optional
 
 import blessed
 
-from mapping_resolution_tui.actions import (
-    Action,
-    AutocompleteBang,
-    Backspace,
-    BackwardKillWord,
-    Escape,
-    AcceptLine,
-    DeleteChar,
-    InsertChar,
-    KillLine,
-    KillWord,
-    MoveCursorEnd,
-    MoveCursorHome,
-    MoveCursorLeft,
-    MoveCursorRight,
-    MoveSelectionDown,
-    MoveSelectionUp,
-    PageDown,
-    PageUp,
-    Redraw,
-    UnixLineDiscard,
-)
 from mapping_resolution_tui.config import QUIT_KEY
+from mapping_resolution_tui.events import InputEvent, KeyEvent
 from mapping_resolution_tui.reducer import make_initial_state, reduce
 from mapping_resolution_tui.renderer import render_lines
 from mapping_resolution_tui.state import AppConfig, Mapping
@@ -50,61 +30,52 @@ from mapping_resolution_tui.state import AppConfig, Mapping
 # blessed keystroke delivers it as this control byte under term.raw().
 _CTRL_C = "\x03"
 
-# blessed Keystroke.name → action (multi-byte named escape sequences). Tab
-# (KEY_TAB) is handled separately below: it maps to AutocompleteBang, whose
-# ghost-visibility gate is enforced by the reducer against application state.
-_NAME_ACTIONS: dict[str, type] = {
-    "KEY_LEFT": MoveCursorLeft,
-    "KEY_RIGHT": MoveCursorRight,
-    "KEY_HOME": MoveCursorHome,
-    "KEY_END": MoveCursorEnd,
-    "KEY_BACKSPACE": Backspace,
-    "KEY_DELETE": DeleteChar,
-    "KEY_ESCAPE": Escape,
-    "KEY_ENTER": AcceptLine,
-    "KEY_UP": MoveSelectionUp,
-    "KEY_DOWN": MoveSelectionDown,
-    "KEY_SUP": PageUp,
-    "KEY_PGUP": PageUp,
-    "KEY_SDOWN": PageDown,
-    "KEY_PGDOWN": PageDown,
+# blessed Keystroke.name → KeyEvent (multi-byte named escape sequences).
+_NAME_EVENTS: dict[str, KeyEvent] = {
+    "KEY_LEFT":      KeyEvent.CURSOR_LEFT,
+    "KEY_RIGHT":     KeyEvent.CURSOR_RIGHT,
+    "KEY_HOME":      KeyEvent.CURSOR_HOME,
+    "KEY_END":       KeyEvent.CURSOR_END,
+    "KEY_BACKSPACE": KeyEvent.BACKSPACE,
+    "KEY_DELETE":    KeyEvent.DELETE_CHAR,
+    "KEY_ESCAPE":    KeyEvent.ESCAPE,
+    "KEY_ENTER":     KeyEvent.ENTER,
+    "KEY_UP":        KeyEvent.SELECTION_UP,
+    "KEY_DOWN":      KeyEvent.SELECTION_DOWN,
+    "KEY_TAB":       KeyEvent.TAB,
+    "KEY_SUP":       KeyEvent.PAGE_UP,
+    "KEY_PGUP":      KeyEvent.PAGE_UP,
+    "KEY_SDOWN":     KeyEvent.PAGE_DOWN,
+    "KEY_PGDOWN":    KeyEvent.PAGE_DOWN,
 }
 
-# `Tab` / `ctrl+i` autocompletes a leading `!` collision metafilter; the reducer
-# no-ops unless the `Tab to view collisions` ghost is visible (spec §3.3 / §5.1).
-_TAB_NAMES = frozenset({"KEY_TAB"})
-
-# ESC-prefixed meta sequences → action (checked before the lone ESC below).
-_META_ACTIONS: dict[str, type] = {
-    "\x1bd": KillWord,        # meta+d         -> kill-word (forward)
-    "\x1b\x7f": BackwardKillWord,  # meta+backspace -> backward-kill-word
-    "\x1b\x08": BackwardKillWord,  # meta+ctrl+h variant
+# ESC-prefixed meta sequences → KeyEvent (checked before the lone ESC below).
+_META_EVENTS: dict[str, KeyEvent] = {
+    "\x1bd":    KeyEvent.KILL_WORD,          # meta+d         -> kill-word (forward)
+    "\x1b\x7f": KeyEvent.BACKWARD_KILL_WORD, # meta+backspace -> backward-kill-word
+    "\x1b\x08": KeyEvent.BACKWARD_KILL_WORD, # meta+ctrl+h variant
 }
 
-# Single control characters / readline aliases → action.
-_CTRL_ACTIONS: dict[str, type] = {
-    "\x01": MoveCursorHome,    # ctrl+a  beginning-of-line
-    "\x05": MoveCursorEnd,     # ctrl+e  end-of-line
-    "\x02": MoveCursorLeft,    # ctrl+b  backward-char
-    "\x06": MoveCursorRight,   # ctrl+f  forward-char
-    "\x04": DeleteChar,        # ctrl+d  delete-char (forward)
-    "\x08": Backspace,         # ctrl+h  backward-delete-char
-    "\x7f": Backspace,         # DEL     backward-delete-char
-    "\x0b": KillLine,          # ctrl+k  kill-line
-    "\x15": UnixLineDiscard,   # ctrl+u  unix-line-discard
-    "\x17": BackwardKillWord,  # ctrl+w  unix-word-rubout
-    "\x10": PageUp,            # ctrl+p  previous-history -> PageUp
-    "\x0e": PageDown,          # ctrl+n  next-history -> PageDown
-    "\x0c": Redraw,            # ctrl+l  clear-screen / redraw only
-    "\x1b": Escape,            # ESC     clear filter / cancel edit
-    "\r": AcceptLine,          # enter
-    "\n": AcceptLine,          # enter
+# Single control characters / readline aliases → KeyEvent.
+_CTRL_EVENTS: dict[str, KeyEvent] = {
+    "\x01": KeyEvent.CURSOR_HOME,        # ctrl+a  beginning-of-line
+    "\x05": KeyEvent.CURSOR_END,         # ctrl+e  end-of-line
+    "\x02": KeyEvent.CURSOR_LEFT,        # ctrl+b  backward-char
+    "\x06": KeyEvent.CURSOR_RIGHT,       # ctrl+f  forward-char
+    "\x04": KeyEvent.DELETE_CHAR,        # ctrl+d  delete-char (forward)
+    "\x08": KeyEvent.BACKSPACE,          # ctrl+h  backward-delete-char
+    "\x7f": KeyEvent.BACKSPACE,          # DEL     backward-delete-char
+    "\x09": KeyEvent.TAB,                # ctrl+i  Tab / autocomplete
+    "\x0b": KeyEvent.KILL_LINE,          # ctrl+k  kill-line
+    "\x15": KeyEvent.UNIX_LINE_DISCARD,  # ctrl+u  unix-line-discard
+    "\x17": KeyEvent.BACKWARD_KILL_WORD, # ctrl+w  unix-word-rubout
+    "\x10": KeyEvent.PAGE_UP,            # ctrl+p  previous-history -> PageUp
+    "\x0e": KeyEvent.PAGE_DOWN,          # ctrl+n  next-history -> PageDown
+    "\x0c": KeyEvent.REDRAW,             # ctrl+l  clear-screen / redraw only
+    "\x1b": KeyEvent.ESCAPE,             # ESC     clear filter / cancel edit
+    "\r":   KeyEvent.ENTER,              # enter
+    "\n":   KeyEvent.ENTER,              # enter
 }
-
-# Tab / ctrl+i: bang-autocomplete the collision metafilter (the reducer decides
-# whether the ghost is visible; otherwise the action is a no-op). ctrl+i arrives
-# as the same "\t" byte.
-_TAB_TEXT = "\t"
 
 
 def is_quit_key(key) -> bool:
@@ -117,37 +88,30 @@ def is_quit_key(key) -> bool:
     return text == _CTRL_C or text == QUIT_KEY
 
 
-def key_to_action(key) -> Optional[Action]:
-    """Normalise a keypress into an action, or ``None`` for a no-op (FR30).
+def key_to_event(key) -> Optional[InputEvent]:
+    """Normalise a keypress into an :data:`~mapping_resolution_tui.events.InputEvent`, or ``None`` for a no-op (FR30).
 
     ``key`` may be a ``blessed.Keystroke`` (whose ``.name`` identifies multi-byte
     escape sequences such as the arrow keys) or any string-like value, so the one
     function serves both the live loop and headless tests. Named keys resolve via
     ``.name``; control chords and meta sequences via the raw key text; a single
-    printable character — including a literal ``!`` (spec §3.3) — inserts. Tab /
-    ctrl+i maps to :class:`AutocompleteBang` (the reducer applies the ghost gate).
-    The quit key, the no-op readline families, and anything unrecognised return
-    ``None``.
+    printable character — including a literal ``!`` (spec §3.3) — is returned as
+    a bare ``str``. The quit key, the no-op readline families, and anything
+    unrecognised return ``None``.
     """
     name = getattr(key, "name", None)
     text = str(key)
 
-    if name in _NAME_ACTIONS:
-        return _NAME_ACTIONS[name]()
+    if name in _NAME_EVENTS:
+        return _NAME_EVENTS[name]
 
-    if name in _TAB_NAMES:
-        return AutocompleteBang()
-
-    if text in _META_ACTIONS:
-        return _META_ACTIONS[text]()
-    if text in _CTRL_ACTIONS:
-        return _CTRL_ACTIONS[text]()
-
-    if text == _TAB_TEXT:
-        return AutocompleteBang()
+    if text in _META_EVENTS:
+        return _META_EVENTS[text]
+    if text in _CTRL_EVENTS:
+        return _CTRL_EVENTS[text]
 
     if len(text) == 1 and " " <= text <= "~":
-        return InsertChar(text)
+        return text
 
     return None
 
@@ -181,20 +145,20 @@ def run(
         if is_quit_key(key):
             return None
 
-        action = key_to_action(key)
-        if action is None:
+        event = key_to_event(key)
+        if event is None:
             # FR30: unsupported keys mutate nothing and trigger no redraw.
             continue
 
-        if isinstance(action, Redraw):
+        if event is KeyEvent.REDRAW:
             # ctrl+l re-renders the current state without mutating it; this is
             # the one repaint that is never skipped by the no-op check below.
             render(render_lines(state))
             continue
 
-        new_state = reduce(state, action)
+        new_state = reduce(state, event)
         if new_state is state:
-            # A recognised action that changed nothing (the reducer returned the
+            # A recognised event that changed nothing (the reducer returned the
             # same object) needs no repaint — state and output stay unchanged.
             continue
         state = new_state

@@ -1,9 +1,10 @@
 """
 Unit tests for the blocking event loop and unified input layer (TASK-001/002).
 
-A single table-driven ``key_to_action`` normalises every keypress — named escape
+A single table-driven ``key_to_event`` normalises every keypress — named escape
 sequences via ``Keystroke.name`` and readline control chords / meta sequences via
-the raw key text — directly into an action (FR29). Unsupported keys and the no-op
+the raw key text — into a mode-neutral :class:`~mapping_resolution_tui.events.KeyEvent`
+or a bare ``str`` for printable characters (FR29). Unsupported keys and the no-op
 readline families return ``None`` so the loop leaves state and output unchanged
 (FR30). The loop is driven through its injectable ``keys``/``render`` seams, with
 ``Key`` standing in for a blessed ``Keystroke`` (a str carrying a ``.name``).
@@ -12,25 +13,7 @@ readline families return ``None`` so the loop leaves state and output unchanged
 import pytest
 
 from mapping_resolution_tui import loop
-from mapping_resolution_tui.actions import (
-    AutocompleteBang,
-    Backspace,
-    Escape,
-    AcceptLine,
-    DeleteChar,
-    InsertChar,
-    KillLine,
-    KillWord,
-    BackwardKillWord,
-    MoveCursorEnd,
-    MoveCursorHome,
-    MoveCursorLeft,
-    MoveCursorRight,
-    MoveSelectionUp,
-    MoveSelectionDown,
-    Redraw,
-    UnixLineDiscard,
-)
+from mapping_resolution_tui.events import KeyEvent
 from tests.fixtures.storyboard import make_config, make_mappings
 
 
@@ -80,63 +63,63 @@ def test_is_quit_key_accepts_raw_ctrl_c_and_readable_token():
     assert loop.is_quit_key(Key(name="KEY_LEFT")) is False
 
 
-# ── key -> action mapping (one unified, table-driven function) ────────────────
+# ── key -> event mapping (one unified, table-driven function) ─────────────────
 
 @pytest.mark.parametrize(
     "key, expected",
     [
         # named escape sequences via Keystroke.name
-        (Key(name="KEY_LEFT"), MoveCursorLeft()),
-        (Key(name="KEY_RIGHT"), MoveCursorRight()),
-        (Key(name="KEY_HOME"), MoveCursorHome()),
-        (Key(name="KEY_END"), MoveCursorEnd()),
-        (Key(name="KEY_BACKSPACE"), Backspace()),
-        (Key(name="KEY_DELETE"), DeleteChar()),
-        (Key(name="KEY_ESCAPE"), Escape()),
-        (Key(name="KEY_ENTER"), AcceptLine()),
-        (Key(name="KEY_UP"), MoveSelectionUp()),
+        (Key(name="KEY_LEFT"),      KeyEvent.CURSOR_LEFT),
+        (Key(name="KEY_RIGHT"),     KeyEvent.CURSOR_RIGHT),
+        (Key(name="KEY_HOME"),      KeyEvent.CURSOR_HOME),
+        (Key(name="KEY_END"),       KeyEvent.CURSOR_END),
+        (Key(name="KEY_BACKSPACE"), KeyEvent.BACKSPACE),
+        (Key(name="KEY_DELETE"),    KeyEvent.DELETE_CHAR),
+        (Key(name="KEY_ESCAPE"),    KeyEvent.ESCAPE),
+        (Key(name="KEY_ENTER"),     KeyEvent.ENTER),
+        (Key(name="KEY_UP"),        KeyEvent.SELECTION_UP),
         # readline control chords via raw text
-        (CTRL_A, MoveCursorHome()),
-        (CTRL_E, MoveCursorEnd()),
-        (CTRL_B, MoveCursorLeft()),
-        (CTRL_F, MoveCursorRight()),
-        (CTRL_D, DeleteChar()),
-        (CTRL_H, Backspace()),
-        (DEL, Backspace()),
-        (CTRL_K, KillLine()),
-        (CTRL_U, UnixLineDiscard()),
-        (CTRL_W, BackwardKillWord()),
-        (CTRL_L, Redraw()),
-        (ESC, Escape()),
-        ("\r", AcceptLine()),
-        ("\n", AcceptLine()),
+        (CTRL_A, KeyEvent.CURSOR_HOME),
+        (CTRL_E, KeyEvent.CURSOR_END),
+        (CTRL_B, KeyEvent.CURSOR_LEFT),
+        (CTRL_F, KeyEvent.CURSOR_RIGHT),
+        (CTRL_D, KeyEvent.DELETE_CHAR),
+        (CTRL_H, KeyEvent.BACKSPACE),
+        (DEL,    KeyEvent.BACKSPACE),
+        (CTRL_K, KeyEvent.KILL_LINE),
+        (CTRL_U, KeyEvent.UNIX_LINE_DISCARD),
+        (CTRL_W, KeyEvent.BACKWARD_KILL_WORD),
+        (CTRL_L, KeyEvent.REDRAW),
+        (ESC,    KeyEvent.ESCAPE),
+        ("\r",   KeyEvent.ENTER),
+        ("\n",   KeyEvent.ENTER),
         # meta / Alt word kills
-        (META_D, KillWord()),
-        (META_BS, BackwardKillWord()),
+        (META_D,  KeyEvent.KILL_WORD),
+        (META_BS, KeyEvent.BACKWARD_KILL_WORD),
         # Tab / ctrl+i -> bang autocomplete (the reducer applies the ghost gate)
-        (Key(name="KEY_TAB"), AutocompleteBang()),
-        (TAB, AutocompleteBang()),
-        # printable insertion (incl. a literal bang)
-        ("a", InsertChar("a")),
-        ("3", InsertChar("3")),
-        ("!", InsertChar("!")),
+        (Key(name="KEY_TAB"), KeyEvent.TAB),
+        (TAB,                 KeyEvent.TAB),
+        # printable insertion (incl. a literal bang) — returned as bare str
+        ("a", "a"),
+        ("3", "3"),
+        ("!", "!"),
     ],
 )
-def test_key_to_action_maps_supported_keys(key, expected):
-    assert loop.key_to_action(key) == expected
+def test_key_to_event_maps_supported_keys(key, expected):
+    assert loop.key_to_event(key) == expected
 
 
 @pytest.mark.parametrize(
     "key",
     [
         CTRL_X,
-        CTRL_C,                  # quit is handled by is_quit_key, not key_to_action
+        CTRL_C,                  # quit is handled by is_quit_key, not key_to_event
         # no-op readline families:
         CTRL_G, CTRL_Q, CTRL_V, CTRL_US, CTRL_T, CTRL_Y, CTRL_R,
     ],
 )
-def test_key_to_action_returns_none_for_unsupported_keys(key):
-    assert loop.key_to_action(key) is None
+def test_key_to_event_returns_none_for_unsupported_keys(key):
+    assert loop.key_to_event(key) is None
 
 
 # ── event loop cycle ─────────────────────────────────────────────────────────
@@ -172,7 +155,7 @@ def test_ctrl_w_deletes_previous_word_via_loop():
 
 
 def test_named_arrow_key_moves_cursor_via_loop():
-    # A blessed-style named keystroke drives the same action as ctrl+b.
+    # A blessed-style named keystroke drives the same event as ctrl+b.
     _, frames = run_keys(["a", Key(name="KEY_LEFT")])
     assert len(frames) == 3  # initial + insert + cursor move
 

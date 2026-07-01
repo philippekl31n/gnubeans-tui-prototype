@@ -4,7 +4,7 @@ and the empty-result frame.
 
 Steps drive the reducer through the same input-layer normalisation the live loop
 uses: arrows and page keys arrive as blessed ``Keystroke`` objects and readline
-aliases (``ctrl+n`` / ``ctrl+p``) as control bytes, so ``key_to_action`` plus the
+aliases (``ctrl+n`` / ``ctrl+p``) as control bytes, so ``key_to_event`` plus the
 reducer are exercised end to end (spec §3.4, §8.2, §8.3, §8.5).
 """
 from dataclasses import replace
@@ -12,8 +12,7 @@ from dataclasses import replace
 from blessed.keyboard import Keystroke
 from pytest_bdd import given, when, then, parsers, scenarios
 
-from mapping_resolution_tui.actions import InsertChar
-from mapping_resolution_tui.loop import key_to_action
+from mapping_resolution_tui.loop import key_to_event
 from mapping_resolution_tui.reducer import make_initial_state, reduce
 from mapping_resolution_tui.renderer import render_lines, strip_ansi
 from mapping_resolution_tui.selectors import select_body_rows, select_visible_rows
@@ -37,9 +36,9 @@ class _Ctx:
         self.lines = None
 
     def dispatch(self, key):
-        action = key_to_action(key)
-        if action is not None:
-            self.state = reduce(self.state, action)
+        event = key_to_event(key)
+        if event is not None:
+            self.state = reduce(self.state, event)
 
 
 @given("the storyboard fixture is loaded in a 15-row terminal", target_fixture="ctx")
@@ -60,7 +59,7 @@ def preselect_ordinal(ctx, ordinal):
 @when(parsers.parse('the reviewer types "{text}" into the filter'))
 def type_text(ctx, text):
     for char in text:
-        ctx.state = reduce(ctx.state, InsertChar(char))
+        ctx.state = reduce(ctx.state, char)
 
 
 @when("the reviewer presses down arrow")

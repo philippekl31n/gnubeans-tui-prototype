@@ -1,6 +1,6 @@
 from pytest_bdd import given, when, then, parsers, scenarios
 from mapping_resolution_tui.state import Mode
-from mapping_resolution_tui.loop import key_to_action
+from mapping_resolution_tui.loop import key_to_event
 from mapping_resolution_tui.reducer import make_initial_state, reduce
 
 scenarios("../features/edit_mode.feature")
@@ -11,9 +11,9 @@ class _Ctx:
         self.lines = None
 
     def dispatch(self, key):
-        action = key_to_action(key)
-        if action is not None:
-            self.state = reduce(self.state, action)
+        event = key_to_event(key)
+        if event is not None:
+            self.state = reduce(self.state, event)
 
 @given("the storyboard fixture is loaded in a 15-row terminal", target_fixture="ctx")
 def loaded_ctx():

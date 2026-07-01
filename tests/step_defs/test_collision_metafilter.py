@@ -2,15 +2,15 @@
 Step definitions for the collision-metafilter BDD scenarios (TASK-003).
 
 Steps drive the loop's input layer end to end: a Tab / character / named key is
-normalised by ``key_to_action`` exactly as the live loop does, then dispatched
+normalised by ``key_to_event`` exactly as the live loop does, then dispatched
 through ``reduce``. The bang-autocomplete ghost gate lives in the reducer, so
-these scenarios exercise the real Tab → AutocompleteBang → reduce path.
+these scenarios exercise the real Tab → KeyEvent.TAB → reduce path.
 """
 from dataclasses import replace
 
 from pytest_bdd import given, when, then, parsers, scenarios
 
-from mapping_resolution_tui.loop import key_to_action
+from mapping_resolution_tui.loop import key_to_event
 from mapping_resolution_tui.reducer import reduce
 from mapping_resolution_tui.selectors import select_visible_rows
 
@@ -21,10 +21,10 @@ _ESC = "\x1b"
 
 
 def _dispatch_key(state, key):
-    action = key_to_action(key)
-    if action is None:
+    event = key_to_event(key)
+    if event is None:
         return state
-    return reduce(state, action)
+    return reduce(state, event)
 
 
 @given("the storyboard fixture is loaded in a 15-row terminal", target_fixture="state")
