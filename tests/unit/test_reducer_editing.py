@@ -20,6 +20,8 @@ from mapping_resolution_tui.actions import (
     MoveCursorHome,
     MoveCursorLeft,
     MoveCursorRight,
+    MoveSelectionDown,
+    MoveSelectionUp,
     UnixLineDiscard,
 )
 from mapping_resolution_tui.reducer import make_initial_state, reduce
@@ -304,3 +306,124 @@ def test_ghost_hidden_when_cursor_not_at_end(browsing):
 
     # Ghost only renders at the buffer end (FR17).
     assert select_ghost_suffix(state, _mapping(state, 1)) == ""
+
+
+# ── source pointer movement + autofill (FR21, spec §7.4) ─────────────────────
+
+def test_down_from_token_input_enters_source_list_at_first_source(browsing):
+    state = _edit_ordinal(browsing, 1)  # APPLE: cmdty_id AAPL, user_symbol APPLE
+    moved = reduce(state, MoveSelectionDown())
+
+    assert moved.edit.focus_region == FocusRegion.SOURCE_LIST
+    assert moved.edit.source_pointer_index == 0
+    assert moved.edit.source_entry_buffer == ""  # empty token buffer was saved
+    assert moved.edit.buffer == "AAPL"           # autofilled effective value
+    assert moved.edit.cursor == 4                # cursor at buffer end
+    assert moved.edit.validation.status == "VALID"
+
+
+def test_up_from_token_input_enters_source_list_at_last_source(browsing):
+    state = _edit_ordinal(browsing, 1)
+    moved = reduce(state, MoveSelectionUp())
+
+    assert moved.edit.focus_region == FocusRegion.SOURCE_LIST
+    assert moved.edit.source_pointer_index == 1  # last active source
+    assert moved.edit.buffer == "APPLE"
+    assert moved.edit.cursor == 5
+    assert moved.edit.validation.status == "VALID"
+
+
+def test_source_entry_buffer_preserves_in_progress_typing(browsing):
+    state = _edit_ordinal(browsing, 1)
+    for ch in "AT":
+        state = reduce(state, InsertChar(ch))
+    moved = reduce(state, MoveSelectionDown())
+
+    assert moved.edit.source_entry_buffer == "AT"  # in-progress buffer stored
+    assert moved.edit.buffer == "AAPL"             # autofilled over the top
+
+
+def test_move_down_within_source_list_advances_pointer(browsing):
+    state = _edit_ordinal(browsing, 1)
+    state = reduce(state, MoveSelectionDown())      # -> first source AAPL
+    state = reduce(state, MoveSelectionDown())      # -> second source APPLE
+
+    assert state.edit.focus_region == FocusRegion.SOURCE_LIST
+    assert state.edit.source_pointer_index == 1
+    assert state.edit.buffer == "APPLE"
+    assert state.edit.source_entry_buffer == ""     # entry buffer unchanged
+
+
+def test_move_up_within_source_list_retreats_pointer(browsing):
+    state = _edit_ordinal(browsing, 1)
+    state = reduce(state, MoveSelectionUp())         # token input -> last source APPLE
+    state = reduce(state, MoveSelectionUp())         # -> first source AAPL
+
+    assert state.edit.source_pointer_index == 0
+    assert state.edit.buffer == "AAPL"
+
+
+def test_down_past_last_source_restores_buffer_and_returns_to_token_input(browsing):
+    state = _edit_ordinal(browsing, 1)
+    for ch in "AT":
+        state = reduce(state, InsertChar(ch))
+    state = reduce(state, MoveSelectionDown())       # first source AAPL
+    state = reduce(state, MoveSelectionDown())       # second source APPLE
+    state = reduce(state, MoveSelectionDown())       # past last -> restore
+
+    assert state.edit.focus_region == FocusRegion.TOKEN_INPUT
+    assert state.edit.source_pointer_index is None
+    assert state.edit.source_entry_buffer is None
+    assert state.edit.buffer == "AT"                 # restored pre-nav buffer
+    assert state.edit.cursor == 2
+
+
+def test_up_past_first_source_restores_buffer_and_returns_to_token_input(browsing):
+    state = _edit_ordinal(browsing, 1)
+    for ch in "AT":
+        state = reduce(state, InsertChar(ch))
+    state = reduce(state, MoveSelectionDown())       # first source AAPL
+    state = reduce(state, MoveSelectionUp())         # above first -> restore
+
+    assert state.edit.focus_region == FocusRegion.TOKEN_INPUT
+    assert state.edit.source_pointer_index is None
+    assert state.edit.source_entry_buffer is None
+    assert state.edit.buffer == "AT"
+
+
+def test_typing_in_source_list_exits_navigation_and_edits_autofill(browsing):
+    state = _edit_ordinal(browsing, 1)
+    state = reduce(state, MoveSelectionDown())       # source list, buffer AAPL
+    state = reduce(state, InsertChar("X"))
+
+    assert state.edit.focus_region == FocusRegion.TOKEN_INPUT
+    assert state.edit.source_pointer_index is None
+    assert state.edit.source_entry_buffer is None
+    assert state.edit.buffer == "AAPLX"              # char applied to autofill
+    assert state.edit.validation.status == "VALID"
+
+
+def test_backspace_in_source_list_exits_navigation_and_deletes_from_autofill(browsing):
+    state = _edit_ordinal(browsing, 1)
+    state = reduce(state, MoveSelectionUp())         # source list, buffer APPLE
+    state = reduce(state, Backspace())
+
+    assert state.edit.focus_region == FocusRegion.TOKEN_INPUT
+    assert state.edit.source_pointer_index is None
+    assert state.edit.buffer == "APPL"
+    # The default-source ghost reappears now that the buffer is a prefix again.
+    assert select_ghost_suffix(state, _mapping(state, 1)) == "E"
+
+
+def test_single_source_mapping_cycles_through_token_input(browsing):
+    # A mapping with one active source: ↓ enters the list, ↓ again steps below the
+    # only source and returns to the token input (spec §7.4).
+    state = _edit_ordinal(browsing, 5)               # GOOGL, single cmdty_id source
+    entered = reduce(state, MoveSelectionDown())
+    assert entered.edit.source_pointer_index == 0
+    assert entered.edit.buffer == "GOOGL"
+
+    exited = reduce(entered, MoveSelectionDown())
+    assert exited.edit.focus_region == FocusRegion.TOKEN_INPUT
+    assert exited.edit.source_pointer_index is None
+    assert exited.edit.buffer == ""                  # restored empty entry buffer

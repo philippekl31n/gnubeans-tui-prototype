@@ -274,6 +274,34 @@ def _build_frame_11_state():
     return state
 
 
+def _build_frame_12a_state():
+    """Frame 12a: ``↓`` from frame 9 points at the first source and autofills ``AAPL``.
+
+    From the empty-buffer edit on the APPLE mapping (frame 9) the reviewer presses
+    ``↓``: the token buffer is saved to ``source_entry_buffer``, focus moves to the
+    source list at the first active source (``cmdty_id: "AAPL"``), and the buffer
+    autofills to ``AAPL`` — a valid token, so the ``✓`` icon renders (spec §7.4 /
+    FR21).
+    """
+    from mapping_resolution_tui.actions import MoveSelectionDown
+    from mapping_resolution_tui.reducer import reduce
+
+    return reduce(_build_frame_9_state(), MoveSelectionDown())
+
+
+def _build_frame_12b_state():
+    """Frame 12b: ``↑`` from frame 9 wraps to the last source and autofills ``APPLE``.
+
+    From frame 9 the reviewer presses ``↑``: focus moves to the source list at the
+    last active source (``user_symbol: "APPLE"``) and the buffer autofills to
+    ``APPLE`` — valid, ``✓`` icon (spec §7.4 / FR21).
+    """
+    from mapping_resolution_tui.actions import MoveSelectionUp
+    from mapping_resolution_tui.reducer import reduce
+
+    return reduce(_build_frame_9_state(), MoveSelectionUp())
+
+
 @pytest.fixture
 def frame_4_lines():
     from mapping_resolution_tui.renderer import render_lines
@@ -345,6 +373,28 @@ def frame_11_burst_lines():
 @pytest.fixture
 def frame_11_burst_screen(frame_11_burst_lines):
     return make_pyte_screen(frame_11_burst_lines)
+
+
+@pytest.fixture
+def frame_12a_lines():
+    from mapping_resolution_tui.renderer import render_lines
+    return render_lines(_build_frame_12a_state())
+
+
+@pytest.fixture
+def frame_12a_screen(frame_12a_lines):
+    return make_pyte_screen(frame_12a_lines)
+
+
+@pytest.fixture
+def frame_12b_lines():
+    from mapping_resolution_tui.renderer import render_lines
+    return render_lines(_build_frame_12b_state())
+
+
+@pytest.fixture
+def frame_12b_screen(frame_12b_lines):
+    return make_pyte_screen(frame_12b_lines)
 
 
 @pytest.fixture

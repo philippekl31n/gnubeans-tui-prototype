@@ -33,8 +33,10 @@ from mapping_resolution_tui.actions import (
 )
 from mapping_resolution_tui.selectors import (
     parse_filter,
+    select_active_sources,
     select_body_capacity,
     select_collision_ghost_visible,
+    select_source_pointer_value,
     select_unresolved_collision_count,
     select_visible_rows,
     sort_mappings_for_initial_display,
@@ -519,6 +521,104 @@ def _apply_edit_buffer(
     )
 
 
+def _autofill_source_pointer(
+    state: AppState,
+    mapping: Mapping,
+    index: int,
+    source_entry_buffer: str,
+) -> AppState:
+    """Point at active source ``index`` and autofill the buffer from it (spec §7.4 / FR21).
+
+    Enters/stays in ``SOURCE_LIST`` with ``source_pointer_index = index`` and
+    ``source_entry_buffer`` preserving the pre-navigation token buffer, then
+    autofills ``edit.buffer`` with the pointed source's effective value
+    (:func:`select_source_pointer_value`), moves the cursor to the buffer end,
+    revalidates, and clears the transient max-length flash (a source-navigation
+    event supersedes it, spec §7.5).
+    """
+    pointer_edit = replace(
+        state.edit,
+        focus_region=FocusRegion.SOURCE_LIST,
+        source_pointer_index=index,
+        source_entry_buffer=source_entry_buffer,
+    )
+    pointed = replace(state, edit=pointer_edit)
+    buffer = select_source_pointer_value(pointed, mapping)
+    return replace(
+        pointed,
+        edit=replace(
+            pointer_edit,
+            buffer=buffer,
+            cursor=len(buffer),
+            validation=_edit_validation(state.config, buffer, mapping),
+            max_length_flash_until=None,
+        ),
+    )
+
+
+def _restore_token_input(state: AppState, mapping: Mapping) -> AppState:
+    """Leave ``SOURCE_LIST`` above the first / below the last source (spec §7.4 / FR21).
+
+    Restores ``edit.buffer`` from ``source_entry_buffer`` (the value from just
+    before source navigation began), clears ``source_pointer_index`` and
+    ``source_entry_buffer``, returns focus to ``TOKEN_INPUT``, moves the cursor to
+    the buffer end, revalidates, and clears the transient max-length flash.
+    """
+    edit = state.edit
+    buffer = edit.source_entry_buffer or ""
+    return replace(
+        state,
+        edit=replace(
+            edit,
+            buffer=buffer,
+            cursor=len(buffer),
+            focus_region=FocusRegion.TOKEN_INPUT,
+            source_pointer_index=None,
+            source_entry_buffer=None,
+            validation=_edit_validation(state.config, buffer, mapping),
+            max_length_flash_until=None,
+        ),
+    )
+
+
+def _move_source_pointer(state: AppState, direction: int) -> AppState:
+    """Move the source pointer up (``-1``) or down (``+1``) per spec §7.4 (FR21).
+
+    From ``TOKEN_INPUT`` this enters ``SOURCE_LIST``: ``↓`` points at the first
+    active source, ``↑`` at the last, saving the token buffer into
+    ``source_entry_buffer`` first. Within ``SOURCE_LIST`` the pointer steps by one;
+    stepping above the first source or below the last restores the token buffer
+    and returns focus to ``TOKEN_INPUT``. Every move autofills the buffer from the
+    pointed source and revalidates. With no active sources this is a no-op.
+    """
+    edit = state.edit
+    mapping = _edited_mapping(state)
+    active = select_active_sources(mapping)
+    if not active:
+        return state  # nothing navigable
+
+    if edit.focus_region == FocusRegion.TOKEN_INPUT:
+        index = 0 if direction > 0 else len(active) - 1
+        return _autofill_source_pointer(state, mapping, index, edit.buffer)
+
+    new_index = edit.source_pointer_index + direction
+    if new_index < 0 or new_index >= len(active):
+        return _restore_token_input(state, mapping)
+    return _autofill_source_pointer(state, mapping, new_index, edit.source_entry_buffer)
+
+
+def _reduce_editing_move_selection_up(
+    state: AppState, action: MoveSelectionUp, now: Optional[float]
+) -> AppState:
+    return _move_source_pointer(state, -1)
+
+
+def _reduce_editing_move_selection_down(
+    state: AppState, action: MoveSelectionDown, now: Optional[float]
+) -> AppState:
+    return _move_source_pointer(state, 1)
+
+
 def _reduce_editing_insert_char(
     state: AppState, action: InsertChar, now: Optional[float]
 ) -> AppState:
@@ -677,6 +777,8 @@ def _reduce_editing_redraw(
 
 _EDITING_HANDLERS = {
     InsertChar: _reduce_editing_insert_char,
+    MoveSelectionUp: _reduce_editing_move_selection_up,
+    MoveSelectionDown: _reduce_editing_move_selection_down,
     Backspace: _reduce_editing_backspace,
     DeleteChar: _reduce_editing_delete_char,
     KillLine: _reduce_editing_kill_line,
