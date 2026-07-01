@@ -5,6 +5,7 @@ Reducer module: pure state transitions and application initialization.
 from dataclasses import replace
 from typing import Callable, Optional
 import shutil
+import time
 
 from mapping_resolution_tui.events import InputEvent, KeyEvent
 from mapping_resolution_tui.selectors import (
@@ -261,10 +262,39 @@ def _validate_edit(state: AppState, edit: EditState, new_buffer: str) -> EditSta
     return replace(edit, buffer=new_buffer, validation=validation)
 
 
+# Duration a rejected over-limit character's error stays visible before the
+# next accepted edit clears it (FR20). Golden tests never depend on this
+# elapsing — only on the immediate post-discard render.
+_FLASH_DURATION = 1.0
+
+
+def _apply_edit_buffer(state: AppState, new_buffer: str, new_cursor: int) -> AppState:
+    """Commit an accepted edit-buffer mutation.
+
+    Shared post-mutation sequence for every EDITING handler that changes the
+    buffer: clamp the cursor into range, recompute validation, drop any
+    in-progress source-list navigation, reset focus to the token input, and
+    clear the max-length flash since an accepted change supersedes it (FR20).
+    """
+    edit = state.edit
+    cursor = max(0, min(new_cursor, len(new_buffer)))
+    new_edit = replace(
+        edit,
+        cursor=cursor,
+        focus_region=FocusRegion.TOKEN_INPUT,
+        source_pointer_index=None,
+        source_entry_buffer=None,
+        max_length_flash_until=None,
+    )
+    return replace(state, edit=_validate_edit(state, new_edit, new_buffer))
+
+
 # ── BROWSING filter handlers ──────────────────────────────────────────────────
 
 
-def _reduce_filter_insert_char(state: AppState, char: str) -> AppState:
+def _reduce_filter_insert_char(state: AppState, char: str, now: Optional[float]) -> AppState:
+    # `now` is unused here: the filter buffer has no length cap/flash concept
+    # (FR20 is EDITING-only). Accepted for signature parity with _MODE_INSERT.
     cursor = state.filter.cursor
     raw = state.filter.raw
     new_raw = raw[:cursor] + char + raw[cursor:]
@@ -433,19 +463,31 @@ def _reduce_table_page_down(state: AppState) -> AppState:
 # ── EDITING token handlers ────────────────────────────────────────────────────
 
 
-def _reduce_token_insert_char(state: AppState, char: str) -> AppState:
+def _reduce_token_insert_char(state: AppState, char: str, now: Optional[float]) -> AppState:
     edit = state.edit
     new_buffer = edit.buffer[:edit.cursor] + char + edit.buffer[edit.cursor:]
     if len(new_buffer) > state.config.target_policy.max_token_length:
-        return state  # Discard if too long (max_length_flash_until to be added later)
-    new_edit = replace(
-        edit,
-        cursor=edit.cursor + len(char),
-        focus_region=FocusRegion.TOKEN_INPUT,
-        source_pointer_index=None,
-        source_entry_buffer=None,
-    )
-    return replace(state, edit=_validate_edit(state, new_edit, new_buffer))
+        # Over-limit: the character is discarded (buffer/cursor unchanged), but
+        # the rejected candidate is still validated so the real policy error
+        # ("24 chars max") surfaces immediately, and the flash timer arms (FR20).
+        mapping = next(m for m in state.mappings if m.ordinal == edit.mapping_ordinal)
+        context = TargetValidationContext(
+            is_concrete_buffer=True,
+            is_ghost_only_default=False,
+            mapping=mapping,
+        )
+        validation = state.config.target_policy.validate(new_buffer, context)
+        flash_until = (time.time() if now is None else now) + _FLASH_DURATION
+        return replace(
+            state,
+            edit=replace(
+                edit,
+                focus_region=FocusRegion.TOKEN_INPUT,
+                validation=validation,
+                max_length_flash_until=flash_until,
+            ),
+        )
+    return _apply_edit_buffer(state, new_buffer, edit.cursor + len(char))
 
 
 def _reduce_token_cursor_left(state: AppState) -> AppState:
@@ -469,14 +511,7 @@ def _reduce_token_backspace(state: AppState) -> AppState:
     if edit.cursor == 0:
         return state
     new_buffer = edit.buffer[:edit.cursor - 1] + edit.buffer[edit.cursor:]
-    new_edit = replace(
-        edit,
-        cursor=edit.cursor - 1,
-        focus_region=FocusRegion.TOKEN_INPUT,
-        source_pointer_index=None,
-        source_entry_buffer=None,
-    )
-    return replace(state, edit=_validate_edit(state, new_edit, new_buffer))
+    return _apply_edit_buffer(state, new_buffer, edit.cursor - 1)
 
 
 def _reduce_token_delete_char(state: AppState) -> AppState:
@@ -484,42 +519,21 @@ def _reduce_token_delete_char(state: AppState) -> AppState:
     if edit.cursor >= len(edit.buffer):
         return state
     new_buffer = edit.buffer[:edit.cursor] + edit.buffer[edit.cursor + 1:]
-    new_edit = replace(
-        edit,
-        focus_region=FocusRegion.TOKEN_INPUT,
-        source_pointer_index=None,
-        source_entry_buffer=None,
-    )
-    return replace(state, edit=_validate_edit(state, new_edit, new_buffer))
+    return _apply_edit_buffer(state, new_buffer, edit.cursor)
 
 
 def _reduce_token_clear_after_cursor(state: AppState) -> AppState:
     edit = state.edit
     if edit.cursor >= len(edit.buffer):
         return state
-    new_buffer = edit.buffer[:edit.cursor]
-    new_edit = replace(
-        edit,
-        focus_region=FocusRegion.TOKEN_INPUT,
-        source_pointer_index=None,
-        source_entry_buffer=None,
-    )
-    return replace(state, edit=_validate_edit(state, new_edit, new_buffer))
+    return _apply_edit_buffer(state, edit.buffer[:edit.cursor], edit.cursor)
 
 
 def _reduce_token_clear_before_cursor(state: AppState) -> AppState:
     edit = state.edit
     if edit.cursor == 0:
         return state
-    new_buffer = edit.buffer[edit.cursor:]
-    new_edit = replace(
-        edit,
-        cursor=0,
-        focus_region=FocusRegion.TOKEN_INPUT,
-        source_pointer_index=None,
-        source_entry_buffer=None,
-    )
-    return replace(state, edit=_validate_edit(state, new_edit, new_buffer))
+    return _apply_edit_buffer(state, edit.buffer[edit.cursor:], 0)
 
 
 def _reduce_token_delete_next_word(state: AppState) -> AppState:
@@ -528,13 +542,7 @@ def _reduce_token_delete_next_word(state: AppState) -> AppState:
     if end == edit.cursor:
         return state
     new_buffer = edit.buffer[:edit.cursor] + edit.buffer[end:]
-    new_edit = replace(
-        edit,
-        focus_region=FocusRegion.TOKEN_INPUT,
-        source_pointer_index=None,
-        source_entry_buffer=None,
-    )
-    return replace(state, edit=_validate_edit(state, new_edit, new_buffer))
+    return _apply_edit_buffer(state, new_buffer, edit.cursor)
 
 
 def _reduce_token_delete_prev_word(state: AppState) -> AppState:
@@ -543,14 +551,7 @@ def _reduce_token_delete_prev_word(state: AppState) -> AppState:
     if start == edit.cursor:
         return state
     new_buffer = edit.buffer[:start] + edit.buffer[edit.cursor:]
-    new_edit = replace(
-        edit,
-        cursor=start,
-        focus_region=FocusRegion.TOKEN_INPUT,
-        source_pointer_index=None,
-        source_entry_buffer=None,
-    )
-    return replace(state, edit=_validate_edit(state, new_edit, new_buffer))
+    return _apply_edit_buffer(state, new_buffer, start)
 
 
 def _reduce_cancel_edit(state: AppState) -> AppState:
@@ -611,21 +612,23 @@ _MODE_HANDLERS: dict[Mode, dict[KeyEvent, Callable[[AppState], AppState]]] = {
     Mode.EDITING:  _EDITING_HANDLERS,
 }
 
-_MODE_INSERT: dict[Mode, Callable[[AppState, str], AppState]] = {
+_MODE_INSERT: dict[Mode, Callable[[AppState, str, Optional[float]], AppState]] = {
     Mode.BROWSING: _reduce_filter_insert_char,
     Mode.EDITING:  _reduce_token_insert_char,
 }
 
 
-def reduce(state: AppState, event: InputEvent) -> AppState:
+def reduce(state: AppState, event: InputEvent, now: Optional[float] = None) -> AppState:
     """Pure dispatch: route ``event`` to its handler, returning new state.
 
     Dispatch is mode-aware via ``_MODE_HANDLERS`` and ``_MODE_INSERT``.
     An unrecognised event (no handler in the active mode's table) is a no-op —
-    the same ``state`` object is returned unchanged (FR30).
+    the same ``state`` object is returned unchanged (FR30). ``now`` injects the
+    clock used by the EDITING over-limit flash (FR20); it defaults to
+    wall-clock time and is unused outside that one path.
     """
     if isinstance(event, str):
         insert = _MODE_INSERT.get(state.mode)
-        return insert(state, event) if insert else state
+        return insert(state, event, now) if insert else state
     handler = _MODE_HANDLERS.get(state.mode, {}).get(event)
     return handler(state) if handler else state

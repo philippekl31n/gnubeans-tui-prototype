@@ -13,4 +13,4 @@
    8   QQQ                        cmdty_id: "QQQ"
    9   SPY                        cmdty_id: "SPY"
 
-  Error: must start with A-Z  ·  ↑↓ select source  ·  esc cancel
+  Error: 24 chars max  ·  ↑↓ select source  ·  esc cancel

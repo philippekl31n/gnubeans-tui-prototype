@@ -37,3 +37,36 @@ def test_insert_char_in_editing_mode():
     state = reduce(state, "A")
     assert state.edit.buffer == "A"
     assert state.edit.cursor == 1
+
+def test_over_limit_character_is_discarded_and_flashes():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = reduce(state, KeyEvent.ENTER)
+
+    for ch in "ABCDEFGHIJKLMNOPQRSTUVWX":  # 24 valid chars, fills the cap
+        state = reduce(state, ch)
+    before_buffer = state.edit.buffer
+    assert len(before_buffer) == 24
+
+    flashed = reduce(state, "Y", now=100.0)
+
+    assert flashed.edit.buffer == before_buffer  # 25th char discarded
+    assert flashed.edit.cursor == 24
+    assert flashed.edit.max_length_flash_until == 100.0 + 1.0
+    assert flashed.edit.validation.error_message == "24 chars max"
+    assert flashed.edit.validation.icon == "✗"
+
+def test_flash_clears_on_next_accepted_edit():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    state = reduce(state, KeyEvent.ENTER)
+
+    for ch in "ABCDEFGHIJKLMNOPQRSTUVWX":
+        state = reduce(state, ch)
+    flashed = reduce(state, "Y", now=100.0)
+    assert flashed.edit.max_length_flash_until is not None
+
+    cleared = reduce(flashed, KeyEvent.BACKSPACE)
+    assert cleared.edit.max_length_flash_until is None

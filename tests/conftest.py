@@ -296,8 +296,9 @@ def frame_11_lines():
     state = replace(state, mappings=mappings)
 
     state = reduce(state, KeyEvent.ENTER)
-    for char in "44PL56789012345678901234":
+    for char in "44PL56789012345678901234":  # 24 chars, fills the cap
         state = reduce(state, char)
+    state = reduce(state, "5", now=0.0)  # 25th char: discarded, arms the flash (FR20)
     return render_lines(state)
 
 @pytest.fixture
