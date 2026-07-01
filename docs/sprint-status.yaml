@@ -227,3 +227,52 @@ tasks:
       - "BDD scenarios for submit, cancel, and live collision recomputation
         all pass"
       - "All relevant golden frames committed and passing under uv run pytest"
+
+  - key: TASK-009
+    type: task
+    title: Pop-then-hold micro-animation for the max-length flash
+    status: todo
+    assignee: null
+    depends_on: [TASK-006]
+    functional_requirements: [FR20]
+    files:
+      - mapping_resolution_tui/reducer.py
+      - mapping_resolution_tui/renderer.py
+      - mapping_resolution_tui/loop.py
+    golden_frames:
+      - frame_11        # Existing: held phase, unchanged
+      - frame_11_burst  # New: burst phase, reverse-video icon/error at column 33
+    user_story: >
+      As a reviewer, I want the max-length error to visibly pop when a
+      character is rejected, so my eye is drawn to it the instant it happens,
+      without the message disappearing before I've had a chance to read it.
+    acceptance_criteria:
+      - "TASK-006 already ships the held phase (indefinite, event-cleared
+        error display) unaffected by this task; this task adds a burst phase
+        that precedes it (spec §7.6)"
+      - "Every over-limit discard sets edit.max_length_flash_until = now() +
+        150ms, overwriting any prior deadline; repeated over-limit keystrokes
+        reset the window rather than extending or stacking it"
+      - "While now < edit.max_length_flash_until, the capped validation icon
+        and footer error line render reverse-video (burst); once that deadline
+        passes, both render in the ordinary INVALID style (held) with no
+        other visual change"
+      - "Any event that clears edit.validation's max-length error (accepted
+        edit-buffer mutation, source navigation, mode exit, validation-result
+        change) also clears edit.max_length_flash_until in the same
+        transition, cutting the burst short regardless of remaining time"
+      - "The input loop wakes up and re-renders at or after
+        edit.max_length_flash_until even with no keypress, so the burst-to-
+        held transition is visible to a reviewer who pauses mid-burst; it
+        MUST NOT poll once no burst is pending (spec §12.1)"
+      - "Golden frame frame_11 (held phase) continues to pass unchanged"
+      - "New golden frame frame_11_burst committed: same buffer/cursor state
+        as frame_11, reverse-video icon and error line, asserted via an
+        injected deterministic render-time clock rather than a real sleep"
+      - "All existing golden tests continue to pass"
+    definition_of_done:
+      - "Feature is implemented and tested"
+      - "Burst and held phases both covered by deterministic unit tests (no
+        real-time sleep)"
+      - "Golden frames frame_11 and frame_11_burst committed and passing under
+        uv run pytest"

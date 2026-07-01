@@ -171,6 +171,10 @@ Ownership rules:
 - `scrollOffset` MUST be the zero-based offset into the current derived visible row list.
 - `filter.cursor` MUST be the zero-based insertion offset into `filter.raw` (which includes any leading `!`).
 - `edit.cursor` MUST be the zero-based insertion offset into `edit.buffer`.
+- `edit.maxLengthFlashUntil` MUST be a render-time deadline, not a clearing deadline: it governs only
+  whether the max-length error renders in its burst or held style (§7.6). It MUST still be cleared
+  entirely (set to `null`) by the same events that clear `edit.validation`'s max-length error, so a
+  stale deadline never causes the burst style to reappear for an unrelated later error.
 - Input cursors MUST be clamped to valid string boundaries after every mutation. The storyboard fixture
   uses ASCII values, but implementations MUST NOT split a Unicode scalar value when moving or deleting.
 - `defaultSourceValue`, `currentTargetValue`, and source `effectiveValue` MUST be derived selectors,
@@ -794,7 +798,7 @@ candidateBuffer = buffer with ch inserted at edit.cursor
 
 if displayWidth(candidateBuffer) > config.targetPolicy.maxTokenLength:
   discard ch
-  set maxLengthFlashUntil
+  maxLengthFlashUntil = now() + BURST_DURATION_MS  // overwrites any prior deadline; see §7.6
   set error to config.targetPolicy.validate(candidateBuffer, context).errorMessage
   render capped invalid icon
   return
@@ -935,13 +939,60 @@ Storyboard commodity fixture validation:
 - Frame 10: after typing the first `4`, the commodity target policy MUST return error
   `must start with A-Z`; `✗` MUST appear two spaces to the right of the reverse-video cursor.
 - Frame 11: after the 24th character, the cursor reaches the configured max target boundary and visually
-  clamps to the final character of the buffer. `✗` MUST render at the capped icon column. A 25th character MUST be discarded, flash `✗` at the capped
-  icon column, and set transient error `24 chars max`.
-- The max-length flash and policy-provided max-length error MUST be visible on the immediate render
-  after the discarded over-limit character. The storyboard does not require a wall-clock fade duration;
-  implementations MUST clear the transient max-length error on the next accepted edit-buffer mutation,
-  source navigation event, mode exit, or validation-result change. Golden tests MUST assert the
-  immediate render and MUST NOT depend on real-time timer expiry.
+  clamps to the final character of the buffer. `✗` MUST render at the capped icon column. A 25th
+  character MUST be discarded, arm the max-length flash's burst phase at the capped icon column, and set
+  transient error `24 chars max` (§7.6 defines the burst/held rendering split).
+- The held phase of the max-length error (capped icon + `24 chars max`) MUST remain visible on every
+  render until cleared by the next accepted edit-buffer mutation, source navigation event, mode exit, or
+  validation-result change — this clearing rule is unchanged from the original design. §7.6 defines the
+  additional burst phase that precedes it and MUST NOT be read as replacing this held-phase guarantee.
+
+### 7.6 Max-Length Flash: Burst and Held Phases
+
+The max-length flash is a two-phase "pop-then-hold" micro-animation layered on top of the held-error
+behavior defined in §7.5. Its purpose is to draw the reviewer's eye to the instant a character is
+rejected, without weakening the existing guarantee that the error stays visible and legible until the
+reviewer acts.
+
+```text
+BURST_DURATION_MS = 150   // fixed contract constant; not configurable via `config`
+
+phase(now) =
+  if edit.maxLengthFlashUntil != null and now < edit.maxLengthFlashUntil:
+    BURST
+  else if edit.validation.status == "INVALID" and edit.buffer.length == config.targetPolicy.maxTokenLength:
+    HELD
+  else:
+    NONE
+```
+
+- **Arming.** Every over-limit discard (§7.2) sets `edit.maxLengthFlashUntil = now() + BURST_DURATION_MS`,
+  overwriting any prior deadline. A reviewer who keeps typing rejected characters in quick succession
+  keeps resetting the window to a fresh 150ms; bursts MUST NOT stack or extend additively — the window is
+  always exactly 150ms from the most recent over-limit discard.
+- **Burst rendering.** While `phase(now) == BURST`, the capped validation icon and the footer error line
+  MUST render reverse-video, distinct from the plain `INVALID` styling used everywhere else (consistent
+  with the reverse-video convention already used for the edit cursor and confirmation prompts, §6.5/§7.1).
+  This contract does not define color values (§11.1); reverse-video is an attribute, not a color, and is
+  the only burst-styling requirement.
+- **Held rendering.** Once `now >= edit.maxLengthFlashUntil`, the icon and error line render in the
+  ordinary `INVALID` style defined in §7.5 — no fade, no message stack, no disappearance. This is
+  unchanged from the original design and remains in force until the error clears via one of the events
+  listed in §7.5's held-phase bullet above.
+- **Interruption.** Any event that clears `edit.validation`'s max-length error (an accepted edit-buffer
+  mutation, source navigation event, mode exit, or validation-result change per §7.5) MUST also clear
+  `edit.maxLengthFlashUntil` in the same transition, ending the burst immediately regardless of how much
+  of the 150ms window remains. The burst MUST NOT outlive the error it decorates.
+- **Rendering requires a live clock.** Because `phase()` depends on `now` at render time — not only at
+  the time of the reducer transition that armed it — implementations MUST provide a way to re-render at
+  or after `edit.maxLengthFlashUntil` even when no further key is pressed, so the burst-to-held transition
+  is actually visible to a reviewer who pauses mid-burst rather than typing through it. §12.1 defines the
+  input-loop implication of this requirement.
+- **Deterministic testing.** Golden and unit tests MUST inject both the event-time clock (already threaded
+  as `now` through the reducer per §7.2) and the render-time clock, so `BURST` and `HELD` frames can each
+  be asserted as static, deterministic snapshots (e.g. a `frame_11` still asserting the held phase, and a
+  new `frame_11_burst` asserting the burst phase). Tests MUST NOT depend on real elapsed wall-clock time
+  or `sleep`.
 
 ## 8. Scrolling and Viewport Rules
 
@@ -1261,8 +1312,13 @@ file; snapshots are regenerated with `pytest --update-snapshots`.
 - This contract does not require a specific terminal library.
 - This contract does not implement a full readline editor. It defines only the readline-style aliases
   and no-op families listed in `5.1 Readline-Style Input Bindings`.
-- This contract does not define a wall-clock duration for max-length error fade. Implementers only need
-  the immediate render and deterministic clearing behavior defined in validation.
+- This contract defines a fixed 150ms burst duration for the max-length flash's pop-then-hold
+  micro-animation (§7.6); it does not define a wall-clock duration for the held error's disappearance,
+  because the held error does not disappear — it clears only via the deterministic events in §7.5.
+- This contract does not mandate the specific tick/polling mechanism (e.g. a terminal-read timeout
+  value, polling frequency, or async timer implementation) used to make the burst-to-held transition
+  in §7.6 visible without further keyboard input — only that some mechanism exists and that it does not
+  cause a redraw more often than a burst is actually in flight.
 
 ### 11.2 Assumption Resolution Log
 
@@ -1277,6 +1333,7 @@ file; snapshots are regenerated with `pytest --update-snapshots`.
 | `Shift+↑`/`Shift+↓` portability was undefined. | Resolved in `5. Key Handling Matrix`: implementations MUST support `PgUp`/`PgDn` as reliable page equivalents and MUST NOT reinterpret indistinguishable normal arrows as page movement. |
 | Max-length error fade timing was undefined. | Resolved in `7.5 Validation` and `11.1 Non-Goals`: immediate render is required, deterministic clearing is defined, and wall-clock fade duration is out of scope. |
 | Printable invalid characters such as `!` in edit mode were undefined beyond validation failure. | Resolved in `7.2 Streaming Insert Algorithm`: invalid printable characters MUST insert into `edit.buffer`, produce validation `INVALID`, render `✗`, gate submit, and must not be silently sanitized or discarded except by the configured maximum display width. |
+| The row above ruled a wall-clock max-length fade out of scope; later design work asked for a "pop-then-hold" micro-animation that draws the eye to the moment of rejection without weakening the held-error guarantee. | Resolved in `7.6 Max-Length Flash: Burst and Held Phases`: a fixed 150ms reverse-video burst phase precedes the unchanged, indefinitely-held error phase; the burst resets on repeated over-limit keystrokes and is cut short by any event that clears the underlying error. This requires a live clock at render time and a redraw mechanism independent of keypresses (`12.1`), which the original design deliberately avoided — that avoidance is superseded for this one interaction, not repealed generally. |
 
 ## 12. Implementation Targets and Development Method
 
@@ -1285,6 +1342,7 @@ file; snapshots are regenerated with `pytest --update-snapshots`.
 - **Implementation Language**: Python 3.
 - **Runtime Environment**: Standard Unix/macOS terminal environments. The application must not assume specific proprietary terminal features beyond standard ANSI escape sequences.
 - **Preferred TUI Library**: The architecture requires the use of `blessed` for input/rendering. `blessed` is chosen because it provides raw terminal capabilities (input capturing, precise Unicode string width calculations, and basic ANSI styling) without imposing a conflicting widget lifecycle or state management architecture. This strictly aligns with the requirement for pure, centralized root state projections.
+- **Bounded-Timeout Input Read**: The input loop MUST be able to wake up and re-render without a keypress while a max-length flash burst is in flight (§7.6), and MUST otherwise remain a plain blocking read the rest of the time — it MUST NOT poll continuously once no burst is pending. With `blessed`, this means passing a `timeout` to `Terminal.inkey()` only while `now < edit.maxLengthFlashUntil`, treating a timed-out (falsy) read as a synthetic re-render tick rather than a discarded keystroke, and reverting to an untimed (blocking) read once the burst resolves to `HELD` or clears entirely.
 
 ### 12.2 Testing and Execution Method
 
