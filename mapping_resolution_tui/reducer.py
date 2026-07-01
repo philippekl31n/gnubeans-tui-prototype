@@ -32,6 +32,7 @@ from mapping_resolution_tui.state import (
     SelectionState,
     TargetValidationContext,
     TerminalState,
+    ValidationState,
 )
 
 # ASCII word characters for word-wise kill operations (spec S5.1).
@@ -243,22 +244,34 @@ def _forward_word_end(raw: str, cursor: int) -> int:
 # ── edit helpers ─────────────────────────────────────────────────────────────
 
 
-def _validate_edit(state: AppState, edit: EditState, new_buffer: str) -> EditState:
-    mapping = next(m for m in state.mappings if m.ordinal == edit.mapping_ordinal)
+def _target_validation(state: AppState, mapping: Mapping, buffer: str) -> ValidationState:
+    """Validate ``buffer`` against target policy, resolving ghost-suffix prefix matches.
 
-    effective_text = new_buffer
+    Shared by every path that (re)computes ``edit.validation`` for a mapping:
+    editing the live buffer (:func:`_validate_edit`) and seeding it fresh on
+    entering EDITING (:func:`_reduce_enter_edit`). A buffer that is a prefix of
+    the default source value validates against that full default value and is
+    flagged ``is_ghost_only_default`` (no checkmark, spec §7.5 / FR19); any other
+    buffer validates as-is and is flagged concrete.
+    """
+    effective_text = buffer
     if mapping.target_value is None:
         default_val = select_default_source_value(mapping)
-        if default_val.startswith(new_buffer):
+        if default_val.startswith(buffer):
             effective_text = default_val
 
-    is_empty_target = mapping.target_value is None and new_buffer == ""
+    is_empty_target = mapping.target_value is None and buffer == ""
     context = TargetValidationContext(
         is_concrete_buffer=not is_empty_target,
         is_ghost_only_default=is_empty_target,
         mapping=mapping,
     )
-    validation = state.config.target_policy.validate(effective_text, context)
+    return state.config.target_policy.validate(effective_text, context)
+
+
+def _validate_edit(state: AppState, edit: EditState, new_buffer: str) -> EditState:
+    mapping = next(m for m in state.mappings if m.ordinal == edit.mapping_ordinal)
+    validation = _target_validation(state, mapping, new_buffer)
     return replace(edit, buffer=new_buffer, validation=validation)
 
 
@@ -403,27 +416,17 @@ def _reduce_clear_filter(state: AppState) -> AppState:
 
 
 def _reduce_enter_edit(state: AppState) -> AppState:
-    visible = select_visible_rows(state)
-    if not visible:
-        return state
-
+    # Selection is always clamped onto the visible rows (_clamp_selection /
+    # _move_selection), so a non-None selected_ordinal already names a mapping
+    # in state.mappings; no need to re-derive/filter select_visible_rows here.
     selected_ordinal = state.selection.selected_ordinal
-    mapping = next((m for m in visible if m.ordinal == selected_ordinal), None)
-    if not mapping:
+    if selected_ordinal is None:
+        return state
+    mapping = next((m for m in state.mappings if m.ordinal == selected_ordinal), None)
+    if mapping is None:
         return state
 
     buffer_val = mapping.target_value if mapping.target_value is not None else ""
-    is_empty_target = mapping.target_value is None and buffer_val == ""
-    effective_text = buffer_val
-    if is_empty_target:
-        effective_text = select_default_source_value(mapping)
-
-    context = TargetValidationContext(
-        is_concrete_buffer=not is_empty_target,
-        is_ghost_only_default=is_empty_target,
-        mapping=mapping,
-    )
-    validation = state.config.target_policy.validate(effective_text, context)
 
     return replace(
         state,
@@ -435,7 +438,7 @@ def _reduce_enter_edit(state: AppState) -> AppState:
             focus_region=FocusRegion.TOKEN_INPUT,
             source_pointer_index=None,
             source_entry_buffer=None,
-            validation=validation,
+            validation=_target_validation(state, mapping, buffer_val),
             max_length_flash_until=None,
         )
     )

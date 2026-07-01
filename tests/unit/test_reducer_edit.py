@@ -1,9 +1,24 @@
 import pytest
 from dataclasses import replace
-from mapping_resolution_tui.state import AppConfig, AppState, Mode, Mapping, EditState, FocusRegion
+from mapping_resolution_tui.state import (
+    AppConfig, AppState, Mode, Mapping, EditState, FocusRegion, TargetValidationContext,
+)
 from mapping_resolution_tui.events import KeyEvent
 from mapping_resolution_tui.reducer import make_initial_state, reduce
+from mapping_resolution_tui.selectors import select_default_source_value
 from tests.fixtures.storyboard import make_config, make_mappings
+
+
+def _select(state, ordinal):
+    return replace(state, selection=replace(state.selection, selected_ordinal=ordinal))
+
+
+def _with_target_value(state, ordinal, target_value):
+    mappings = [
+        replace(m, target_value=target_value) if m.ordinal == ordinal else m
+        for m in state.mappings
+    ]
+    return replace(state, mappings=mappings)
 
 def test_accept_line_enters_editing_mode():
     config = make_config()
@@ -17,6 +32,53 @@ def test_accept_line_enters_editing_mode():
     assert state.edit.buffer == ""
     assert state.edit.cursor == 0
     assert state.edit.focus_region == FocusRegion.TOKEN_INPUT
+
+def test_enter_edit_seeds_ghost_validation_for_empty_target():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    mapping = next(m for m in state.mappings if m.ordinal == state.selection.selected_ordinal)
+    assert mapping.target_value is None  # sanity: exercising the ghost-default path
+    default_value = select_default_source_value(mapping)
+    expected = config.target_policy.validate(
+        default_value,
+        TargetValidationContext(is_concrete_buffer=False, is_ghost_only_default=True, mapping=mapping),
+    )
+
+    state = reduce(state, KeyEvent.ENTER)
+
+    assert state.edit.buffer == ""
+    assert state.edit.validation == expected
+    assert state.edit.validation.icon is None  # ghost-only default never shows the checkmark
+
+
+def test_enter_edit_seeds_concrete_validation_for_valid_target_value():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    ordinal = state.mappings[0].ordinal
+    state = _select(_with_target_value(state, ordinal, "AAPL"), ordinal)
+
+    state = reduce(state, KeyEvent.ENTER)
+
+    assert state.edit.buffer == "AAPL"
+    assert state.edit.validation.status == "VALID"
+    assert state.edit.validation.icon == "✓"  # concrete buffer, not ghost — checkmark shown
+
+
+def test_enter_edit_seeds_concrete_validation_for_invalid_target_value():
+    config = make_config()
+    mappings = make_mappings()
+    state = make_initial_state(config, mappings)
+    ordinal = state.mappings[0].ordinal
+    state = _select(_with_target_value(state, ordinal, "aapl"), ordinal)  # lowercase: fails policy
+
+    state = reduce(state, KeyEvent.ENTER)
+
+    assert state.edit.buffer == "aapl"
+    assert state.edit.validation.status == "INVALID"
+    assert state.edit.validation.error_message == "must start with A-Z"
+
 
 def test_escape_cancels_editing_mode():
     config = make_config()
