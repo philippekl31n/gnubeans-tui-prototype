@@ -162,9 +162,11 @@ tasks:
         sets source_pointer_index to last active source index, sets
         focus_region = SOURCE_LIST, and autofills buffer; validation
         recomputed (FR21)"
-      - "Up/down within SOURCE_LIST moves source_pointer_index through active
-        sources with wrapping; buffer autofilled from pointed source effective
-        value and validation recomputed on every move (FR21)"
+      - "Up/down within SOURCE_LIST moves source_pointer_index by one step
+        through active sources (no wrapping — boundary crossings are the
+        separate exit-to-TOKEN_INPUT case below, spec S7.4); buffer autofilled
+        from pointed source effective value and validation recomputed on
+        every move (FR21)"
       - "Moving up past the first source (or down past the last) restores
         source_entry_buffer to edit.buffer, clears source_pointer_index and
         source_entry_buffer, and returns focus_region to TOKEN_INPUT (FR21)"

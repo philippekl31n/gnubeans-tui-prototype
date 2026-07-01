@@ -477,8 +477,8 @@ between key events until the user confirms, changes choice, cancels, or leaves c
 
 | Key | `BROWSING` | `EDITING` | `CONFIRMING ACCEPT` | `CONFIRMING EXIT` |
 |---|---|---|---|---|
-| `↑` | Move selection up | Move source pointer up with wrap | Scroll up | Scroll up |
-| `↓` | Move selection down | Move source pointer down with wrap | Scroll down | Scroll down |
+| `↑` | Move selection up | Move source pointer up; see S7.4 | Scroll up | Scroll up |
+| `↓` | Move selection down | Move source pointer down; see S7.4 | Scroll down | Scroll down |
 | `Shift+↑` / `PgUp` | Page up and select first visible row | No-op | Page scroll up | Page scroll up |
 | `Shift+↓` / `PgDn` | Page down and select first visible row | No-op | Page scroll down | Page scroll down |
 | `←` | Move filter cursor left | Move edit cursor left in token input; no-op in source list | Toggle choice | Toggle choice |
@@ -897,7 +897,8 @@ Rules:
   `sourcePointerIndex` while `focusRegion = TOKEN_INPUT`.
 
 Frame 12a: `↓` from frame 9 points at `cmdty_id: "AAPL"` and fills `AAPL`.
-Frame 12b: `↑` from frame 9 wraps to `user_symbol: "APPLE"` and fills `APPLE`.
+Frame 12b: `↑` from frame 9 enters `SOURCE_LIST` at the last active source, `user_symbol:
+"APPLE"`, and fills `APPLE`.
 
 ### 7.5 Target Validation
 
