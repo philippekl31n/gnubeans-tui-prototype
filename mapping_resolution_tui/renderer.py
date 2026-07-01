@@ -3,8 +3,17 @@ Renderer module: converts AppState into a list of styled terminal lines.
 """
 
 import re
+import time
+from enum import Enum
 
-from mapping_resolution_tui.state import AppState, FocusRegion, FooterHint, Mode
+from mapping_resolution_tui.state import (
+    AppConfig,
+    AppState,
+    EditState,
+    FocusRegion,
+    FooterHint,
+    Mode,
+)
 
 from mapping_resolution_tui.selectors import (
     EditRenderRow,
@@ -87,6 +96,38 @@ def _render_filter_cursor(raw: str, cursor: int) -> str:
     return "".join(out)
 
 
+# ── max-length flash: burst / held phases (spec §7.6) ────────────────────────
+
+
+class _FlashPhase(Enum):
+    NONE = "NONE"
+    BURST = "BURST"
+    HELD = "HELD"
+
+
+def _max_length_phase(
+    edit: EditState | None, config: AppConfig, now: float
+) -> _FlashPhase:
+    """The current max-length flash phase for the edit buffer (spec §7.6).
+
+    ``BURST`` while a fresh over-limit deadline is still in the future
+    (``now < edit.max_length_flash_until``); ``HELD`` once that deadline has
+    passed while the buffer remains INVALID at the max token length; ``NONE``
+    otherwise. Pure in both state and the injected render-time ``now``.
+    """
+    if edit is None:
+        return _FlashPhase.NONE
+    deadline = edit.max_length_flash_until
+    if deadline is not None and now < deadline:
+        return _FlashPhase.BURST
+    if (
+        edit.validation.status == "INVALID"
+        and len(edit.buffer) == config.target_policy.max_token_length
+    ):
+        return _FlashPhase.HELD
+    return _FlashPhase.NONE
+
+
 # ── EDITING row rendering (spec §6.3 / §7) ───────────────────────────────────
 
 
@@ -122,13 +163,15 @@ def _render_edit_token_row(
     W: int,
     M: int,
     collision: str,
+    burst: bool = False,
 ) -> str:
     """Render the token-input row of the expanded edit block (spec §6.3 / §7).
 
     Lays out the row cursor, ordinal, collision marker, the buffer with its
     reverse-video cursor, the derived ghost suffix (dim), the validation icon
     (two columns past the cursor, capped at the token-field end), and the first
-    active source after the divider.
+    active source after the divider. While ``burst`` (the max-length flash's
+    150ms burst phase, §7.6), the capped validation icon renders reverse-video.
     """
     token0 = 5 + W           # token field start
     pointer0 = 6 + W + M     # source pointer / capped-icon column
@@ -161,12 +204,16 @@ def _render_edit_token_row(
                 row.emit(ghost[1:], len(ghost) - 1, _DIM, _RESET)
         else:
             row.emit(" ", 1, _REV, _RESET)
-    # validation icon: cursor + 2, capped at the token-field end (spec §6.3)
+    # validation icon: cursor + 2, capped at the token-field end (spec §6.3).
+    # During the max-length burst (§7.6) the capped icon renders reverse-video.
     if icon is not None:
         icon_col = min(token0 + cursor + 2, pointer0)
         if icon_col >= row.col:
             row.pad_to(icon_col)
-            row.emit(icon, 1)
+            if burst:
+                row.emit(icon, 1, _REV, _RESET)
+            else:
+                row.emit(icon, 1)
     # first active source shares the token-input display row (spec §8.2)
     if render_row.sources:
         first = render_row.sources[0]
@@ -217,7 +264,11 @@ def _render_dim_context_row(
 
 
 def _render_editing_body(
-    state: AppState, W: int, M: int, collision_ordinals: frozenset[int]
+    state: AppState,
+    W: int,
+    M: int,
+    collision_ordinals: frozenset[int],
+    burst: bool = False,
 ) -> list[str]:
     """Allocate and render the EDITING table body (spec §8.2 anchored block).
 
@@ -225,7 +276,8 @@ def _render_editing_body(
     context rows fill the remaining capacity first, then preceding context rows
     fill what is left (closest rows first), all rendered super-dim. The storyboard
     keeps surrounding rows visible around the edit — frame 4 shows the preceding
-    AT-T collision row above the expanded row.
+    AT-T collision row above the expanded row. ``burst`` forwards the max-length
+    flash burst phase (§7.6) to the token row's capped validation icon.
     """
     visible = select_visible_rows(state)
     edited_ordinal = state.edit.mapping_ordinal
@@ -249,7 +301,7 @@ def _render_editing_body(
     lines = [
         _render_dim_context_row(mapping, W, M, collision_ordinals) for mapping in before
     ]
-    lines.append(_render_edit_token_row(render_row, str(edited.ordinal), W, M, collision))
+    lines.append(_render_edit_token_row(render_row, str(edited.ordinal), W, M, collision, burst))
     for source in render_row.sources[1:]:
         lines.append(_render_edit_source_row(source, W, M))
     for mapping in after:
@@ -257,10 +309,17 @@ def _render_editing_body(
     return lines
 
 
-def render_lines(state: AppState) -> list[str]:
+def render_lines(state: AppState, *, now: float | None = None) -> list[str]:
     config = state.config
     mappings = state.mappings
     height = state.terminal.height
+
+    # Render-time clock for the max-length flash burst phase (spec §7.6 / §12.1);
+    # defaults to wall-clock so non-editing callers are unaffected.
+    if now is None:
+        now = time.time()
+    editing = state.mode == Mode.EDITING and state.edit is not None
+    burst = editing and _max_length_phase(state.edit, config, now) is _FlashPhase.BURST
 
     unresolved_count = select_unresolved_collision_count(mappings)
     collision_ordinals = select_render_collision_ordinals(state)
@@ -333,7 +392,7 @@ def render_lines(state: AppState) -> list[str]:
         # EDITING renders an anchored expanded edit block plus dim context rows
         # (spec §8.2); the browsing scroll-offset window does not apply.
         body_lines = _render_editing_body(
-            state, ordinal_width, max_token_length, collision_ordinals
+            state, ordinal_width, max_token_length, collision_ordinals, burst
         )
     else:
         shown = select_body_rows(state)
@@ -374,7 +433,12 @@ def render_lines(state: AppState) -> list[str]:
     footer_content = select_footer_content(state)
     hints_list = []
     if footer_content.error:
-        hints_list.append(f"Error: {footer_content.error}")
+        error_text = f"Error: {footer_content.error}"
+        # The max-length error leads the footer reverse-video during its burst
+        # phase, matching the capped icon (spec §7.6).
+        if burst:
+            error_text = f"{_REV}{error_text}{_RESET}"
+        hints_list.append(error_text)
     
     for hint in footer_content.hints:
         key, label = _FOOTER_HINT_DISPLAY[hint]

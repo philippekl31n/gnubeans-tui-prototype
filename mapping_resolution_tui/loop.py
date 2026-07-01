@@ -15,6 +15,8 @@ action are ignored and leave state and rendered output unchanged (FR30). The
 """
 
 import sys
+import time
+from contextlib import ExitStack
 from typing import Callable, Iterable, Optional
 
 import blessed
@@ -44,7 +46,7 @@ from mapping_resolution_tui.actions import (
 from mapping_resolution_tui.config import QUIT_KEY
 from mapping_resolution_tui.reducer import make_initial_state, reduce
 from mapping_resolution_tui.renderer import render_lines
-from mapping_resolution_tui.state import AppConfig, Mapping
+from mapping_resolution_tui.state import AppConfig, AppState, Mapping
 
 # Raw ctrl+c byte. The configured QUIT_KEY is the readable token "ctrl+c"; a live
 # blessed keystroke delivers it as this control byte under term.raw().
@@ -152,36 +154,89 @@ def key_to_action(key) -> Optional[Action]:
     return None
 
 
+# Sentinel returned by a key source at end of input, distinct from a re-render
+# tick (signalled by ``None``) and from any real keystroke.
+_EOF = object()
+
+
+def _flash_timeout(state: AppState, now: float) -> Optional[float]:
+    """Seconds until the max-length flash burst deadline, or ``None`` to block.
+
+    While a burst is pending (``now < edit.max_length_flash_until``) the input
+    read MUST wake at the deadline so the burst-to-held transition is visible
+    without a keypress (spec §7.6 / §12.1). Once no burst is pending — no edit,
+    no armed deadline, or the deadline already passed — this returns ``None`` so
+    the read blocks and never polls.
+    """
+    edit = state.edit
+    if edit is None or edit.max_length_flash_until is None:
+        return None
+    remaining = edit.max_length_flash_until - now
+    return remaining if remaining > 0 else None
+
+
 def run(
     config: AppConfig,
     mappings: list[Mapping],
     *,
     keys: Optional[Iterable] = None,
+    read_key: Optional[Callable[[Optional[float]], object]] = None,
     render: Optional[Callable[[list[str]], None]] = None,
+    clock: Callable[[], float] = time.time,
 ) -> list[Mapping] | None:
-    """Drive the blocking event loop until the quit key or end of input.
+    """Drive the event loop until the quit key or end of input.
 
-    ``keys`` supplies keystrokes (defaulting to the live ``blessed`` terminal
-    reader); ``render`` receives each rendered frame (defaulting to an inline
-    in-place repaint). Both are injectable so the loop is exercisable without a
-    real TTY.
+    The read is a plain blocking read except while a max-length flash burst is in
+    flight, when it uses a bounded timeout and treats a timed-out read as a
+    synthetic re-render tick (spec §7.6 / §12.1). ``render`` receives each frame
+    (defaulting to an inline in-place repaint). Input is injectable two ways:
+    ``read_key(timeout)`` (a callable returning a key, ``None`` for a tick, or
+    :data:`_EOF`) or ``keys`` (a plain iterable of keystrokes, exhausted = EOF);
+    both default to the live ``blessed`` terminal reader. ``clock`` injects the
+    wall-clock used for the burst window.
 
     Returns the resolved mappings on a clean end-of-input exit, or ``None`` when
     the user quits with the configured quit key (cancellation).
     """
-    if keys is None:
-        keys = _terminal_keys()
     if render is None:
         render = _InlineRenderer()
 
     state = make_initial_state(config, mappings)
-    render(render_lines(state))
 
-    for key in keys:
-        if is_quit_key(key):
+    if read_key is not None:
+        return _event_loop(state, read_key, render, clock)
+    if keys is not None:
+        return _event_loop(state, _iterable_reader(keys), render, clock)
+
+    source = _TerminalKeySource()
+    with source:
+        return _event_loop(state, source.read, render, clock)
+
+
+def _event_loop(
+    state: AppState,
+    read_key: Callable[[Optional[float]], object],
+    render: Callable[[list[str]], None],
+    clock: Callable[[], float],
+) -> list[Mapping] | None:
+    render(render_lines(state, now=clock()))
+
+    while True:
+        event = read_key(_flash_timeout(state, clock()))
+
+        if event is _EOF:
+            break
+        if event is None:
+            # A tick: the burst deadline was reached with no keypress. Re-render
+            # the current state so the burst-to-held transition is visible; the
+            # deadline is a render-time marker, so no reduce happens (spec §7.6).
+            render(render_lines(state, now=clock()))
+            continue
+
+        if is_quit_key(event):
             return None
 
-        action = key_to_action(key)
+        action = key_to_action(event)
         if action is None:
             # FR30: unsupported keys mutate nothing and trigger no redraw.
             continue
@@ -189,18 +244,35 @@ def run(
         if isinstance(action, Redraw):
             # ctrl+l re-renders the current state without mutating it; this is
             # the one repaint that is never skipped by the no-op check below.
-            render(render_lines(state))
+            render(render_lines(state, now=clock()))
             continue
 
-        new_state = reduce(state, action)
+        new_state = reduce(state, action, now=clock())
         if new_state is state:
             # A recognised action that changed nothing (the reducer returned the
             # same object) needs no repaint — state and output stay unchanged.
             continue
         state = new_state
-        render(render_lines(state))
+        render(render_lines(state, now=clock()))
 
     return state.mappings
+
+
+def _iterable_reader(keys: Iterable) -> Callable[[Optional[float]], object]:
+    """Adapt a plain keystroke iterable to the ``read_key(timeout)`` seam.
+
+    The timeout is ignored (a scripted iterable never blocks); a ``None`` item
+    models a re-render tick and exhaustion returns :data:`_EOF`.
+    """
+    iterator = iter(keys)
+
+    def read(timeout: Optional[float]) -> object:
+        try:
+            return next(iterator)
+        except StopIteration:
+            return _EOF
+
+    return read
 
 
 class _InlineRenderer:
@@ -226,21 +298,44 @@ class _InlineRenderer:
         self._prev_line_count = len(lines)
 
 
-def _terminal_keys() -> Iterable:
-    """Yield live ``blessed`` keystrokes until EOF.
+class _TerminalKeySource:
+    """Live ``blessed`` key source with a bounded-timeout read (spec §12.1).
 
     ``blessed`` owns escape-sequence decoding; ``term.raw()`` delivers control
     chords (including ctrl+c as the quit key) as keystrokes rather than signals,
-    and avoids the alternate screen buffer. Each keystroke is yielded straight to
-    :func:`key_to_action`, which performs all normalisation.
+    and avoids the alternate screen buffer. :meth:`read` performs a plain
+    blocking read when ``timeout is None`` (no burst pending — it never polls)
+    and a bounded read otherwise, returning ``None`` on a timed-out read so the
+    loop can re-render the burst-to-held transition without a keypress.
     """
-    term = blessed.Terminal()
-    if not term.is_a_tty:  # nothing interactive to read from
-        return
 
-    with term.raw(), term.hidden_cursor():
-        while True:
-            key = term.inkey()
-            if not key:  # timeout / empty read
-                continue
-            yield key
+    def __init__(self) -> None:
+        self._term = blessed.Terminal()
+        self._stack: Optional[ExitStack] = None
+
+    def __enter__(self) -> "_TerminalKeySource":
+        if self._term.is_a_tty:
+            self._stack = ExitStack()
+            self._stack.enter_context(self._term.raw())
+            self._stack.enter_context(self._term.hidden_cursor())
+        return self
+
+    def __exit__(self, *exc) -> None:
+        if self._stack is not None:
+            self._stack.close()
+            self._stack = None
+
+    def read(self, timeout: Optional[float]) -> object:
+        if not self._term.is_a_tty:  # nothing interactive to read from
+            return _EOF
+        key = self._term.inkey(timeout=timeout)
+        if key:
+            return key
+        if timeout is None:
+            # A spurious empty blocking read: keep waiting for a real key, matching
+            # the prior generator's behavior (no burst is pending, so no tick).
+            while True:
+                key = self._term.inkey()
+                if key:
+                    return key
+        return None  # bounded read timed out -> a re-render tick

@@ -246,3 +246,67 @@ def test_quit_key_exits_cleanly_with_none():
     assert result is None
     # the trailing "b" after the quit key is never processed
     assert len(frames) == 2  # initial + the "a" insert
+
+
+# ── max-length flash burst: bounded-timeout read + tick (TASK-009, §7.6/§12.1) ─
+
+def test_flash_timeout_blocks_when_no_burst_is_pending():
+    from mapping_resolution_tui.reducer import make_initial_state
+    from tests.fixtures.storyboard import make_config, make_mappings
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    # No edit -> no burst -> a plain blocking read (None), never a poll.
+    assert loop._flash_timeout(state, 0.0) is None
+
+
+def test_flash_timeout_is_the_remaining_burst_window():
+    from tests.conftest import _build_frame_11_state
+
+    state = _build_frame_11_state()  # flash armed at now=0.0 -> deadline 0.150
+    assert loop._flash_timeout(state, 0.10) == pytest.approx(0.05)
+
+
+def test_flash_timeout_blocks_once_the_deadline_has_passed():
+    from tests.conftest import _build_frame_11_state
+
+    state = _build_frame_11_state()
+    assert loop._flash_timeout(state, 0.20) is None
+
+
+def test_burst_wakes_and_rerenders_the_held_frame_without_a_keypress():
+    """A timed-out read mid-burst re-renders the burst-to-held transition (§7.6).
+
+    Drives the event loop directly from a burst-armed state with a scripted
+    reader and clock: the read while the burst is pending uses the finite
+    remaining window, a timed-out read (``None``) re-renders without mutating
+    state, and the subsequent read once the deadline has passed blocks (``None``
+    timeout — no polling).
+    """
+    from tests.conftest import _build_frame_11_state, make_pyte_screen
+    from mapping_resolution_tui.reducer import _BURST_DURATION
+
+    state = _build_frame_11_state()
+    deadline = _BURST_DURATION  # armed at now=0.0
+    now = [deadline - 0.05]     # start mid-burst
+    seen_timeouts = []
+    steps = iter(["tick", "eof"])
+
+    def read(timeout):
+        seen_timeouts.append(timeout)
+        step = next(steps)
+        if step == "tick":
+            now[0] = deadline + 0.05  # advance past the deadline before re-render
+            return None               # a re-render tick
+        return loop._EOF
+
+    frames = []
+    loop._event_loop(state, read, frames.append, lambda: now[0])
+
+    # initial render (mid-burst) + one tick re-render (post-deadline); no reduce.
+    assert len(frames) == 2
+    # the burst read used the finite remaining window; the read after it blocked.
+    assert seen_timeouts[0] == pytest.approx(0.05)
+    assert seen_timeouts[1] is None
+    # burst -> held: capped icon reverse-video in the first frame, plain in the next.
+    assert make_pyte_screen(frames[0]).buffer[4][32].reverse is True
+    assert make_pyte_screen(frames[1]).buffer[4][32].reverse is False

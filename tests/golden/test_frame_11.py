@@ -63,10 +63,12 @@ def test_additional_over_limit_character_is_discarded():
     from mapping_resolution_tui.actions import InsertChar
     from mapping_resolution_tui.reducer import reduce
 
+    from mapping_resolution_tui.reducer import _BURST_DURATION
+
     state = _build_frame_11_state()
     after = reduce(state, InsertChar("9"), now=5.0)
     assert after.edit.buffer == state.edit.buffer  # unchanged, char discarded
-    assert after.edit.max_length_flash_until == 5.0 + 1.0
+    assert after.edit.max_length_flash_until == 5.0 + _BURST_DURATION
 
 
 # ── snapshot ─────────────────────────────────────────────────────────────────

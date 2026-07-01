@@ -180,9 +180,11 @@ def test_over_limit_character_is_discarded_and_flashes(browsing):
 
     flashed = reduce(state, InsertChar("Y"), now=100.0)
 
+    from mapping_resolution_tui.reducer import _BURST_DURATION
+
     assert flashed.edit.buffer == before  # 25th char discarded
     assert flashed.edit.cursor == 24
-    assert flashed.edit.max_length_flash_until == 100.0 + 1.0
+    assert flashed.edit.max_length_flash_until == 100.0 + _BURST_DURATION
     assert flashed.edit.validation.error_message == "24 chars max"
     assert flashed.edit.validation.icon == "✗"
 
@@ -194,6 +196,19 @@ def test_flash_clears_on_next_accepted_edit(browsing):
 
     cleared = reduce(flashed, Backspace())
     assert cleared.edit.max_length_flash_until is None
+
+
+def test_repeated_over_limit_resets_the_flash_window(browsing):
+    # Each over-limit discard overwrites the prior deadline with a fresh 150ms
+    # window from the latest keystroke — bursts reset, never stack (spec §7.6).
+    from mapping_resolution_tui.reducer import _BURST_DURATION
+
+    state = _fill_to_cap(_edit_ordinal(browsing, 1))
+    first = reduce(state, InsertChar("Y"), now=10.0)
+    assert first.edit.max_length_flash_until == 10.0 + _BURST_DURATION
+
+    second = reduce(first, InsertChar("Z"), now=10.05)
+    assert second.edit.max_length_flash_until == 10.05 + _BURST_DURATION
 
 
 # ── backspace (spec §7.2) ────────────────────────────────────────────────────

@@ -438,10 +438,13 @@ _HANDLERS = {
 
 # ── EDITING mode: token input, ghost text, validation (spec §7) ───────────────
 
-# Wall-clock window for the over-limit flash. Only the immediate render is
-# required (FR20); the flash clears on the next accepted edit or mode exit, so no
-# real-time expiry is relied upon — `now` is injectable for deterministic tests.
-_FLASH_DURATION = 1.0
+# Fixed 150ms "burst" window for the max-length flash (spec §7.6). While
+# `now < edit.max_length_flash_until` the renderer draws the capped icon and
+# footer error reverse-video (burst); afterwards they render in the ordinary
+# held INVALID style until the error clears. Not configurable via `config`; the
+# deadline is a render-time marker, not a clearing deadline (spec §2.1), and
+# `now` is injectable for deterministic tests.
+_BURST_DURATION = 0.150
 
 
 def _edited_mapping(state: AppState) -> Mapping:
@@ -540,7 +543,9 @@ def _reduce_editing_insert_char(
             mapping=mapping,
         )
         validation = state.config.target_policy.validate(candidate, context)
-        flash_until = (time.time() if now is None else now) + _FLASH_DURATION
+        # Arm the burst: overwrite any prior deadline with a fresh 150ms window
+        # (§7.6 — repeated over-limit keystrokes reset rather than stack it).
+        flash_until = (time.time() if now is None else now) + _BURST_DURATION
         return replace(
             state,
             edit=replace(

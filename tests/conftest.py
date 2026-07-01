@@ -330,6 +330,24 @@ def frame_11_screen(frame_11_lines):
 
 
 @pytest.fixture
+def frame_11_burst_lines():
+    """Frame 11, burst phase: the same over-limit state rendered mid-burst.
+
+    ``_build_frame_11_state`` arms the flash at ``now=0.0`` (deadline 150ms), so
+    rendering at half the window puts the capped icon and footer error in the
+    reverse-video burst style (spec §7.6). Geometry is identical to frame 11.
+    """
+    from mapping_resolution_tui.reducer import _BURST_DURATION
+    from mapping_resolution_tui.renderer import render_lines
+    return render_lines(_build_frame_11_state(), now=_BURST_DURATION / 2)
+
+
+@pytest.fixture
+def frame_11_burst_screen(frame_11_burst_lines):
+    return make_pyte_screen(frame_11_burst_lines)
+
+
+@pytest.fixture
 def assert_snapshot(update_snapshots):
     def _check(screen: pyte.Screen, snapshot_path: Path):
         actual = "\n".join(row.rstrip() for row in screen.display) + "\n"
