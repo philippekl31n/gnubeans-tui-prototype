@@ -36,6 +36,7 @@ from mapping_resolution_tui.selectors import (
     select_active_sources,
     select_body_capacity,
     select_collision_ghost_visible,
+    select_concrete_value,
     select_source_pointer_value,
     select_unresolved_collision_count,
     select_visible_rows,
@@ -775,6 +776,69 @@ def _reduce_editing_redraw(
     return state  # ctrl+l re-renders only; never mutates state (spec §5.1)
 
 
+def _reduce_editing_accept_line(
+    state: AppState, action: AcceptLine, now: Optional[float]
+) -> AppState:
+    """Submit the edit, committing the buffer to the target (spec §4.2 / FR22–FR23).
+
+    Enter commits only when validation is ``VALID`` and the buffer is non-empty
+    (FR18/FR22); otherwise it is a no-op — the mode stays ``EDITING`` and the
+    validation error remains visible. On commit the concrete value
+    (:func:`select_concrete_value`, the buffer for a non-empty edit) is written
+    literally to ``mapping.target_value`` and ``edit`` is cleared.
+
+    If the commit resolves the final outstanding collision — the committed
+    collision count was positive before and is zero after — the app enters the
+    accept confirmation with ``kind = ACCEPT`` and ``choice = NO`` (FR23, spec
+    §9). Submitting over an already collision-free dataset does NOT enter
+    confirmation (nothing "became zero because of the commit"); the reviewer
+    reaches accept confirmation manually via ``ctrl+s``. Otherwise the app
+    returns to ``BROWSING`` (FR16): no editing transition ever mutates
+    ``filter.*`` or ``selection.selected_ordinal`` (source navigation moves the
+    source pointer, not the row selection), so the pre-edit browsing context —
+    filter text and the selection on the edited row — is already intact.
+    """
+    edit = state.edit
+    if edit.validation.status != "VALID" or edit.buffer == "":
+        return state  # FR18: no commit; the error stays and the mode is unchanged
+    mapping = _edited_mapping(state)
+    concrete = select_concrete_value(state, mapping)
+    new_mappings = [
+        replace(m, target_value=concrete) if m.ordinal == edit.mapping_ordinal else m
+        for m in state.mappings
+    ]
+    pre_count = select_unresolved_collision_count(state.mappings)
+    post_count = select_unresolved_collision_count(new_mappings)
+    committed = replace(state, mappings=new_mappings, edit=None)
+
+    if pre_count > 0 and post_count == 0:
+        return replace(
+            committed,
+            mode=Mode.CONFIRMING,
+            selection=replace(committed.selection, scroll_offset=0),
+            confirmation=replace(
+                committed.confirmation,
+                kind=ConfirmationKind.ACCEPT,
+                choice=ConfirmationChoice.NO,
+            ),
+        )
+    return replace(committed, mode=Mode.BROWSING)
+
+
+def _reduce_editing_clear_filter(
+    state: AppState, action: ClearFilter, now: Optional[float]
+) -> AppState:
+    """Cancel the edit, discarding the buffer and returning to BROWSING (spec §4.2 / FR16).
+
+    Esc — and ctrl+c, which the loop routes here in ``EDITING`` — discards
+    ``edit`` entirely and returns to ``BROWSING``. The filter and the selection
+    are left untouched because no editing transition ever mutates ``filter.*`` or
+    ``selection.selected_ordinal``, so the pre-edit browsing context is restored
+    exactly as it was on entry.
+    """
+    return replace(state, mode=Mode.BROWSING, edit=None)
+
+
 _EDITING_HANDLERS = {
     InsertChar: _reduce_editing_insert_char,
     MoveSelectionUp: _reduce_editing_move_selection_up,
@@ -790,6 +854,8 @@ _EDITING_HANDLERS = {
     MoveCursorHome: _reduce_editing_cursor_home,
     MoveCursorEnd: _reduce_editing_cursor_end,
     Redraw: _reduce_editing_redraw,
+    AcceptLine: _reduce_editing_accept_line,
+    ClearFilter: _reduce_editing_clear_filter,
 }
 
 

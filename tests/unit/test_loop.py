@@ -248,6 +248,19 @@ def test_quit_key_exits_cleanly_with_none():
     assert len(frames) == 2  # initial + the "a" insert
 
 
+def test_ctrl_c_in_editing_cancels_the_edit_without_quitting():
+    # Enter edit on the selected row (Enter), type a character, then ctrl+c: in
+    # EDITING ctrl+c cancels the edit and returns to BROWSING rather than quitting
+    # the review (spec §4.2; TASK-008). Input continues afterward.
+    result, frames = run_keys([CTRL_M, "A", CTRL_C, "b"])
+    assert result is not None  # ctrl+c inside an edit does not quit
+    # mid-sequence we were editing; the final frame is back in BROWSING.
+    assert any("Editing mapping" in line for line in frames[1])
+    assert not any("Editing mapping" in line for line in frames[-1])
+    # the cancel returned to a browsing filter prompt and the trailing "b" typed.
+    assert "Filter: b" in filter_line(frames[-1])
+
+
 # ── max-length flash burst: bounded-timeout read + tick (TASK-009, §7.6/§12.1) ─
 
 def test_flash_timeout_blocks_when_no_burst_is_pending():

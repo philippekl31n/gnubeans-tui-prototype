@@ -744,11 +744,35 @@ def test_render_collision_ordinals_substitutes_live_buffer():
     assert select_render_collision_ordinals(state) == frozenset()
 
 
-def test_render_collision_ordinals_empty_buffer_falls_back_to_default():
+def test_render_collision_ordinals_empty_buffer_is_treated_as_unresolved():
     from mapping_resolution_tui.selectors import select_render_collision_ordinals
 
-    # An empty buffer reverts to the default "AT-T", so the pair still collides.
+    # An empty buffer is treated as unresolved: no live value is substituted, so
+    # ordinal 3 keeps its committed "AT-T" target and the AT-T pair stays flagged
+    # (FR8). The empty buffer never "resolves" the collision.
     state = _editing_state(buffer="", cursor=0, ordinal=3)
+
+    assert select_render_collision_ordinals(state) == frozenset({2, 3})
+
+
+def test_render_collision_ordinals_empty_buffer_keeps_a_literal_target_collision():
+    from dataclasses import replace
+
+    from mapping_resolution_tui.selectors import select_render_collision_ordinals
+
+    # Ordinals 2 and 3 both carry a literal target "ZZZ" (differing from their
+    # "AT-T" default), so they collide on "ZZZ". Editing ordinal 3 down to an
+    # empty buffer must NOT fall back to the default source value (which would
+    # split the pair and falsely resolve the collision); the empty buffer stays
+    # unresolved and both rows remain flagged (FR8).
+    state = _editing_state(buffer="", cursor=0, ordinal=3)
+    state = replace(
+        state,
+        mappings=[
+            replace(m, target_value="ZZZ") if m.ordinal in (2, 3) else m
+            for m in state.mappings
+        ],
+    )
 
     assert select_render_collision_ordinals(state) == frozenset({2, 3})
 

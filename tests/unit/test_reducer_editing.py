@@ -14,6 +14,7 @@ import pytest
 from mapping_resolution_tui.actions import (
     AcceptLine,
     Backspace,
+    ClearFilter,
     InsertChar,
     KillLine,
     MoveCursorEnd,
@@ -29,7 +30,13 @@ from mapping_resolution_tui.selectors import (
     select_footer_content,
     select_ghost_suffix,
 )
-from mapping_resolution_tui.state import FocusRegion, FooterHint, Mode
+from mapping_resolution_tui.state import (
+    ConfirmationChoice,
+    ConfirmationKind,
+    FocusRegion,
+    FooterHint,
+    Mode,
+)
 from tests.fixtures.storyboard import make_config, make_mappings
 
 
@@ -427,3 +434,128 @@ def test_single_source_mapping_cycles_through_token_input(browsing):
     assert exited.edit.focus_region == FocusRegion.TOKEN_INPUT
     assert exited.edit.source_pointer_index is None
     assert exited.edit.buffer == ""                  # restored empty entry buffer
+
+
+# ── submit (Enter): commit + accept-confirmation gate (spec §4.2 / FR22–FR23) ─
+
+def _resolve_at_t(state):
+    """Commit ordinal 3 to ``ATT``, leaving the dataset collision-free."""
+    return replace(
+        state,
+        mappings=[
+            replace(m, target_value="ATT") if m.ordinal == 3 else m
+            for m in state.mappings
+        ],
+    )
+
+
+def test_submit_commits_the_buffer_literally_to_the_target(browsing):
+    # Editing the collision row (ordinal 3) with a valid non-empty buffer and
+    # pressing Enter writes the buffer verbatim to mapping.target_value (FR22).
+    state = _edit_ordinal(browsing, 3)
+    for ch in "ATT":
+        state = reduce(state, InsertChar(ch))
+    submitted = reduce(state, AcceptLine())
+
+    assert _mapping(submitted, 3).target_value == "ATT"
+    assert submitted.edit is None
+
+
+def test_submit_resolving_final_collision_enters_accept_confirmation(browsing):
+    # The AT-T collision is the only one; resolving it on submit brings the count
+    # to zero, so the app enters CONFIRMING with kind ACCEPT and choice NO (FR23).
+    state = _edit_ordinal(browsing, 3)
+    for ch in "ATT":
+        state = reduce(state, InsertChar(ch))
+    submitted = reduce(state, AcceptLine())
+
+    assert submitted.mode == Mode.CONFIRMING
+    assert submitted.confirmation.kind == ConfirmationKind.ACCEPT
+    assert submitted.confirmation.choice == ConfirmationChoice.NO
+    assert submitted.selection.scroll_offset == 0
+
+
+def test_submit_leaving_collisions_returns_to_browsing(browsing):
+    # Editing a non-collision row (ordinal 1) and submitting leaves the AT-T
+    # collision unresolved, so the app returns to BROWSING (FR16), keeping the
+    # selection on the edited row.
+    state = _edit_ordinal(browsing, 1)
+    for ch in "APPL":
+        state = reduce(state, InsertChar(ch))
+    submitted = reduce(state, AcceptLine())
+
+    assert submitted.mode == Mode.BROWSING
+    assert submitted.confirmation.kind == ConfirmationKind.NONE
+    assert _mapping(submitted, 1).target_value == "APPL"
+    assert submitted.selection.selected_ordinal == 1
+
+
+def test_submit_over_collision_free_dataset_returns_to_browsing(browsing):
+    # When no collision existed before the commit, a valid submit does not enter
+    # accept confirmation (nothing "became zero because of the commit", spec §9);
+    # it returns to BROWSING. Accept confirmation is reached manually via ctrl+s.
+    state = _edit_ordinal(_resolve_at_t(browsing), 1)
+    for ch in "APPL":
+        state = reduce(state, InsertChar(ch))
+    submitted = reduce(state, AcceptLine())
+
+    assert submitted.mode == Mode.BROWSING
+    assert _mapping(submitted, 1).target_value == "APPL"
+
+
+def test_submit_preserves_the_active_filter(browsing):
+    # A valid submit that returns to BROWSING keeps the pre-edit filter intact.
+    state = reduce(browsing, InsertChar("1"))  # filter.raw "1", row 1 selected
+    state = reduce(state, AcceptLine())        # enter EDITING on ordinal 1
+    for ch in "APPL":
+        state = reduce(state, InsertChar(ch))
+    submitted = reduce(state, AcceptLine())
+
+    assert submitted.mode == Mode.BROWSING
+    assert submitted.filter.raw == "1"
+    assert submitted.filter.cursor == 1
+
+
+def test_submit_is_gated_off_for_an_invalid_buffer(browsing):
+    # Enter with an INVALID buffer is a no-op: no commit, the mode stays EDITING,
+    # and the same state object is returned (FR18).
+    state = _edit_ordinal(browsing, 1)
+    for ch in "44PL":
+        state = reduce(state, InsertChar(ch))
+    assert state.edit.validation.status == "INVALID"
+
+    assert reduce(state, AcceptLine()) is state
+
+
+def test_submit_is_gated_off_for_an_empty_buffer(browsing):
+    # Enter with an empty (ghost-only) buffer is a no-op: no commit (FR18/FR22).
+    state = _edit_ordinal(browsing, 1)
+    assert state.edit.buffer == ""
+
+    assert reduce(state, AcceptLine()) is state
+
+
+# ── cancel (Esc / ctrl+c): discard + browsing restore (spec §4.2 / FR16) ─────
+
+def test_cancel_discards_the_buffer_and_returns_to_browsing(browsing):
+    state = _edit_ordinal(browsing, 1)
+    for ch in "XYZ":
+        state = reduce(state, InsertChar(ch))
+    cancelled = reduce(state, ClearFilter())
+
+    assert cancelled.mode == Mode.BROWSING
+    assert cancelled.edit is None
+    assert _mapping(cancelled, 1).target_value is None  # buffer never committed
+
+
+def test_cancel_preserves_filter_and_selection(browsing):
+    state = reduce(browsing, InsertChar("1"))  # filter.raw "1", row 1 selected
+    state = reduce(state, AcceptLine())        # enter EDITING on ordinal 1
+    for ch in "XYZ":
+        state = reduce(state, InsertChar(ch))
+    cancelled = reduce(state, ClearFilter())
+
+    assert cancelled.mode == Mode.BROWSING
+    assert cancelled.filter.raw == "1"
+    assert cancelled.filter.cursor == 1
+    assert cancelled.selection.selected_ordinal == 1
