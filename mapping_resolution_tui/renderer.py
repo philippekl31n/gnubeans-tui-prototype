@@ -233,15 +233,14 @@ def render_lines(state: AppState, now: float | None = None) -> list[str]:
             # Build the unformatted remainder (everything after token_display)
             remainder = [" "] * (area_len - unformatted_len)
             
-            # Place gap_str_0 at the end of the remainder
-            remainder[-2] = gap_str_0[0]
-            remainder[-1] = gap_str_0[1]
-            
             # Place val_icon
             if val_icon:
                 rem_idx = icon_idx - unformatted_len
                 if 0 <= rem_idx < len(remainder):
                     remainder[rem_idx] = f"{burst_ansi}{val_icon}{_RESET}" if is_burst else val_icon
+                    
+            if ptr_0 == "▸":
+                remainder[-2] = ptr_0
                     
             token_cell_with_gap = token_display + "".join(remainder)
             

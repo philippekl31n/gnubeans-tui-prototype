@@ -326,24 +326,36 @@ def _reduce_insert_char(state: AppState, action: InsertChar, now: Optional[float
 
 def _reduce_move_cursor_left(state: AppState, action: MoveCursorLeft) -> AppState:
     if state.mode == Mode.EDITING:
+        from mapping_resolution_tui.state import FocusRegion
+        if state.edit.focus_region == FocusRegion.SOURCE_LIST:
+            return state
         return replace(state, edit=replace(state.edit, cursor=max(0, state.edit.cursor - 1)))
     return _with_filter(state, raw=state.filter.raw, cursor=state.filter.cursor - 1)
 
 
 def _reduce_move_cursor_right(state: AppState, action: MoveCursorRight) -> AppState:
     if state.mode == Mode.EDITING:
+        from mapping_resolution_tui.state import FocusRegion
+        if state.edit.focus_region == FocusRegion.SOURCE_LIST:
+            return state
         return replace(state, edit=replace(state.edit, cursor=min(len(state.edit.buffer), state.edit.cursor + 1)))
     return _with_filter(state, raw=state.filter.raw, cursor=state.filter.cursor + 1)
 
 
 def _reduce_move_cursor_home(state: AppState, action: MoveCursorHome) -> AppState:
     if state.mode == Mode.EDITING:
+        from mapping_resolution_tui.state import FocusRegion
+        if state.edit.focus_region == FocusRegion.SOURCE_LIST:
+            return state
         return replace(state, edit=replace(state.edit, cursor=0))
     return _with_filter(state, raw=state.filter.raw, cursor=0)
 
 
 def _reduce_move_cursor_end(state: AppState, action: MoveCursorEnd) -> AppState:
     if state.mode == Mode.EDITING:
+        from mapping_resolution_tui.state import FocusRegion
+        if state.edit.focus_region == FocusRegion.SOURCE_LIST:
+            return state
         return replace(state, edit=replace(state.edit, cursor=len(state.edit.buffer)))
     return _with_filter(state, raw=state.filter.raw, cursor=len(state.filter.raw))
 
@@ -490,6 +502,23 @@ def _reduce_backward_kill_word(state: AppState, action: BackwardKillWord) -> App
 
 
 def _reduce_autocomplete_bang(state: AppState, action: AutocompleteBang) -> AppState:
+    if state.mode == Mode.EDITING:
+        from mapping_resolution_tui.selectors import select_ghost_suffix
+        from mapping_resolution_tui.state import FocusRegion
+        mapping = next(m for m in state.mappings if m.ordinal == state.edit.mapping_ordinal)
+        ghost = select_ghost_suffix(state, mapping)
+        if ghost:
+            new_buffer = state.edit.buffer + ghost
+            new_edit = replace(
+                state.edit,
+                cursor=len(new_buffer),
+                focus_region=FocusRegion.TOKEN_INPUT,
+                source_pointer_index=None,
+                source_entry_buffer=None,
+            )
+            return replace(state, edit=_validate_edit(state, new_edit, new_buffer))
+        return state
+        
     # Tab / ctrl+i autocompletes a leading ! only while the "Tab to view
     # collisions" ghost is visible: filter.raw empty and at least one unresolved
     # collision exists. Otherwise it is a no-op — a non-empty buffer (incl. a !
@@ -574,10 +603,86 @@ def _reduce_accept_line(state: AppState, action: AcceptLine) -> AppState:
 
 
 def _reduce_move_selection_up(state: AppState, action: MoveSelectionUp) -> AppState:
+    if state.mode == Mode.EDITING:
+        from mapping_resolution_tui.state import FocusRegion
+        from mapping_resolution_tui.selectors import select_active_sources, select_source_effective_value
+        edit = state.edit
+        mapping = next(m for m in state.mappings if m.ordinal == edit.mapping_ordinal)
+        active_sources = select_active_sources(mapping)
+        if not active_sources:
+            return state
+
+        if edit.focus_region == FocusRegion.TOKEN_INPUT:
+            new_idx = len(active_sources) - 1
+            new_buffer = select_source_effective_value(active_sources[new_idx])
+            new_edit = replace(
+                edit,
+                focus_region=FocusRegion.SOURCE_LIST,
+                source_pointer_index=new_idx,
+                source_entry_buffer=edit.buffer,
+            )
+            return replace(state, edit=_validate_edit(state, replace(new_edit, cursor=len(new_buffer)), new_buffer))
+        else:
+            if edit.source_pointer_index == 0:
+                new_buffer = edit.source_entry_buffer
+                new_edit = replace(
+                    edit,
+                    focus_region=FocusRegion.TOKEN_INPUT,
+                    source_pointer_index=None,
+                    source_entry_buffer=None,
+                )
+                return replace(state, edit=_validate_edit(state, replace(new_edit, cursor=len(new_buffer)), new_buffer))
+            else:
+                new_idx = edit.source_pointer_index - 1
+                new_buffer = select_source_effective_value(active_sources[new_idx])
+                new_edit = replace(
+                    edit,
+                    source_pointer_index=new_idx,
+                )
+                return replace(state, edit=_validate_edit(state, replace(new_edit, cursor=len(new_buffer)), new_buffer))
+
     return _move_selection(state, -1)
 
 
 def _reduce_move_selection_down(state: AppState, action: MoveSelectionDown) -> AppState:
+    if state.mode == Mode.EDITING:
+        from mapping_resolution_tui.state import FocusRegion
+        from mapping_resolution_tui.selectors import select_active_sources, select_source_effective_value
+        edit = state.edit
+        mapping = next(m for m in state.mappings if m.ordinal == edit.mapping_ordinal)
+        active_sources = select_active_sources(mapping)
+        if not active_sources:
+            return state
+
+        if edit.focus_region == FocusRegion.TOKEN_INPUT:
+            new_idx = 0
+            new_buffer = select_source_effective_value(active_sources[new_idx])
+            new_edit = replace(
+                edit,
+                focus_region=FocusRegion.SOURCE_LIST,
+                source_pointer_index=new_idx,
+                source_entry_buffer=edit.buffer,
+            )
+            return replace(state, edit=_validate_edit(state, replace(new_edit, cursor=len(new_buffer)), new_buffer))
+        else:
+            if edit.source_pointer_index == len(active_sources) - 1:
+                new_buffer = edit.source_entry_buffer
+                new_edit = replace(
+                    edit,
+                    focus_region=FocusRegion.TOKEN_INPUT,
+                    source_pointer_index=None,
+                    source_entry_buffer=None,
+                )
+                return replace(state, edit=_validate_edit(state, replace(new_edit, cursor=len(new_buffer)), new_buffer))
+            else:
+                new_idx = edit.source_pointer_index + 1
+                new_buffer = select_source_effective_value(active_sources[new_idx])
+                new_edit = replace(
+                    edit,
+                    source_pointer_index=new_idx,
+                )
+                return replace(state, edit=_validate_edit(state, replace(new_edit, cursor=len(new_buffer)), new_buffer))
+
     return _move_selection(state, 1)
 
 

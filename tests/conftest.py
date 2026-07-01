@@ -266,6 +266,48 @@ def frame_9_screen(frame_9_lines):
     return make_pyte_screen(frame_9_lines)
 
 @pytest.fixture
+def frame_12a_lines():
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.actions import MoveSelectionDown
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+    from dataclasses import replace
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    mappings = [replace(m, target_value="ATT") if m.ordinal == 3 else m for m in state.mappings]
+    state = replace(state, mappings=mappings)
+    
+    from mapping_resolution_tui.actions import AcceptLine
+    state = reduce(state, AcceptLine())
+    state = reduce(state, MoveSelectionDown())
+    return render_lines(state)
+
+@pytest.fixture
+def frame_12a_screen(frame_12a_lines):
+    return make_pyte_screen(frame_12a_lines)
+
+@pytest.fixture
+def frame_12b_lines():
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.actions import MoveSelectionUp
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+    from dataclasses import replace
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    mappings = [replace(m, target_value="ATT") if m.ordinal == 3 else m for m in state.mappings]
+    state = replace(state, mappings=mappings)
+    
+    from mapping_resolution_tui.actions import AcceptLine
+    state = reduce(state, AcceptLine())
+    state = reduce(state, MoveSelectionUp())
+    return render_lines(state)
+
+@pytest.fixture
+def frame_12b_screen(frame_12b_lines):
+    return make_pyte_screen(frame_12b_lines)
+
+@pytest.fixture
 def frame_10_lines():
     from dataclasses import replace
     from tests.fixtures.storyboard import make_config, make_mappings
