@@ -4,7 +4,7 @@ Renderer module: converts AppState into a list of styled terminal lines.
 
 import re
 
-from mapping_resolution_tui.state import AppState, FooterHint, Mapping, Mode
+from mapping_resolution_tui.state import AppState, FocusRegion, FooterHint, Mapping, Mode
 
 from mapping_resolution_tui.selectors import (
     EditRowContent,
@@ -121,19 +121,20 @@ def _render_edit_token_row(
     edit_content: EditRowContent,
     ordinal: int,
     ordinal_width: int,
-    cursor_glyph: str,
     collision: str,
     max_token_length: int,
 ) -> str:
     """Render the token-input row of the expanded edit block (spec §6.3 / §7).
 
-    Lays out the row cursor, ordinal, collision marker, the buffer with its
-    reverse-video cursor, the derived ghost suffix (dim), the validation icon
-    (two columns past the cursor, capped at the source-pointer column so it
-    never overflows the M-wide token field), and the first source after the
-    divider. When the buffer is exactly ``max_token_length`` long with no ghost,
-    the cursor pins to the last character instead of appending an overflow
-    column, matching the max-length flash frame (spec §7.6).
+    Lays out the row cursor (shown only while focus is on the token input, not
+    while navigating sources), ordinal, collision marker, the buffer with its
+    reverse-video cursor, the derived ghost suffix (dim), the validation icon —
+    shown once the buffer holds a concrete value, one column past the end of
+    the displayed text and capped at the source-pointer column so it never
+    overflows the M-wide token field — and the first source after the divider.
+    When the buffer is exactly ``max_token_length`` long with no ghost, the
+    cursor pins to the last character instead of appending an overflow column,
+    matching the max-length flash frame (spec §7.6).
     """
     W, M = ordinal_width, max_token_length
     pointer0 = 6 + W + M    # source pointer / capped-icon column
@@ -147,6 +148,8 @@ def _render_edit_token_row(
     visual_cursor = cursor
     if cursor == len(full_text) and len(buffer) == max_token_length and not ghost:
         visual_cursor = max_token_length - 1
+
+    cursor_glyph = "▸" if edit_content.focus_region == FocusRegion.TOKEN_INPUT else " "
 
     row = _ColumnRow()
     row.emit(cursor_glyph, 1)
@@ -164,18 +167,20 @@ def _render_edit_token_row(
     if cursor >= len(full_text) and visual_cursor == cursor:
         row.emit(" ", 1, _REV, _RESET)
 
-    icon = edit_content.validation_icon
+    # A ghost-only/empty buffer carries no concrete value, so no icon renders.
+    icon = edit_content.validation_icon if buffer else None
+    icon_col = None
     if icon:
-        row.pad_to(min(row.col + 1, pointer0))
+        icon_col = min(row.col + 1, pointer0)
+        row.pad_to(icon_col)
         row.emit(icon, 1)
 
     sources = edit_content.sources
     first = sources[0] if sources else None
     if first is not None:
-        # The icon can land exactly on the pointer column when capped; it wins
-        # that column (the pointer arrow is suppressed there), matching the
-        # original remainder-array overwrite order.
-        if first.is_pointer and row.col < pointer0:
+        # The icon wins the pointer column when capped there (the pointer
+        # arrow is suppressed); otherwise both render at their own columns.
+        if first.is_pointer and icon_col != pointer0:
             row.pad_to(pointer0)
             row.emit("▸", 1)
         row.pad_to(div0)
@@ -330,7 +335,6 @@ def render_lines(state: AppState) -> list[str]:
                     anchor_edit_content,
                     mapping.ordinal,
                     ordinal_width,
-                    cursor,
                     collision,
                     max_token_length,
                 )
