@@ -4,9 +4,11 @@ Renderer module: converts AppState into a list of styled terminal lines.
 
 import re
 
-from mapping_resolution_tui.state import AppState, FooterHint, Mode
+from mapping_resolution_tui.state import AppState, FooterHint, Mapping, Mode
 
 from mapping_resolution_tui.selectors import (
+    EditRowContent,
+    EditSourceRow,
     select_body_capacity,
     select_body_rows,
     select_current_target_value,
@@ -85,6 +87,157 @@ def _render_filter_cursor(raw: str, cursor: int) -> str:
     return "".join(out)
 
 
+# ── EDITING row rendering (spec §6.3 / §7) ───────────────────────────────────
+
+
+class _ColumnRow:
+    """Left-to-right row builder that tracks the current 0-based display column.
+
+    ANSI codes are zero-width, so styled spans advance the column only by their
+    visible width; ``pad_to`` fills spaces up to a target column. This lets the
+    edit row place the cursor, validation icon, source pointer, divider, and
+    source text at their fixed §6.3 columns regardless of inline styling,
+    without separately tracking an "unformatted length" alongside the string.
+    """
+
+    def __init__(self) -> None:
+        self._parts: list[str] = []
+        self.col = 0
+
+    def pad_to(self, target_col: int) -> None:
+        if target_col > self.col:
+            self._parts.append(" " * (target_col - self.col))
+            self.col = target_col
+
+    def emit(self, text: str, width: int, pre: str = "", post: str = "") -> None:
+        self._parts.append(f"{pre}{text}{post}")
+        self.col += width
+
+    def build(self) -> str:
+        return "".join(self._parts)
+
+
+def _render_edit_token_row(
+    edit_content: EditRowContent,
+    ordinal: int,
+    ordinal_width: int,
+    cursor_glyph: str,
+    collision: str,
+    max_token_length: int,
+) -> str:
+    """Render the token-input row of the expanded edit block (spec §6.3 / §7).
+
+    Lays out the row cursor, ordinal, collision marker, the buffer with its
+    reverse-video cursor, the derived ghost suffix (dim), the validation icon
+    (two columns past the cursor, capped at the source-pointer column so it
+    never overflows the M-wide token field), and the first source after the
+    divider. When the buffer is exactly ``max_token_length`` long with no ghost,
+    the cursor pins to the last character instead of appending an overflow
+    column, matching the max-length flash frame (spec §7.6).
+    """
+    W, M = ordinal_width, max_token_length
+    pointer0 = 6 + W + M    # source pointer / capped-icon column
+    div0 = 8 + W + M        # source divider column
+    src0 = 10 + W + M       # source text column
+
+    buffer = edit_content.buffer_text
+    ghost = edit_content.ghost_suffix
+    cursor = edit_content.cursor_offset
+    full_text = buffer + ghost
+    visual_cursor = cursor
+    if cursor == len(full_text) and len(buffer) == max_token_length and not ghost:
+        visual_cursor = max_token_length - 1
+
+    row = _ColumnRow()
+    row.emit(cursor_glyph, 1)
+    row.emit(" ", 1)
+    row.emit(str(ordinal).rjust(W), W)
+    row.emit(" " * _ORDINAL_GAP, _ORDINAL_GAP)
+    row.emit(collision, 1)
+    for i, ch in enumerate(full_text):
+        if i == visual_cursor:
+            row.emit(ch, 1, _REV, _RESET)
+        elif i >= len(buffer):
+            row.emit(ch, 1, _DIM, _RESET)
+        else:
+            row.emit(ch, 1)
+    if cursor >= len(full_text) and visual_cursor == cursor:
+        row.emit(" ", 1, _REV, _RESET)
+
+    icon = edit_content.validation_icon
+    if icon:
+        row.pad_to(min(row.col + 1, pointer0))
+        row.emit(icon, 1)
+
+    sources = edit_content.sources
+    first = sources[0] if sources else None
+    if first is not None:
+        # The icon can land exactly on the pointer column when capped; it wins
+        # that column (the pointer arrow is suppressed there), matching the
+        # original remainder-array overwrite order.
+        if first.is_pointer and row.col < pointer0:
+            row.pad_to(pointer0)
+            row.emit("▸", 1)
+        row.pad_to(div0)
+        row.emit("┃", 1)
+        row.emit(" ", 1)
+        row.pad_to(src0)
+        row.emit(first.display, len(first.display))
+    return row.build()
+
+
+def _render_edit_source_row(
+    source: EditSourceRow, ordinal_width: int, max_token_length: int
+) -> str:
+    """Render an additional source line of the expanded edit block (spec §7.4)."""
+    W, M = ordinal_width, max_token_length
+    pointer0 = 6 + W + M
+    div0 = 8 + W + M
+    src0 = 10 + W + M
+    row = _ColumnRow()
+    if source.is_pointer:
+        row.pad_to(pointer0)
+        row.emit("▸", 1)
+    row.pad_to(div0)
+    row.emit("┃", 1)
+    row.emit(" ", 1)
+    row.pad_to(src0)
+    row.emit(source.display, len(source.display))
+    return row.build()
+
+
+def _editing_body_rows(
+    state: AppState,
+) -> tuple[list[Mapping], EditRowContent | None]:
+    """Allocate the EDITING table body (spec §8.2 anchored block).
+
+    The expanded edit block for the selected mapping is always kept visible —
+    unlike BROWSING, the scroll-offset window does not apply. Whatever body
+    capacity is left over after the block's own rows fills with following
+    context rows first, then preceding rows (closest first), all rendered
+    super-dim.
+    """
+    visible = select_visible_rows(state)
+    edited_ordinal = state.edit.mapping_ordinal
+    anchor_index = next(
+        (i for i, m in enumerate(visible) if m.ordinal == edited_ordinal), None
+    )
+    if anchor_index is None:
+        return [], None
+
+    edited = visible[anchor_index]
+    edit_content = select_edit_render_row(state, edited)
+    capacity = select_body_capacity(state.terminal.height)
+    anchor_block_len = max(1, len(edit_content.sources))
+    context_capacity = max(0, capacity - anchor_block_len)
+
+    after = visible[anchor_index + 1 : anchor_index + 1 + context_capacity]
+    remaining = context_capacity - len(after)
+    before = visible[max(0, anchor_index - remaining) : anchor_index]
+
+    return before + [edited] + after, edit_content
+
+
 def render_lines(state: AppState) -> list[str]:
     config = state.config
     mappings = state.mappings
@@ -157,7 +310,12 @@ def render_lines(state: AppState) -> list[str]:
     table_header = f"{header_prefix}{target_label}{padding}{source_label}"
 
     # ── body rows ─────────────────────────────────────────────────────────────
-    shown = select_body_rows(state)
+    editing = state.mode == Mode.EDITING and state.edit is not None
+    if editing:
+        shown, anchor_edit_content = _editing_body_rows(state)
+    else:
+        shown = select_body_rows(state)
+        anchor_edit_content = None
 
     filter_text = state.filter.text
     body_lines: list[str] = []
@@ -165,87 +323,22 @@ def render_lines(state: AppState) -> list[str]:
         is_selected = mapping.ordinal == state.selection.selected_ordinal
         collision = "!" if mapping.ordinal in collision_ordinals else " "
         cursor = "▸" if is_selected else " "
-        
-        if state.mode == Mode.EDITING and is_selected:
-            edit_content = select_edit_render_row(state, mapping)
-            buffer = edit_content.buffer_text
-            ghost = edit_content.ghost_suffix
-            cursor_idx = edit_content.cursor_offset
-            
-            ordinal_display = str(mapping.ordinal).rjust(ordinal_width)
-            
-            # Combine buffer and ghost, apply cursor reverse-video
-            token_display_list = []
-            full_text = buffer + ghost
-            
-            visual_cursor = cursor_idx
-            if cursor_idx == len(full_text) and len(buffer) == max_token_length and not ghost:
-                visual_cursor = max_token_length - 1
 
-            for i, ch in enumerate(full_text):
-                if i == visual_cursor:
-                    token_display_list.append(f"{_REV}{ch}{_RESET}")
-                elif i >= len(buffer):
-                    token_display_list.append(f"{_DIM}{ch}{_RESET}")
-                else:
-                    token_display_list.append(ch)
-            if cursor_idx >= len(full_text) and visual_cursor == cursor_idx:
-                token_display_list.append(f"{_REV} {_RESET}")
-            
-            token_display = "".join(token_display_list)
-            
-            # Calculate lengths
-            unformatted_len = len(full_text)
-            if cursor_idx >= len(full_text) and visual_cursor == cursor_idx:
-                unformatted_len += 1
-                
-            val_icon = edit_content.validation_icon or ""
-            
-            first_src = edit_content.sources[0] if edit_content.sources else None
-            first_source_str = first_src.display if first_src else ""
-            ptr_0 = "▸" if (first_src and first_src.is_pointer) else " "
-            gap_str_0 = f"{ptr_0} " if ptr_0 != " " else "  "
-            
-            # The fixed width area before ┃ is exactly max_token_length + 3
-            # It consists of:
-            # 1. token_display (ANSI formatted, unformatted length is `unformatted_len`)
-            # 2. Spaces up to max_token_length + 1
-            # 3. gap_str_0 (2 chars)
-            # 4. val_icon overwrites a character at `unformatted_len + 1` (capped at max_token_length + 1)
-            
-            area_len = max_token_length + 3
-            icon_idx = min(unformatted_len + 1, max_token_length + 1)
-            
-            # Build the unformatted remainder (everything after token_display)
-            remainder = [" "] * (area_len - unformatted_len)
-            
-            # Place gap_str_0 at the end of the remainder
-            remainder[-2] = gap_str_0[0]
-            remainder[-1] = gap_str_0[1]
-            
-            # Place val_icon
-            if val_icon:
-                rem_idx = icon_idx - unformatted_len
-                if 0 <= rem_idx < len(remainder):
-                    remainder[rem_idx] = val_icon
-                    
-            token_cell_with_gap = token_display + "".join(remainder)
-            
-            row = (
-                f"{cursor} {ordinal_display}{' ' * _ORDINAL_GAP}"
-                f"{collision}{token_cell_with_gap}┃ {first_source_str}"
+        if editing and is_selected:
+            body_lines.append(
+                _render_edit_token_row(
+                    anchor_edit_content,
+                    mapping.ordinal,
+                    ordinal_width,
+                    cursor,
+                    collision,
+                    max_token_length,
+                )
             )
-            body_lines.append(row)
-            
-            # Subsequent lines for other sources
-            # padding must equal: cursor(1) + space(1) + ordinal(4) + gap(3) + collision(1) + token(24) + space(1) = 35
-            padding_len = 1 + 1 + ordinal_width + _ORDINAL_GAP + 1 + max_token_length + 1
-            padding = " " * padding_len
-            for src in edit_content.sources[1:]:
-                ptr = "▸" if src.is_pointer else " "
-                gap_str = f"{ptr} " if ptr != " " else "  "
-                body_lines.append(f"{padding}{gap_str}┃ {src.display}")
-                
+            for src in anchor_edit_content.sources[1:]:
+                body_lines.append(
+                    _render_edit_source_row(src, ordinal_width, max_token_length)
+                )
         else:
             target = select_current_target_value(mapping)
             source = select_source_display(select_default_source(mapping))

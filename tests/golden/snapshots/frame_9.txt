@@ -11,6 +11,5 @@
    6   MSFT                       cmdty_id: "MSFT"
    7   NVDA                       cmdty_id: "NVDA"
    8   QQQ                        cmdty_id: "QQQ"
-   9   SPY                        cmdty_id: "SPY"
 
   type to edit  ·  ↑↓ select source  ·  ↵ submit  ·  esc cancel
