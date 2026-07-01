@@ -346,6 +346,59 @@ def test_unresolved_collision_ordinals_include_only_collision_group_members():
     assert select_row_collision_metadata(_story_1_4_mappings(), 5).is_unresolved is False
 
 
+def test_collision_groups_override_substitutes_single_mapping_value():
+    from mapping_resolution_tui.selectors import select_collision_groups
+
+    mappings = _story_1_4_mappings()
+
+    # Overriding ordinal 3's live value to "ATT" resolves its collision with 2.
+    assert select_collision_groups(mappings, override_ordinal=3, override_value="ATT") == ()
+
+    # Overriding ordinal 1's live value to collide with 5 introduces a new group,
+    # while the untouched AT-T collision (2, 3) still stands.
+    assert select_collision_groups(mappings, override_ordinal=1, override_value="MSFT") == (
+        ("AT-T", (2, 3)),
+        ("MSFT", (1, 5)),
+    )
+
+
+def test_render_collision_ordinals_matches_committed_selector_outside_editing():
+    from unittest.mock import Mock
+
+    from mapping_resolution_tui.state import AppState, Mode
+    from mapping_resolution_tui.selectors import (
+        select_render_collision_ordinals,
+        select_unresolved_collision_ordinals,
+    )
+
+    mappings = _story_1_4_mappings()
+    state = Mock(spec=AppState)
+    state.mode = Mode.BROWSING
+    state.edit = None
+    state.mappings = mappings
+
+    assert select_render_collision_ordinals(state) == select_unresolved_collision_ordinals(mappings)
+
+
+def test_render_collision_ordinals_reacts_live_to_edit_buffer():
+    from unittest.mock import Mock
+
+    from mapping_resolution_tui.state import AppState, EditState, Mode
+    from mapping_resolution_tui.selectors import select_render_collision_ordinals
+
+    mappings = _story_1_4_mappings()
+    state = Mock(spec=AppState)
+    state.mode = Mode.EDITING
+    state.mappings = mappings
+    state.edit = Mock(spec=EditState)
+    state.edit.mapping_ordinal = 3
+    state.edit.buffer = "ATT"
+
+    # Frame 5: typing "ATT" over mapping 3 (default "AT-T") drops both AT-T
+    # markers immediately, well before the edit is submitted.
+    assert select_render_collision_ordinals(state) == frozenset()
+
+
 def test_initial_display_sort_uses_default_sources_not_literal_target_values():
     from dataclasses import replace
 

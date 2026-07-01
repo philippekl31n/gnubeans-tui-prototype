@@ -172,10 +172,25 @@ def sort_mappings_for_initial_display(mappings: list[Mapping]) -> tuple[Mapping,
     )
 
 
-def select_collision_groups(mappings: list[Mapping]) -> tuple[tuple[str, tuple[int, ...]], ...]:
+def select_collision_groups(
+    mappings: list[Mapping],
+    *,
+    override_ordinal: int | None = None,
+    override_value: str | None = None,
+) -> tuple[tuple[str, tuple[int, ...]], ...]:
+    """Group mapping ordinals by their current target value.
+
+    ``override_ordinal``/``override_value`` substitute a single mapping's value
+    in the grouping pass without copying the mapping list — used by
+    :func:`select_render_collision_ordinals` to preview a live edit buffer's
+    collisions before it's committed.
+    """
     ordinals_by_target: dict[str, list[int]] = {}
     for mapping in mappings:
-        target_value = select_current_target_value(mapping)
+        target_value = (
+            override_value if mapping.ordinal == override_ordinal
+            else select_current_target_value(mapping)
+        )
         ordinals_by_target.setdefault(target_value, []).append(mapping.ordinal)
 
     return tuple(
@@ -185,15 +200,46 @@ def select_collision_groups(mappings: list[Mapping]) -> tuple[tuple[str, tuple[i
     )
 
 
-def select_unresolved_collision_count(mappings: list[Mapping]) -> int:
-    return len(select_collision_groups(mappings))
+def select_unresolved_collision_count(
+    mappings: list[Mapping],
+    *,
+    override_ordinal: int | None = None,
+    override_value: str | None = None,
+) -> int:
+    return len(select_collision_groups(mappings, override_ordinal=override_ordinal, override_value=override_value))
 
 
-def select_unresolved_collision_ordinals(mappings: list[Mapping]) -> frozenset[int]:
+def select_unresolved_collision_ordinals(
+    mappings: list[Mapping],
+    *,
+    override_ordinal: int | None = None,
+    override_value: str | None = None,
+) -> frozenset[int]:
     return frozenset(
         ordinal
-        for _, ordinals in select_collision_groups(mappings)
+        for _, ordinals in select_collision_groups(
+            mappings, override_ordinal=override_ordinal, override_value=override_value
+        )
         for ordinal in ordinals
+    )
+
+
+def select_render_collision_ordinals(state: "AppState") -> frozenset[int]:
+    """Unresolved-collision ordinals for the rendered row markers.
+
+    Identical to :func:`select_unresolved_collision_ordinals` outside of
+    EDITING. While EDITING, substitutes the edited mapping's live
+    :func:`select_concrete_value` for its committed target so the ``!``
+    markers react on every keystroke instead of only after submit.
+    """
+    if state.mode is not Mode.EDITING or state.edit is None:
+        return select_unresolved_collision_ordinals(state.mappings)
+
+    mapping = next(m for m in state.mappings if m.ordinal == state.edit.mapping_ordinal)
+    return select_unresolved_collision_ordinals(
+        state.mappings,
+        override_ordinal=mapping.ordinal,
+        override_value=select_concrete_value(state, mapping),
     )
 
 
@@ -349,17 +395,9 @@ def select_footer_content(state: "AppState") -> FooterContent:
     
     if state.edit and state.edit.validation.status == "VALID":
         mapping = next(m for m in state.mappings if m.ordinal == state.edit.mapping_ordinal)
-        
-        effective_text = state.edit.buffer + select_ghost_suffix(state, mapping) if not state.edit.buffer else state.edit.buffer
-        if not state.edit.buffer and mapping.target_value is None:
-            effective_text = select_ghost_suffix(state, mapping)
-            
-        is_collision = False
-        for m in state.mappings:
-            if m.ordinal != mapping.ordinal and select_current_target_value(m) == effective_text:
-                is_collision = True
-                break
-                
+        effective_text = select_concrete_value(state, mapping)
+
+        is_collision = mapping.ordinal in select_render_collision_ordinals(state)
         if not is_collision and effective_text != mapping.target_value:
             hints.append(FooterHint.SUBMIT)
             

@@ -18,7 +18,7 @@ from mapping_resolution_tui.selectors import (
     select_ordinal_match_spans,
     select_source_display,
     select_unresolved_collision_count,
-    select_unresolved_collision_ordinals,
+    select_render_collision_ordinals,
     select_visible_rows,
     select_edit_render_row,
 )
@@ -91,7 +91,7 @@ def render_lines(state: AppState) -> list[str]:
     height = state.terminal.height
 
     unresolved_count = select_unresolved_collision_count(mappings)
-    collision_ordinals = select_unresolved_collision_ordinals(mappings)
+    collision_ordinals = select_render_collision_ordinals(state)
     total = len(mappings)
 
     # Variable-width table grid (spec §6.3), driven by two parameters: the
