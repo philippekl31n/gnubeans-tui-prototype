@@ -182,35 +182,6 @@ def frame_5_screen(frame_5_lines):
     return make_pyte_screen(frame_5_lines)
 
 @pytest.fixture
-def frame_8_lines():
-    """Frame 8: single-character text filter '1' over a collision-free dataset.
-
-    The AT-T collision (ordinal 3) is resolved to 'ATT' as the storyboard does
-    before frame 8, then the reviewer types '1'. Visible rows narrow to ordinals
-    1, 4 (token C100-F), 10, and 11.
-    """
-    from dataclasses import replace
-
-    from tests.fixtures.storyboard import make_config, make_mappings
-    from mapping_resolution_tui.reducer import make_initial_state, reduce
-    from mapping_resolution_tui.renderer import render_lines
-
-    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
-    mappings = [
-        replace(m, target_value="ATT") if m.ordinal == 3 else m
-        for m in state.mappings
-    ]
-    state = replace(state, mappings=mappings)
-    state = reduce(state, "1")
-    return render_lines(state)
-
-
-@pytest.fixture
-def frame_8_screen(frame_8_lines):
-    return make_pyte_screen(frame_8_lines)
-
-
-@pytest.fixture
 def frame_13_lines():
     """Frame 13: a text filter that matches no rows (empty result).
 
@@ -344,6 +315,69 @@ def frame_12b_lines():
 @pytest.fixture
 def frame_12b_screen(frame_12b_lines):
     return make_pyte_screen(frame_12b_lines)
+
+@pytest.fixture
+def frame_esc_from_edit_lines(frame_8_lines):
+    """Esc-from-edit frame: cancelling an edit restores the pre-edit frame 8.
+
+    From the frame 8 context (resolved dataset, filter '1', ordinal 1 selected)
+    the reviewer enters edit mode, types 'XYZ', and presses Esc. The buffer is
+    discarded and the filter, selection, and scroll are preserved exactly, so
+    the frame is bit-identical to frame 8 (TASK-008 / FR16).
+    """
+    from dataclasses import replace
+
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.events import KeyEvent
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    mappings = [
+        replace(m, target_value="ATT") if m.ordinal == 3 else m
+        for m in state.mappings
+    ]
+    state = replace(state, mappings=mappings)
+    state = reduce(state, "1")
+    state = reduce(state, KeyEvent.ENTER)
+    for char in "XYZ":
+        state = reduce(state, char)
+    state = reduce(state, KeyEvent.ESCAPE)
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_esc_from_edit_screen(frame_esc_from_edit_lines):
+    return make_pyte_screen(frame_esc_from_edit_lines)
+
+
+@pytest.fixture
+def frame_submit_no_resolution_lines():
+    """Submit-no-resolution frame: a valid commit that leaves collisions open.
+
+    From the initial browsing state (AT-T collision outstanding, no filter) the
+    reviewer edits ordinal 1 (APPLE), types 'APPL', and submits. The commit
+    updates row 1's target token, the app returns to BROWSING with the empty
+    filter intact, and the AT-T markers on rows 2 and 3 are recalculated and
+    remain (TASK-008 / FR8/FR16/FR22).
+    """
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.events import KeyEvent
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    state = reduce(state, KeyEvent.ENTER)
+    for char in "APPL":
+        state = reduce(state, char)
+    state = reduce(state, KeyEvent.ENTER)
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_submit_no_resolution_screen(frame_submit_no_resolution_lines):
+    return make_pyte_screen(frame_submit_no_resolution_lines)
+
 
 @pytest.fixture
 def assert_snapshot(update_snapshots):
