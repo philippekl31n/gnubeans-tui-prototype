@@ -14,7 +14,7 @@ from mapping_resolution_tui.selectors import (
     select_body_capacity,
     select_collision_ghost_visible,
     select_default_source_value,
-    select_source_effective_value,
+    select_source_pointer_value,
     select_unresolved_collision_count,
     select_visible_rows,
     sort_mappings_for_initial_display,
@@ -311,6 +311,20 @@ def _apply_edit_buffer(state: AppState, new_buffer: str, new_cursor: int) -> App
     return replace(state, edit=_validate_edit(state, new_edit, new_buffer))
 
 
+def _autofill_source_pointer(state: AppState, edit: EditState, index: int) -> AppState:
+    """Point ``edit`` at active source ``index``, autofill the buffer from it, and revalidate.
+
+    Resolves the buffer through :func:`select_source_pointer_value` (TASK-005)
+    against a state whose pointer already targets ``index``, so the
+    active-source lookup is never re-derived here.
+    """
+    pointed = replace(edit, source_pointer_index=index)
+    mapping = next(m for m in state.mappings if m.ordinal == edit.mapping_ordinal)
+    new_buffer = select_source_pointer_value(replace(state, edit=pointed), mapping)
+    final_edit = replace(pointed, cursor=len(new_buffer))
+    return replace(state, edit=_validate_edit(state, final_edit, new_buffer))
+
+
 def _move_source_pointer(state: AppState, direction: int) -> AppState:
     """Navigate SOURCE_LIST focus by one source, or enter it from TOKEN_INPUT
     (spec S7.4). ``direction`` is -1 for Up, +1 for Down.
@@ -331,15 +345,12 @@ def _move_source_pointer(state: AppState, direction: int) -> AppState:
 
     if edit.focus_region == FocusRegion.TOKEN_INPUT:
         index = 0 if direction > 0 else len(active_sources) - 1
-        new_buffer = select_source_effective_value(active_sources[index])
-        entered = replace(
+        entering = replace(
             edit,
             focus_region=FocusRegion.SOURCE_LIST,
-            source_pointer_index=index,
             source_entry_buffer=edit.buffer,
-            cursor=len(new_buffer),
         )
-        return replace(state, edit=_validate_edit(state, entered, new_buffer))
+        return _autofill_source_pointer(state, entering, index)
 
     new_index = edit.source_pointer_index + direction
     if new_index < 0 or new_index >= len(active_sources):
@@ -347,9 +358,7 @@ def _move_source_pointer(state: AppState, direction: int) -> AppState:
         exited = replace(_exit_source_list(edit), cursor=len(restored_buffer))
         return replace(state, edit=_validate_edit(state, exited, restored_buffer))
 
-    new_buffer = select_source_effective_value(active_sources[new_index])
-    moved = replace(edit, source_pointer_index=new_index, cursor=len(new_buffer))
-    return replace(state, edit=_validate_edit(state, moved, new_buffer))
+    return _autofill_source_pointer(state, edit, new_index)
 
 
 # ── BROWSING filter handlers ──────────────────────────────────────────────────
