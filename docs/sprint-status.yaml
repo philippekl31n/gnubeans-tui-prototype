@@ -1,7 +1,7 @@
 # sprint-status.yaml
 # Epic 3 — Edit Target Tokens and Resolve Collisions
 # Drop into: docs/sprint-status-epic3.yaml
-# Updated: 2026-06-24
+# Updated: 2026-07-01
 
 schema_version: 1
 
@@ -44,6 +44,10 @@ tasks:
         value of the source at edit.source_pointer_index within
         select_active_sources(mapping), or None when source_pointer_index
         is None (FR21)"
+      - "select_source_pointer_value MUST bounds-check source_pointer_index
+        against len(select_active_sources(mapping)) and return None when the
+        index is out of range, rather than indexing directly and raising
+        IndexError (FR21)"
       - "select_edit_render_row(state, mapping) returns a dataclass with
         everything the renderer needs for the expanded edit row: buffer text,
         ghost suffix, cursor offset, validation icon and error message, focus
@@ -59,6 +63,13 @@ tasks:
         replicate its logic in the reducer submit handler"
       - "select_active_sources is already implemented; select_source_pointer_value
         should delegate to it rather than re-filtering"
+      - "The §7.4 source-pointer movement protocol keeps source_pointer_index
+        within range during navigation, but that invariant is enforced by the
+        reducer at write time, not guaranteed at read time — do not assume it
+        holds inside the selector. Treat 0 <= source_pointer_index <
+        len(active_sources) as a condition to check, not an assumption to
+        rely on, so a stale or otherwise out-of-range index degrades to None
+        instead of crashing the render loop"
       - "select_edit_render_row should be the only selector the renderer calls
         for the expanded row — keep rendering logic out of the selector itself"
 
@@ -114,8 +125,8 @@ tasks:
         suffix streaming"
       - "Golden frame frame_10 committed: invalid input 44PL, error icon,
         error 'Error: must start with A-Z'"
-      - "Golden frame frame_11 committed: 24-character buffer, max-length
-        flash 'Error: 24 chars max'"
+      - "Golden frame frame_11 committed: 24-character buffer, cursor clamped
+        to final character, max-length flash 'Error: 24 chars max'"
       - "All existing golden tests continue to pass"
     definition_of_done:
       - "Feature is implemented and tested"
@@ -150,9 +161,11 @@ tasks:
         sets source_pointer_index to last active source index, sets
         focus_region = SOURCE_LIST, and autofills buffer; validation
         recomputed (FR21)"
-      - "Up/down within SOURCE_LIST moves source_pointer_index through active
-        sources with wrapping; buffer autofilled from pointed source effective
-        value and validation recomputed on every move (FR21)"
+      - "Up/down within SOURCE_LIST moves source_pointer_index by one step
+        through active sources (no wrapping — boundary crossings are the
+        separate exit-to-TOKEN_INPUT case below, spec S7.4); buffer autofilled
+        from pointed source effective value and validation recomputed on
+        every move (FR21)"
       - "Moving up past the first source (or down past the last) restores
         source_entry_buffer to edit.buffer, clears source_pointer_index and
         source_entry_buffer, and returns focus_region to TOKEN_INPUT (FR21)"
@@ -226,3 +239,52 @@ tasks:
       - "BDD scenarios for submit, cancel, and live collision recomputation
         all pass"
       - "All relevant golden frames committed and passing under uv run pytest"
+
+  - key: TASK-009
+    type: task
+    title: Pop-then-hold micro-animation for the max-length flash
+    status: todo
+    assignee: null
+    depends_on: [TASK-006]
+    functional_requirements: [FR20]
+    files:
+      - mapping_resolution_tui/reducer.py
+      - mapping_resolution_tui/renderer.py
+      - mapping_resolution_tui/loop.py
+    golden_frames:
+      - frame_11        # Existing: held phase, unchanged
+      - frame_11_burst  # New: burst phase, reverse-video icon/error at column 33
+    user_story: >
+      As a reviewer, I want the max-length error to visibly pop when a
+      character is rejected, so my eye is drawn to it the instant it happens,
+      without the message disappearing before I've had a chance to read it.
+    acceptance_criteria:
+      - "TASK-006 already ships the held phase (indefinite, event-cleared
+        error display) unaffected by this task; this task adds a burst phase
+        that precedes it (spec §7.6)"
+      - "Every over-limit discard sets edit.max_length_flash_until = now() +
+        150ms, overwriting any prior deadline; repeated over-limit keystrokes
+        reset the window rather than extending or stacking it"
+      - "While now < edit.max_length_flash_until, the capped validation icon
+        and footer error line render reverse-video (burst); once that deadline
+        passes, both render in the ordinary INVALID style (held) with no
+        other visual change"
+      - "Any event that clears edit.validation's max-length error (accepted
+        edit-buffer mutation, source navigation, mode exit, validation-result
+        change) also clears edit.max_length_flash_until in the same
+        transition, cutting the burst short regardless of remaining time"
+      - "The input loop wakes up and re-renders at or after
+        edit.max_length_flash_until even with no keypress, so the burst-to-
+        held transition is visible to a reviewer who pauses mid-burst; it
+        MUST NOT poll once no burst is pending (spec §12.1)"
+      - "Golden frame frame_11 (held phase) continues to pass unchanged"
+      - "New golden frame frame_11_burst committed: same buffer/cursor state
+        as frame_11, reverse-video icon and error line, asserted via an
+        injected deterministic render-time clock rather than a real sleep"
+      - "All existing golden tests continue to pass"
+    definition_of_done:
+      - "Feature is implemented and tested"
+      - "Burst and held phases both covered by deterministic unit tests (no
+        real-time sleep)"
+      - "Golden frames frame_11 and frame_11_burst committed and passing under
+        uv run pytest"

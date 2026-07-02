@@ -2,7 +2,9 @@ Below are the exact visual states the TUI must accurately render across its life
 
 > Mockups presented in bash code blocks include the following multimarkdown markup to indicate ANSI formatting:
 - **bold**
-- *"reverse-video"* used to indicate current cursor position on an input line ala ncurses or htop
+- *"reverse-video"* used to indicate current cursor position on an input line ala ncurses or htop, and
+  (frame 11) the brief burst emphasis on the max-length flash's icon/error text before it settles into
+  its held styling (spec §7.6)
 - __dim__
 
 > The component renders inline without an alternate screen buffer — it appears as an interactive pause within a larger migration script, allowing users to scroll back to preceding command output. Lines are rendered without wrapping; content extending beyond the right edge of the terminal viewport is accessible via the terminal emulator's native horizontal scrolling.
@@ -252,7 +254,7 @@ Below are the exact visual states the TUI must accurately render across its life
   Editing mapping for "APPLE":
 
    #   Beancount Token            GnuCash Source
-▸  1   44PL56789012345678901234* *✗ ┃ cmdty_id: "AAPL"
+▸  1   44PL5678901234567890123*4* ✗ ┃ cmdty_id: "AAPL"
                                   ┃ user_symbol: "APPLE"
   __ 4   C100-F                     cmdty_id: "100-F" → "C100-F"__
   __10   VTSAX                      cmdty_id: "VTSAX"__
@@ -260,8 +262,8 @@ Below are the exact visual states the TUI must accurately render across its life
 
   Error: 24 chars max  ·  ↑↓ select source  ·  esc cancel
 ```
-- When the user types the 24th character in a Beancount Token input buffer, the cursor advances to column 32 of the display, but the input status icon (`✗` above) stops at column 33, breaking the ‘two spaces to the right of the cursor’ rule
-- When the user types the 25th character in a Beancount Token input buffer, the character is discarded, the Invalid-input icon (`✗`) flashes in column 33, and the error message "Error: 24 chars max" appears briefly before fading out/fading to the last error message pushed to the stack
+- When the user types the 24th character in a Beancount Token input buffer, the cursor clamps to the final character of the token to indicate maximum capacity, and the input status icon (`✗` above) remains at column 33, maintaining the ‘two spaces to the right of the cursor’ rule
+- When the user types the 25th character in a Beancount Token input buffer, the character is discarded and a brief (150ms) **burst** arms: the Invalid-input icon (`✗`) and the "Error: 24 chars max" message render reverse-video at column 33 to pop and draw the eye. Once the burst elapses, both render in their normal (non-emphasized) styling — the **held** phase — and stay visible for as long as the buffer sits at the 24-character cap; nothing fades away or gets pushed to a message stack. Typing another over-limit character while the burst is still playing resets it to a fresh 150ms window rather than extending or stacking it (spec §7.6)
 
 > TRANSITION to 9: User types any combination of `backspace` and/or readline keybindings to erase the current Beancount Token value
 > TRANSITION to 12a: User types `↓`
