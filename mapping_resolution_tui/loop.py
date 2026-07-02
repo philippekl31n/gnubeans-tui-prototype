@@ -128,8 +128,9 @@ def run(
 
     The loop itself is mode-blind: every key goes through :func:`key_to_event`
     and the reducer's mode tables, and the run is over when the reducer marks
-    ``result.status`` terminal (ctrl+c outside an edit → CANCELLED). Returns
-    the resolved mappings on a clean end-of-input exit, or ``None`` when the
+    ``result.status`` terminal (accept confirmation + YES → ACCEPTED; ctrl+c
+    outside an edit → CANCELLED). Returns the resolved mappings on a clean
+    end-of-input exit or an ACCEPTED accept confirmation, or ``None`` when the
     run was cancelled.
     """
     if keys is None:
@@ -153,11 +154,16 @@ def run(
             continue
 
         new_state = reduce(state, event)
+        if new_state.result.status == "ACCEPTED":
+            # Accept confirmation with choice=YES committed every mapping:
+            # paint the §6.7 terminal result frame, then exit returning the
+            # resolved mappings (the corrected commodity import).
+            render(render_lines(new_state))
+            return new_state.mappings
         if new_state.result.status != "RUNNING":
-            # The reducer marked the run over (ctrl+c outside an edit →
-            # CANCELLED for now; ACCEPTED/SKIPPED/SIGINT arrive with the
-            # confirmation flows). No terminal frame is rendered yet — the
-            # §6.7 result frame is a later task.
+            # ctrl+c outside an edit ends the review directly (CANCELLED); the
+            # EXIT-confirmation SKIPPED/SIGINT flow lands with a later story.
+            # No terminal frame is painted for those interim exits.
             return None
 
         if new_state is state:

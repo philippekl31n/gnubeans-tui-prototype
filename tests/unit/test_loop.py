@@ -282,3 +282,39 @@ def test_quit_does_not_render_a_terminal_frame():
     # so the last rendered frame is the state before ctrl+c.
     _, frames = run_keys(["3", CTRL_C])
     assert len(frames) == 2  # initial + the "3" insert only
+
+
+# ── accept confirmation produces output (TASK-010, spec §6.7) ─────────────────
+
+_ACCEPT_KEYS = [
+    # Resolve the final collision (ordinal 3 -> "ATT"): FR23 auto-enters the
+    # accept confirmation; y then Enter commits every mapping.
+    Key(name="KEY_DOWN"), Key(name="KEY_DOWN"), Key(name="KEY_ENTER"),
+    "A", "T", "T", Key(name="KEY_ENTER"), "y", Key(name="KEY_ENTER"),
+]
+
+
+def test_accepting_returns_the_resolved_mappings():
+    result, _ = run_keys(_ACCEPT_KEYS)
+    assert result is not None
+    assert next(m for m in result if m.ordinal == 3).target_value == "ATT"
+
+
+def test_accepting_paints_the_terminal_result_frame():
+    _, frames = run_keys(_ACCEPT_KEYS)
+    assert frames[-1] == ["11 commodities created.", "❯"]
+
+
+def test_ctrl_s_reentry_accept_flow_returns_the_resolved_mappings():
+    # Enter on NO returns to BROWSING; ctrl+s re-enters (frame 14) and the
+    # accept then completes exactly as the auto-entered confirmation does.
+    keys = [
+        Key(name="KEY_DOWN"), Key(name="KEY_DOWN"), Key(name="KEY_ENTER"),
+        "A", "T", "T", Key(name="KEY_ENTER"),          # auto-entry, choice NO
+        Key(name="KEY_ENTER"),                          # NO -> back to BROWSING
+        "\x13", "y", Key(name="KEY_ENTER"),             # ctrl+s re-entry, accept
+    ]
+    result, frames = run_keys(keys)
+    assert result is not None
+    assert next(m for m in result if m.ordinal == 3).target_value == "ATT"
+    assert frames[-1] == ["11 commodities created.", "❯"]

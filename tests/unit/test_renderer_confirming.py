@@ -154,3 +154,13 @@ def test_render_is_idempotent_and_preserves_the_choice():
     state = _confirming(_resolved_state(), ConfirmationKind.ACCEPT, ConfirmationChoice.NO)
     assert render_lines(state) == render_lines(state)
     assert state.confirmation.choice is ConfirmationChoice.NO
+
+
+# ── terminal result frame (spec §6.7) ─────────────────────────────────────────
+
+def test_accepted_result_renders_the_two_row_terminal_frame():
+    from mapping_resolution_tui.state import ResultState
+
+    state = _confirming(_resolved_state(), ConfirmationKind.ACCEPT, ConfirmationChoice.YES)
+    accepted = replace(state, result=ResultState(status="ACCEPTED"))
+    assert render_lines(accepted) == ["11 commodities created.", "❯"]

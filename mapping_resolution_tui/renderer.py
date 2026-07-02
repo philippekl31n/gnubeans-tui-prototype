@@ -262,6 +262,11 @@ def render_lines(state: AppState) -> list[str]:
     mappings = state.mappings
     height = state.terminal.height
 
+    # Terminal accepted-result frame (spec §6.7, storyboard frame 15): the
+    # created message over a bare prompt glyph, exactly two rows tall.
+    if state.result.status == "ACCEPTED":
+        return [config.created_message(len(mappings)), "❯"]
+
     unresolved_count = select_unresolved_collision_count(mappings)
     collision_ordinals = select_render_collision_ordinals(state)
     total = len(mappings)
