@@ -94,6 +94,60 @@ def test_submit_is_noop_outside_browsing():
     assert reduce(confirming, KeyEvent.SUBMIT) is confirming
 
 
+# ── choice movement: y/n and ←/→ (spec §4.2/§5) ──────────────────────────────
+
+
+def _confirming_state():
+    return reduce(_resolved_state(), KeyEvent.SUBMIT)
+
+
+def test_y_sets_choice_yes_and_n_sets_choice_no():
+    confirming = _confirming_state()
+    on_yes = reduce(confirming, "y")
+    assert on_yes.confirmation.choice is ConfirmationChoice.YES
+    assert on_yes.mode is Mode.CONFIRMING
+    on_no = reduce(on_yes, "n")
+    assert on_no.confirmation.choice is ConfirmationChoice.NO
+    assert on_no.mode is Mode.CONFIRMING
+
+
+def test_repeated_choice_keys_are_identity_noops():
+    confirming = _confirming_state()
+    assert reduce(confirming, "n") is confirming
+    on_yes = reduce(confirming, "y")
+    assert reduce(on_yes, "y") is on_yes
+
+
+def test_uppercase_and_other_printables_are_identity_noops():
+    # Spec §5: only lowercase y/n move the choice in CONFIRMING; every other
+    # printable — including uppercase Y/N — mutates nothing.
+    confirming = _confirming_state()
+    for char in ("Y", "N", "a", "!", " "):
+        assert reduce(confirming, char) is confirming
+
+
+def test_left_and_right_arrows_toggle_choice():
+    confirming = _confirming_state()
+    toggled = reduce(confirming, KeyEvent.CURSOR_LEFT)
+    assert toggled.confirmation.choice is ConfirmationChoice.YES
+    toggled = reduce(toggled, KeyEvent.CURSOR_LEFT)
+    assert toggled.confirmation.choice is ConfirmationChoice.NO
+    toggled = reduce(toggled, KeyEvent.CURSOR_RIGHT)
+    assert toggled.confirmation.choice is ConfirmationChoice.YES
+    toggled = reduce(toggled, KeyEvent.CURSOR_RIGHT)
+    assert toggled.confirmation.choice is ConfirmationChoice.NO
+
+
+def test_choice_movement_leaves_mode_kind_and_table_state_untouched():
+    confirming = _confirming_state()
+    on_yes = reduce(confirming, "y")
+    assert on_yes.confirmation.kind is ConfirmationKind.ACCEPT
+    assert on_yes.mode is Mode.CONFIRMING
+    assert on_yes.mappings is confirming.mappings
+    assert on_yes.selection is confirming.selection
+    assert on_yes.filter is confirming.filter
+
+
 def test_submit_entry_matches_last_resolution_auto_entry():
     # Both entry paths share _enter_accept_confirmation and must land on the
     # identical CONFIRMING/ACCEPT/NO confirmation state (spec §4.1).

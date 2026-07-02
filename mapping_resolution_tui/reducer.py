@@ -707,6 +707,34 @@ def _reduce_submit(state: AppState) -> AppState:
     return _enter_accept_confirmation(state)
 
 
+def _reduce_confirm_set_choice(state: AppState, choice: ConfirmationChoice) -> AppState:
+    """Set the confirmation choice, preserving identity when it already holds."""
+    if state.confirmation.choice is choice:
+        return state
+    return replace(state, confirmation=replace(state.confirmation, choice=choice))
+
+
+def _reduce_confirm_toggle(state: AppState) -> AppState:
+    """←/→ toggle the confirmation choice between YES and NO (spec §4.2)."""
+    choice = (
+        ConfirmationChoice.NO
+        if state.confirmation.choice is ConfirmationChoice.YES
+        else ConfirmationChoice.YES
+    )
+    return _reduce_confirm_set_choice(state, choice)
+
+
+def _reduce_confirm_insert_char(state: AppState, char: str, now: Optional[float]) -> AppState:
+    # `now` is unused: CONFIRMING has no flash concept (FR20 is EDITING-only).
+    # y sets the choice to YES, n to NO; any other printable — uppercase Y/N
+    # included — is a no-op (spec §5).
+    if char == "y":
+        return _reduce_confirm_set_choice(state, ConfirmationChoice.YES)
+    if char == "n":
+        return _reduce_confirm_set_choice(state, ConfirmationChoice.NO)
+    return state
+
+
 # ── dispatch tables ───────────────────────────────────────────────────────────
 
 
@@ -756,10 +784,13 @@ _EDITING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
     # PAGE_UP/DOWN → no-op in EDITING for now
 }
 
-# CONFIRMING key handling (y/n/arrows/Enter, spec §4.2) is a future story; only
-# ctrl+c is wired so a reviewer who lands here via submit is never trapped.
 _CONFIRMING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
-    KeyEvent.QUIT: _reduce_quit,
+    # ctrl+c stays wired to the interim cancel (CANCELLED); the EXIT-confirmation
+    # transition (frame 1b, armed second ctrl+c) is a later story that owns this
+    # slot (spec §4.2). Scrolling in CONFIRMING is TASK-011.
+    KeyEvent.QUIT:         _reduce_quit,
+    KeyEvent.CURSOR_LEFT:  _reduce_confirm_toggle,
+    KeyEvent.CURSOR_RIGHT: _reduce_confirm_toggle,
 }
 
 # Top-level registry: one dict per mode.
@@ -770,8 +801,9 @@ _MODE_HANDLERS: dict[Mode, dict[KeyEvent, Callable[[AppState], AppState]]] = {
 }
 
 _MODE_INSERT: dict[Mode, Callable[[AppState, str, Optional[float]], AppState]] = {
-    Mode.BROWSING: _reduce_filter_insert_char,
-    Mode.EDITING:  _reduce_token_insert_char,
+    Mode.BROWSING:   _reduce_filter_insert_char,
+    Mode.EDITING:    _reduce_token_insert_char,
+    Mode.CONFIRMING: _reduce_confirm_insert_char,
 }
 
 
