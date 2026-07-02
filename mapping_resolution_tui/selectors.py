@@ -454,11 +454,16 @@ def select_footer_content(state: "AppState") -> FooterContent:
             hints.append(FooterHint.CLEAR_FILTER)
         return FooterContent(hints=tuple(hints))
     if state.mode == Mode.CONFIRMING:
-        action = (
-            FooterHint.CONFIRM
-            if state.confirmation.choice == ConfirmationChoice.YES
-            else FooterHint.EDIT_MAPPINGS
-        )
+        # The ENTER hint is keyed on (kind, choice), not the entry path (spec
+        # §6.6 / §10.2): choice=NO returns to BROWSING ("edit mappings"),
+        # accept+YES commits every mapping ("submit mappings"), and exit+YES
+        # skips and exits ("skip"). No "confirm" verb is ever produced.
+        if state.confirmation.choice is not ConfirmationChoice.YES:
+            action = FooterHint.EDIT_MAPPINGS
+        elif state.confirmation.kind is ConfirmationKind.EXIT:
+            action = FooterHint.SKIP
+        else:
+            action = FooterHint.SUBMIT_MAPPINGS
         return FooterContent(hints=(FooterHint.SCROLL, FooterHint.PAGE_SCROLL, action))
 
     if state.edit is None:

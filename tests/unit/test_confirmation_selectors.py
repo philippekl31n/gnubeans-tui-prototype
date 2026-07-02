@@ -182,3 +182,42 @@ def test_body_rows_in_browsing_still_respect_the_filter():
     state = reduce(state, "1")
     state = reduce(state, "2")  # BROWSING with filter "12" -> no rows
     assert select_body_rows(state) == []
+
+
+# ── select_footer_content keys the ENTER hint on (kind, choice) (spec §6.6) ──
+
+def test_footer_choice_no_reads_edit_mappings_for_both_kinds():
+    from mapping_resolution_tui.selectors import select_footer_content
+    from mapping_resolution_tui.state import FooterHint
+
+    for kind in (ConfirmationKind.ACCEPT, ConfirmationKind.EXIT):
+        state = _confirming(_resolved_state(), kind, ConfirmationChoice.NO)
+        assert select_footer_content(state).hints == (
+            FooterHint.SCROLL,
+            FooterHint.PAGE_SCROLL,
+            FooterHint.EDIT_MAPPINGS,
+        )
+
+
+def test_footer_accept_yes_reads_submit_mappings():
+    from mapping_resolution_tui.selectors import select_footer_content
+    from mapping_resolution_tui.state import FooterHint
+
+    state = _confirming(_resolved_state(), ConfirmationKind.ACCEPT, ConfirmationChoice.YES)
+    assert select_footer_content(state).hints == (
+        FooterHint.SCROLL,
+        FooterHint.PAGE_SCROLL,
+        FooterHint.SUBMIT_MAPPINGS,
+    )
+
+
+def test_footer_exit_yes_reads_skip():
+    from mapping_resolution_tui.selectors import select_footer_content
+    from mapping_resolution_tui.state import FooterHint
+
+    state = _confirming(_base_state(), ConfirmationKind.EXIT, ConfirmationChoice.YES)
+    assert select_footer_content(state).hints == (
+        FooterHint.SCROLL,
+        FooterHint.PAGE_SCROLL,
+        FooterHint.SKIP,
+    )

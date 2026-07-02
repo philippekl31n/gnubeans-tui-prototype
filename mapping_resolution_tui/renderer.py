@@ -33,16 +33,17 @@ _REV = "\x1b[7m"
 _RESET = "\x1b[0m"
 
 _FOOTER_HINT_DISPLAY: dict[FooterHint, tuple[str, str]] = {
-    FooterHint.PAGE_SCROLL:   ("shift+↑↓", "pageup/dn"),
-    FooterHint.EDIT_SELECTED: ("↵",        "edit selected"),
-    FooterHint.CLEAR_FILTER:  ("esc",      "clear filter"),
-    FooterHint.SCROLL:        ("↑↓",       "scroll"),
-    FooterHint.CONFIRM:       ("↵",        "confirm"),
-    FooterHint.EDIT_MAPPINGS: ("↵",        "edit mappings"),
-    FooterHint.TYPE_TO_EDIT:  ("type",     "to edit"),
-    FooterHint.SELECT_SOURCE: ("↑↓",       "select source"),
-    FooterHint.SUBMIT:        ("↵",        "submit"),
-    FooterHint.CANCEL:        ("esc",      "cancel"),
+    FooterHint.PAGE_SCROLL:     ("shift+↑↓", "pageup/dn"),
+    FooterHint.EDIT_SELECTED:   ("↵",        "edit selected"),
+    FooterHint.CLEAR_FILTER:    ("esc",      "clear filter"),
+    FooterHint.SCROLL:          ("↑↓",       "scroll"),
+    FooterHint.SUBMIT_MAPPINGS: ("↵",        "submit mappings"),
+    FooterHint.SKIP:            ("↵",        "skip"),
+    FooterHint.EDIT_MAPPINGS:   ("↵",        "edit mappings"),
+    FooterHint.TYPE_TO_EDIT:    ("type",     "to edit"),
+    FooterHint.SELECT_SOURCE:   ("↑↓",       "select source"),
+    FooterHint.SUBMIT:          ("↵",        "submit"),
+    FooterHint.CANCEL:          ("esc",      "cancel"),
 }
 
 _ORDINAL_GAP = 2       # blank columns between the ordinal field and the collision marker

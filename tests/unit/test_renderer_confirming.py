@@ -130,13 +130,24 @@ def test_confirming_body_scrolls_with_scroll_offset():
 
 # ── footer and redraw stability (spec §4.1 / §10.2) ───────────────────────────
 
-def test_confirming_footer_follows_the_choice():
+def test_confirming_footer_follows_the_kind_and_choice():
+    # The ENTER hint is keyed on (kind, choice), never the entry path (spec
+    # §6.6 / §10.2): choice=NO reads "edit mappings" for both kinds, accept+YES
+    # reads "submit mappings", exit+YES reads "skip". No "confirm" verb exists.
     no_footer = strip_ansi(_accept_no_lines()[-1])
     assert no_footer == "  ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ edit mappings"
 
     state = _confirming(_resolved_state(), ConfirmationKind.ACCEPT, ConfirmationChoice.YES)
     yes_footer = strip_ansi(render_lines(state)[-1])
-    assert yes_footer == "  ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ confirm"
+    assert yes_footer == "  ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ submit mappings"
+
+    state = _confirming(make_initial_state(make_config(), make_mappings(), frame_height=15), ConfirmationKind.EXIT, ConfirmationChoice.YES)
+    skip_footer = strip_ansi(render_lines(state)[-1])
+    assert skip_footer == "  ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ skip"
+
+    state = _confirming(make_initial_state(make_config(), make_mappings(), frame_height=15), ConfirmationKind.EXIT, ConfirmationChoice.NO)
+    exit_no_footer = strip_ansi(render_lines(state)[-1])
+    assert exit_no_footer == "  ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ edit mappings"
 
 
 def test_render_is_idempotent_and_preserves_the_choice():
