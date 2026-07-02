@@ -28,7 +28,7 @@ def test_root_app_state_has_required_fields():
         selection=SelectionState(selected_ordinal=None, scroll_offset=0),
         edit=None,
         confirmation=ConfirmationState(kind="NONE", choice="NO", second_ctrl_c_armed=False),
-        terminal=TerminalState(height=24),
+        terminal=TerminalState(height=24, width=80),
         result=ResultState(status="RUNNING")
     )
     

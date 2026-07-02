@@ -16,17 +16,91 @@ and rendered output unchanged (FR30). The ``keys`` and ``render`` seams on
 """
 
 import os
+import shutil
 import signal
 import sys
+import threading
 from typing import Callable, Iterable, Optional
 
 import blessed
 
+from mapping_resolution_tui.actions import UpdateTerminalSize
 from mapping_resolution_tui.config import QUIT_KEY
 from mapping_resolution_tui.events import InputEvent, KeyEvent
 from mapping_resolution_tui.reducer import make_initial_state, reduce
-from mapping_resolution_tui.renderer import render_lines
+from mapping_resolution_tui.renderer import RenderedFrame, render_lines
 from mapping_resolution_tui.state import AppConfig, Mapping
+
+# Thread-safe pending-SIGWINCH flag (spec §6.2, FR37). The signal handler runs
+# on the main thread between bytecode ops and must avoid signal-unsafe work
+# (notably I/O), so it only sets this flag; the event loop checks it each
+# iteration and does the actual size read + re-render. resize_demo.py models
+# the same deferred-flag pattern.
+_resize_pending = threading.Event()
+
+# How long the live key reader blocks before returning an empty read, letting
+# the loop poll the pending-SIGWINCH flag between keypresses.
+_KEY_POLL_INTERVAL = 0.2
+
+
+def _sigwinch_handler(signum, frame) -> None:
+    """SIGWINCH handler: mark a resize pending and return immediately.
+
+    Deliberately does no I/O or rendering — those are signal-unsafe — so the
+    handler is safe to run at any point the interpreter interrupts (FR37).
+    """
+    _resize_pending.set()
+
+
+def _read_terminal_size() -> tuple[int, int]:
+    """Return the terminal's current ``(columns, rows)``.
+
+    The single terminal-dimension I/O seam: the initial frame and every
+    SIGWINCH-triggered resize both read through it, so tests stub it to drive
+    resizes deterministically without a real TTY.
+    """
+    size = shutil.get_terminal_size(fallback=(75, 15))
+    return size.columns, size.lines
+
+
+def _install_sigwinch_handler() -> Callable[[], None]:
+    """Install :func:`_sigwinch_handler` for SIGWINCH; return a restore callback.
+
+    ``signal.signal`` may only be called from the main thread and SIGWINCH only
+    exists on POSIX, so installation is skipped (and the restore callback is a
+    no-op) when either precondition fails — the loop still runs headlessly
+    everywhere. The previous handler is restored when the loop exits so a run
+    leaves the process signal disposition untouched.
+    """
+    if not hasattr(signal, "SIGWINCH"):
+        return lambda: None
+    if threading.current_thread() is not threading.main_thread():
+        return lambda: None
+    previous = signal.signal(signal.SIGWINCH, _sigwinch_handler)
+    return lambda: signal.signal(signal.SIGWINCH, previous)
+
+
+def _service_resize(
+    state,
+    render: Callable[[RenderedFrame], None],
+):
+    """Apply a pending SIGWINCH before the next key, re-rendering if it changed.
+
+    Reads the new ``(columns, rows)``, dispatches an :class:`UpdateTerminalSize`
+    action, and repaints through the shared render path. A no-op (returning the
+    same state, no repaint) when no signal is pending or the reported size is
+    unchanged, so an incidental identical-size SIGWINCH produces no frame.
+    """
+    if not _resize_pending.is_set():
+        return state
+    _resize_pending.clear()
+    columns, rows = _read_terminal_size()
+    new_state = reduce(state, UpdateTerminalSize(columns=columns, rows=rows))
+    if new_state is state:
+        return state
+    render(render_lines(new_state))
+    return new_state
+
 
 # blessed Keystroke.name → KeyEvent (multi-byte named escape sequences).
 _NAME_EVENTS: dict[str, KeyEvent] = {
@@ -153,50 +227,68 @@ def run(
     if render is None:
         render = _InlineRenderer()
 
-    state = make_initial_state(config, mappings)
-    render(render_lines(state))
-
-    for key in keys:
-        event = key_to_event(key)
-        if event is None:
-            # FR30: unsupported keys mutate nothing and trigger no redraw.
-            continue
-
-        if event is KeyEvent.REDRAW:
-            # ctrl+l re-renders the current state without mutating it; this is
-            # the one repaint that is never skipped by the no-op check below.
-            render(render_lines(state))
-            continue
-
-        new_state = reduce(state, event)
-        status = new_state.result.status
-        if status == "ACCEPTED":
-            # Accept confirmation with choice=YES committed every mapping:
-            # paint the §6.7 terminal result frame, then exit returning the
-            # resolved mappings (the corrected commodity import).
-            render(render_lines(new_state))
-            return new_state.mappings
-        if status == "SIGINT":
-            # The second ctrl+c in the exit confirmation force-exits: re-raise
-            # the interrupt so the process terminates conventionally (exit code
-            # 130, spec §4.2/§6.7), bypassing the y/N choice entirely. No
-            # terminal frame is painted.
-            _send_sigint()
-            return None
-        if status != "RUNNING":
-            # SKIPPED: the reviewer confirmed the exit prompt on YES — a clean
-            # skip that adds no commodities. The run ends with no mappings and
-            # no §6.7 result frame.
-            return None
-
-        if new_state is state:
-            # A recognised event that changed nothing (the reducer returned the
-            # same object) needs no repaint — state and output stay unchanged.
-            continue
-        state = new_state
+    # Read the terminal size once through the same seam a resize uses, so the
+    # first frame and every SIGWINCH re-render agree on where the dimensions
+    # come from. Clear any stale pending flag left by a prior run.
+    columns, rows = _read_terminal_size()
+    _resize_pending.clear()
+    restore_sigwinch = _install_sigwinch_handler()
+    try:
+        state = make_initial_state(
+            config, mappings, frame_height=rows, frame_width=columns
+        )
         render(render_lines(state))
 
-    return state.mappings
+        for key in keys:
+            # Service a SIGWINCH that arrived while we were blocked on input
+            # before handling the key, so the frame is already at the new
+            # dimensions. Resize and key dispatch share the one render path.
+            state = _service_resize(state, render)
+
+            event = key_to_event(key)
+            if event is None:
+                # FR30: unsupported keys mutate nothing and trigger no redraw.
+                continue
+
+            if event is KeyEvent.REDRAW:
+                # ctrl+l re-renders the current state without mutating it; this
+                # is the one repaint that is never skipped by the no-op check
+                # below.
+                render(render_lines(state))
+                continue
+
+            new_state = reduce(state, event)
+            status = new_state.result.status
+            if status == "ACCEPTED":
+                # Accept confirmation with choice=YES committed every mapping:
+                # paint the §6.7 terminal result frame, then exit returning the
+                # resolved mappings (the corrected commodity import).
+                render(render_lines(new_state))
+                return new_state.mappings
+            if status == "SIGINT":
+                # The second ctrl+c in the exit confirmation force-exits:
+                # re-raise the interrupt so the process terminates
+                # conventionally (exit code 130, spec §4.2/§6.7), bypassing the
+                # y/N choice entirely. No terminal frame is painted.
+                _send_sigint()
+                return None
+            if status != "RUNNING":
+                # SKIPPED: the reviewer confirmed the exit prompt on YES — a
+                # clean skip that adds no commodities. The run ends with no
+                # mappings and no §6.7 result frame.
+                return None
+
+            if new_state is state:
+                # A recognised event that changed nothing (the reducer returned
+                # the same object) needs no repaint — state and output stay
+                # unchanged.
+                continue
+            state = new_state
+            render(render_lines(state))
+
+        return state.mappings
+    finally:
+        restore_sigwinch()
 
 
 class _InlineRenderer:
@@ -208,8 +300,10 @@ class _InlineRenderer:
     any leftover lines from a taller previous frame are cleared below.
     """
 
-    def __init__(self) -> None:
-        self._term = blessed.Terminal()
+    def __init__(self, term: Optional["blessed.Terminal"] = None) -> None:
+        # ``term`` is injectable so a pyte-backed test can force real cursor /
+        # clear capabilities without a live TTY (spec §6.2).
+        self._term = term if term is not None else blessed.Terminal()
         self._prev_line_count = 0
 
     def __call__(self, lines: list[str]) -> None:
@@ -229,6 +323,11 @@ def _terminal_keys() -> Iterable:
     chords (including ctrl+c as the quit key) as keystrokes rather than signals,
     and avoids the alternate screen buffer. Each keystroke is yielded straight to
     :func:`key_to_event`, which performs all normalisation.
+
+    ``inkey`` reads with a short timeout and an empty read is yielded as ``""``
+    (a no-op for :func:`key_to_event`) rather than swallowed, so the loop wakes
+    periodically to service a pending SIGWINCH even when no key is pressed
+    (spec §6.2, FR37).
     """
     term = blessed.Terminal()
     if not term.is_a_tty:  # nothing interactive to read from
@@ -236,7 +335,4 @@ def _terminal_keys() -> Iterable:
 
     with term.raw(), term.hidden_cursor():
         while True:
-            key = term.inkey()
-            if not key:  # timeout / empty read
-                continue
-            yield key
+            yield term.inkey(timeout=_KEY_POLL_INTERVAL)
