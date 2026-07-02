@@ -33,10 +33,9 @@ tasks:
       case for Mode.CONFIRMING. Prerequisite for all Epic 4 stories.
     acceptance_criteria:
       - "select_confirmation_prompt(state) returns a dataclass with: prompt
-        text ('Accept all?' or 'Skip adding commodities?'), yes/no indicator
-        strings with reverse-video on the active choice, and a flag for
-        whether YES is currently active — driven from confirmation.kind and
-        confirmation.choice"
+        text ('Accept all?' or 'Skip adding commodities?'), raw 'Y'/'y' and 'N'/'n'
+        indicator strings, and a flag for whether YES is currently active. The
+        renderer applies reverse-video on the active choice character."
       - "select_confirmation_header(state) returns the header line text for
         CONFIRMING mode as specified in spec section 6.4"
       - "render_lines() handles Mode.CONFIRMING: full table at current scroll
