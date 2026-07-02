@@ -31,6 +31,7 @@ class KeyEvent(Enum):
     BACKWARD_KILL_WORD = auto()
     REDRAW = auto()
     TAB = auto()
+    SUBMIT = auto()
     PAGE_UP = auto()
     PAGE_DOWN = auto()
     SELECTION_UP = auto()

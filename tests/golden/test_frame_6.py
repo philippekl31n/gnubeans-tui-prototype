@@ -8,11 +8,10 @@ super-dim rows; the header omits the collision count and ends in "ctrl+c
 cancel"; the prompt is "Accept all? [y/N]" with the active NO indicator in
 reverse-video (spec §6.4–6.6, storyboard frame 6).
 
-The footer follows the choice-driven rule ("edit mappings" while choice=NO);
-the storyboard's schematic "↵ confirm" footer for frame 6 is the documented
-storyboard-specific exception reconciled by the accept-flow story (TASK-010).
-Geometry uses pyte ``screen.display``; style uses pyte cell attributes and raw
-ANSI inspection for SGR 2 (dim).
+The footer follows the choice-driven rule, so with choice=NO it renders the
+"↵ edit mappings" hint — identical to frame 7a and never the obsolete
+"↵ confirm" (spec §6.6 / §10.2). Geometry uses pyte ``screen.display``; style
+uses pyte cell attributes and raw ANSI inspection for SGR 2 (dim).
 """
 from pathlib import Path
 

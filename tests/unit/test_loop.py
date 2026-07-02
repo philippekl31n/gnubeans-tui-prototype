@@ -29,7 +29,7 @@ class Key(str):
 # Raw control bytes / sequences, named for readability.
 CTRL_A, CTRL_B, CTRL_D, CTRL_E, CTRL_F = "\x01", "\x02", "\x04", "\x05", "\x06"
 CTRL_H, CTRL_K, CTRL_L, CTRL_U, CTRL_W = "\x08", "\x0b", "\x0c", "\x15", "\x17"
-CTRL_C, DEL, ESC, TAB = "\x03", "\x7f", "\x1b", "\t"
+CTRL_C, CTRL_S, DEL, ESC, TAB = "\x03", "\x13", "\x7f", "\x1b", "\t"
 META_D, META_BS = "\x1bd", "\x1b\x7f"
 # No-op readline families (abort, quoted-insert, undo, transpose, yank, search).
 CTRL_G, CTRL_Q, CTRL_V, CTRL_R, CTRL_T, CTRL_Y, CTRL_US = (
@@ -101,6 +101,8 @@ def test_key_to_event_maps_ctrl_c_and_readable_token_to_quit():
         # Tab / ctrl+i -> bang autocomplete (the reducer applies the ghost gate)
         (Key(name="KEY_TAB"), KeyEvent.TAB),
         (TAB,                 KeyEvent.TAB),
+        # ctrl+s -> submit (the reducer gates on zero unresolved collisions)
+        (CTRL_S,              KeyEvent.SUBMIT),
         # printable insertion (incl. a literal bang) — returned as bare str
         ("a", "a"),
         ("3", "3"),
@@ -279,3 +281,51 @@ def test_quit_does_not_render_a_terminal_frame():
     # so the last rendered frame is the state before ctrl+c.
     _, frames = run_keys(["3", CTRL_C])
     assert len(frames) == 2  # initial + the "3" insert only
+
+
+# ── ctrl+s accept confirmation flow (TASK-010, spec §4.2 / §6.7) ─────────────
+
+def test_ctrl_s_with_open_collisions_produces_no_new_frame():
+    # The fresh storyboard has one unresolved collision, so ctrl+s is a no-op:
+    # no CONFIRMING transition and no repaint.
+    _, frames = run_keys([CTRL_S])
+    assert len(frames) == 1  # only the initial frame
+
+
+def test_ctrl_s_opens_the_accept_confirmation_once_collisions_are_zero():
+    # Resolve the last collision via an edit (which auto-enters CONFIRMING),
+    # return to BROWSING, then drive ctrl+s as the raw \x13 byte a headless
+    # driver injects (a live TTY may swallow it via XOFF flow control).
+    _, frames = run_keys(
+        [Key(name="KEY_DOWN"), Key(name="KEY_DOWN"), Key(name="KEY_ENTER"),
+         "A", "T", "T", Key(name="KEY_ENTER"),  # -> CONFIRMING (auto)
+         Key(name="KEY_ESCAPE"),                # -> BROWSING
+         CTRL_S]                                # ctrl+s re-enters CONFIRMING
+    )
+    assert any("Accept all?" in line for line in frames[-1])
+
+
+def test_accept_flow_renders_terminal_frame_and_returns_mappings():
+    # ctrl+s / auto-entry -> y -> Enter commits every mapping: the loop paints
+    # the §6.7 terminal result frame and returns the resolved mappings.
+    result, frames = run_keys(
+        [Key(name="KEY_DOWN"), Key(name="KEY_DOWN"), Key(name="KEY_ENTER"),
+         "A", "T", "T", Key(name="KEY_ENTER"),  # -> CONFIRMING (auto)
+         "y", Key(name="KEY_ENTER")]            # accept
+    )
+    assert result is not None  # the accepted mappings, not a cancel
+    assert frames[-1] == ["11 commodities created.", "❯"]
+    assert next(m for m in result if m.ordinal == 3).target_value == "ATT"
+
+
+def test_accept_choice_no_returns_to_browsing_without_ending_the_run():
+    # Enter on the default NO choice returns to BROWSING; the trailing "1" then
+    # reaches the filter, proving the run kept going.
+    result, frames = run_keys(
+        [Key(name="KEY_DOWN"), Key(name="KEY_DOWN"), Key(name="KEY_ENTER"),
+         "A", "T", "T", Key(name="KEY_ENTER"),  # -> CONFIRMING (auto)
+         Key(name="KEY_ENTER"),                 # NO -> BROWSING
+         "1"]
+    )
+    assert result is not None
+    assert "Filter: 1" in filter_line(frames[-1])
