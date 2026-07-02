@@ -24,7 +24,7 @@ from mapping_resolution_tui.config import QUIT_KEY
 from mapping_resolution_tui.events import InputEvent, KeyEvent
 from mapping_resolution_tui.reducer import make_initial_state, reduce
 from mapping_resolution_tui.renderer import render_lines
-from mapping_resolution_tui.state import AppConfig, Mapping
+from mapping_resolution_tui.state import AppConfig, Mapping, Mode
 
 # Raw ctrl+c byte. The configured QUIT_KEY is the readable token "ctrl+c"; a live
 # blessed keystroke delivers it as this control byte under term.raw().
@@ -143,6 +143,14 @@ def run(
 
     for key in keys:
         if is_quit_key(key):
+            if state.mode is Mode.EDITING:
+                # ctrl+c in EDITING cancels the edit exactly like Esc — the
+                # buffer is discarded and the pre-edit browsing context is
+                # restored (spec §4.2 / FR16). Only ctrl+c outside an edit
+                # quits the review.
+                state = reduce(state, KeyEvent.ESCAPE)
+                render(render_lines(state))
+                continue
             return None
 
         event = key_to_event(key)

@@ -230,3 +230,29 @@ def test_quit_key_exits_cleanly_with_none():
     assert result is None
     # the trailing "b" after the quit key is never processed
     assert len(frames) == 2  # initial + the "a" insert
+
+
+# ── ctrl+c during EDITING cancels the edit (TASK-008, spec §4.2 / FR16) ──────
+
+def test_ctrl_c_during_editing_cancels_the_edit_instead_of_quitting():
+    # Enter edit on the selected row, type into the buffer, then ctrl+c: the
+    # edit is discarded like Esc and the loop keeps consuming input — the
+    # trailing "3" still reaches the filter and the run ends cleanly.
+    result, frames = run_keys([Key(name="KEY_ENTER"), "X", CTRL_C, "3"])
+
+    assert result is not None  # clean end-of-input exit, not a quit
+    assert "Filter: 3" in filter_line(frames[-1])
+    assert all(m.target_value is None for m in result)  # buffer discarded
+
+
+def test_ctrl_c_cancel_rerenders_the_restored_browsing_frame():
+    _, frames = run_keys([Key(name="KEY_ENTER"), CTRL_C])
+    # initial + edit entry + cancel repaint
+    assert len(frames) == 3
+    assert "Filter:" in filter_line(frames[-1])  # back to the browsing prompt
+
+
+def test_ctrl_c_outside_an_edit_still_quits():
+    result, frames = run_keys(["3", CTRL_C, "4"])
+    assert result is None
+    assert "Filter: 3" in filter_line(frames[-1])  # the trailing "4" never ran
