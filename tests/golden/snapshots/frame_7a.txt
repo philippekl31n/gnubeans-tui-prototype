@@ -1,0 +1,15 @@
+❯ Reviewing 11 commodity mappings. ctrl+c cancel
+  Accept all? [y/N]
+
+   #   Beancount Token            GnuCash Source
+   2   AT-T                       cmdty_id: "AT&T" → "AT-T"
+   3   ATT                        cmdty_id: "AT-T"
+   4   C100-F                     cmdty_id: "100-F" → "C100-F"
+   5   GOOGL                      cmdty_id: "GOOGL"
+   6   MSFT                       cmdty_id: "MSFT"
+   7   NVDA                       cmdty_id: "NVDA"
+   8   QQQ                        cmdty_id: "QQQ"
+   9   SPY                        cmdty_id: "SPY"
+  10   VTSAX                      cmdty_id: "VTSAX"
+
+  ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ edit mappings

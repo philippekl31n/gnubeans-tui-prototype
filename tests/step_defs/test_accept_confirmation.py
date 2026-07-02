@@ -94,3 +94,16 @@ def filter_raw_is(ctx, expected):
 @then(parsers.parse("the selected ordinal should be {ordinal:d}"))
 def selected_ordinal_is(ctx, ordinal):
     assert ctx.state.selection.selected_ordinal == ordinal
+
+
+@then(parsers.parse("the scroll offset should be {offset:d}"))
+def scroll_offset_is(ctx, offset):
+    assert ctx.state.selection.scroll_offset == offset
+
+
+@then(parsers.parse('the confirming body should show ordinals "{ordinals}"'))
+def confirming_body_shows_ordinals(ctx, ordinals):
+    from mapping_resolution_tui.selectors import select_body_rows
+
+    expected = [int(part) for part in ordinals.split(",")]
+    assert [m.ordinal for m in select_body_rows(ctx.state)] == expected

@@ -411,6 +411,38 @@ def frame_6_screen(frame_6_lines):
 
 
 @pytest.fixture
+def frame_7a_lines():
+    """Frame 7a: one down-arrow scroll of the accept-confirmation table.
+
+    Continues frame 6 with a single ``↓``. CONFIRMING has no row cursor, so
+    the arrow scrolls the body window only: ``scrollOffset`` advances from 0
+    to 1 and the body shows ordinals 2..10 at normal brightness, while
+    ``selectedOrdinal`` is unaffected (spec §8.4, §10.1 frame 7a). The
+    "Accept all? [y/N]" prompt and the "↵ edit mappings" footer are unchanged
+    from frame 6.
+    """
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.events import KeyEvent
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    state = reduce(state, KeyEvent.TAB)
+    state = reduce(state, KeyEvent.SELECTION_DOWN)
+    state = reduce(state, KeyEvent.ENTER)
+    for char in "ATT":
+        state = reduce(state, char)
+    state = reduce(state, KeyEvent.ENTER)           # frame 6: CONFIRMING, scroll 0
+    state = reduce(state, KeyEvent.SELECTION_DOWN)  # ↓ scrolls the window by one
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_7a_screen(frame_7a_lines):
+    return make_pyte_screen(frame_7a_lines)
+
+
+@pytest.fixture
 def frame_14_lines():
     """Frame 14: ctrl+s from the frame 13 no-match filter re-enters the accept
     confirmation.
