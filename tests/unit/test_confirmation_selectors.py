@@ -10,7 +10,10 @@ import pytest
 
 from tests.fixtures.storyboard import make_config, make_mappings
 from mapping_resolution_tui.reducer import make_initial_state
-from mapping_resolution_tui.selectors import select_confirmation_prompt
+from mapping_resolution_tui.selectors import (
+    select_confirmation_header,
+    select_confirmation_prompt,
+)
 from mapping_resolution_tui.state import (
     ConfirmationChoice,
     ConfirmationKind,
@@ -95,3 +98,60 @@ def test_prompt_is_pure_and_leaves_state_unchanged():
     select_confirmation_prompt(state)
     assert state is before
     assert state.confirmation.choice is ConfirmationChoice.YES
+
+
+# ── select_confirmation_header ────────────────────────────────────────────────
+
+def test_header_accept_omits_collision_clause():
+    state = _confirming(_resolved_state(), ConfirmationKind.ACCEPT, ConfirmationChoice.NO)
+    assert (
+        select_confirmation_header(state)
+        == "❯ Reviewing 11 commodity mappings. ctrl+c cancel"
+    )
+
+
+def test_header_exit_keeps_collision_count_and_exit_shortcut():
+    state = _confirming(_base_state(), ConfirmationKind.EXIT, ConfirmationChoice.NO)
+    assert (
+        select_confirmation_header(state)
+        == "❯ Reviewing 11 commodity mappings. 1 unresolved collision. ctrl+c exit"
+    )
+
+
+def test_header_exit_with_zero_collisions_omits_collision_clause():
+    state = _confirming(_resolved_state(), ConfirmationKind.EXIT, ConfirmationChoice.NO)
+    assert (
+        select_confirmation_header(state)
+        == "❯ Reviewing 11 commodity mappings. ctrl+c exit"
+    )
+
+
+def test_header_pluralises_multiple_collisions():
+    # Point ordinal 1 (APPLE) at MSFT so a second collision group appears
+    # alongside the existing AT-T group: two unresolved collisions.
+    state = _base_state()
+    mappings = [
+        replace(m, target_value="MSFT") if m.ordinal == 1 else m
+        for m in state.mappings
+    ]
+    state = _confirming(
+        replace(state, mappings=mappings),
+        ConfirmationKind.EXIT,
+        ConfirmationChoice.NO,
+    )
+    assert (
+        select_confirmation_header(state)
+        == "❯ Reviewing 11 commodity mappings. 2 unresolved collisions. ctrl+c exit"
+    )
+
+
+def test_header_returns_plain_text_without_ansi():
+    state = _confirming(_resolved_state(), ConfirmationKind.ACCEPT, ConfirmationChoice.NO)
+    assert "\x1b[" not in select_confirmation_header(state)
+
+
+def test_header_is_pure_and_leaves_state_unchanged():
+    state = _confirming(_base_state(), ConfirmationKind.EXIT, ConfirmationChoice.NO)
+    before = state
+    select_confirmation_header(state)
+    assert state is before

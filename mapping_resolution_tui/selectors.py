@@ -394,6 +394,33 @@ def select_confirmation_prompt(state: "AppState") -> ConfirmationPromptContent:
     )
 
 
+def select_confirmation_header(state: "AppState") -> str:
+    """Header line text for CONFIRMING mode (spec §6.4).
+
+    Always opens with the ``❯ Reviewing …`` review clause and appends the
+    unresolved-collision clause only when collisions remain (frame 1b keeps its
+    count, while an accept confirmation — entered only at zero collisions —
+    omits it). The trailing shortcut is ``ctrl+c exit`` for an exit confirmation
+    and ``ctrl+c cancel`` otherwise. Returned as plain text; the renderer
+    applies the bold glyph and dim shortcut styling.
+    """
+    config = state.config
+    header = (
+        f"❯ Reviewing {len(state.mappings)} {config.entity_name_singular} "
+        f"{config.mapping_noun_plural}."
+    )
+    count = select_unresolved_collision_count(state.mappings)
+    if count > 0:
+        plural = "" if count == 1 else "s"
+        header += f" {count} unresolved collision{plural}."
+    shortcut = (
+        "ctrl+c exit"
+        if state.confirmation.kind is ConfirmationKind.EXIT
+        else "ctrl+c cancel"
+    )
+    return f"{header} {shortcut}"
+
+
 def select_edit_is_submittable(state: "AppState", edit: "EditState") -> bool:
     """SUBMIT is offered only for a valid, non-colliding, actually-changed edit.
 
