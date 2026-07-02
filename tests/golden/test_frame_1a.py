@@ -7,6 +7,8 @@ pyte does not track.
 from pathlib import Path
 import pytest
 
+from mapping_resolution_tui.renderer import strip_ansi
+
 
 @pytest.fixture
 def display(frame_1a_screen):
@@ -74,6 +76,51 @@ def test_filter_hint_first_char_is_reverse_video(frame_1a_screen):
 def test_header_shortcut_uses_dim_for_ctrl_c_cancel(frame_1a_lines):
     # pyte does not track SGR 2 (dim/faint), so this inspects raw ANSI output directly.
     assert "\x1b[2m" in frame_1a_lines[0]
+
+
+# ── AC6 (FR36): inspectable style spans ───────────────────────────────────────
+# render_lines() returns printable lines with a parallel .spans structure: one
+# list of (start_col, end_col, style) tuples per line, measured in the
+# ANSI-stripped display columns, so bold/dim/reverse can be asserted without
+# parsing raw escape codes and without those codes affecting display width.
+
+
+def _span_text(line: str, span):
+    start, end, _style = span
+    return strip_ansi(line)[start:end]
+
+
+def test_render_lines_returns_parallel_style_spans(frame_1a_lines):
+    # One span list per printable line, and the spans never widen the line:
+    # every span stays within the stripped line's display width.
+    assert len(frame_1a_lines.spans) == len(frame_1a_lines)
+    for line, spans in zip(frame_1a_lines, frame_1a_lines.spans):
+        width = len(strip_ansi(line))
+        for start, end, style in spans:
+            assert 0 <= start < end <= width
+            assert style in {"bold", "dim", "reverse"}
+
+
+def test_header_glyph_bold_span(frame_1a_lines):
+    # The leading ❯ glyph is a one-column bold span at column 0.
+    assert (0, 1, "bold") in frame_1a_lines.spans[0]
+
+
+def test_header_shortcut_dim_span(frame_1a_lines):
+    # The trailing keyboard shortcut is a dim span covering exactly "ctrl+c cancel".
+    dim_spans = [s for s in frame_1a_lines.spans[0] if s[2] == "dim"]
+    assert [_span_text(frame_1a_lines[0], s) for s in dim_spans] == ["ctrl+c cancel"]
+
+
+def test_filter_ghost_reverse_and_dim_spans(frame_1a_lines):
+    # The empty-filter ghost renders its first character reverse-video and the
+    # remainder dim; "  Filter: " is 10 columns, so the caret is at column 10.
+    spans = frame_1a_lines.spans[1]
+    reverse = [s for s in spans if s[2] == "reverse"]
+    dim = [s for s in spans if s[2] == "dim"]
+    assert reverse == [(10, 11, "reverse")]
+    assert [_span_text(frame_1a_lines[1], s) for s in reverse] == ["T"]
+    assert [_span_text(frame_1a_lines[1], s) for s in dim] == ["ab to view collisions"]
 
 
 # ── AC7: snapshot ─────────────────────────────────────────────────────────────

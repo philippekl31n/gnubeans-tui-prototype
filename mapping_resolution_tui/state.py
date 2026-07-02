@@ -96,6 +96,7 @@ class ConfirmationState:
 @dataclass(frozen=True)
 class TerminalState:
     height: int
+    width: int
 
 @dataclass(frozen=True)
 class ResultState:

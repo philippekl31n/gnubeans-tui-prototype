@@ -32,6 +32,72 @@ _DIM = "\x1b[2m"
 _REV = "\x1b[7m"
 _RESET = "\x1b[0m"
 
+# FR36 style-span testability: a span is (start_col, end_col, style) over the
+# ANSI-stripped display columns of a single line. Styles are the three the
+# renderer emits — "bold", "dim", and "reverse" (reverse-video).
+StyleSpan = tuple[int, int, str]
+
+_SGR_RE = re.compile(r"\x1b\[([0-9;]*)m")
+_SGR_STYLES: dict[int, str] = {1: "bold", 2: "dim", 7: "reverse"}
+
+
+class RenderedFrame(list):
+    """The list of printable ANSI frame lines plus parallel style-span metadata.
+
+    It *is* the ``list[str]`` every caller already expects — iteration,
+    indexing, and equality against a plain list all behave identically — while
+    ``spans[i]`` exposes the :data:`StyleSpan` tuples for line ``i`` so tests can
+    assert bold / dim / reverse-video styling by display column without parsing
+    raw escape codes (FR36). Spans are measured in the ANSI-stripped line's
+    display columns, so the zero-width escape sequences never affect
+    display-width calculations.
+    """
+
+    def __init__(self, lines: list[str], spans: list[list[StyleSpan]]) -> None:
+        super().__init__(lines)
+        self.spans = spans
+
+
+def _extract_style_spans(line: str) -> list[StyleSpan]:
+    """Parse ``line``'s SGR codes into ``(start_col, end_col, style)`` spans.
+
+    Walks the line tracking the display column (one per printable code point —
+    every named glyph is width 1 per FR33 — and zero for escape sequences) and
+    the set of active styles, emitting a span for each contiguous run a style
+    stays on. ``\\x1b[0m`` closes every open span; the styles are otherwise
+    additive, so a reverse+bold choice yields one span each.
+    """
+    spans: list[StyleSpan] = []
+    open_at: dict[str, int] = {}
+    col = 0
+    i = 0
+    n = len(line)
+    while i < n:
+        match = _SGR_RE.match(line, i)
+        if match:
+            codes = [int(p) for p in match.group(1).split(";") if p != ""] or [0]
+            for code in codes:
+                if code == 0:
+                    for style, start in open_at.items():
+                        spans.append((start, col, style))
+                    open_at = {}
+                elif code in _SGR_STYLES:
+                    open_at.setdefault(_SGR_STYLES[code], col)
+            i = match.end()
+        else:
+            col += 1
+            i += 1
+    for style, start in open_at.items():
+        spans.append((start, col, style))
+    spans.sort(key=lambda span: (span[0], span[2]))
+    return spans
+
+
+def _rendered_frame(lines: list[str]) -> RenderedFrame:
+    """Pair ``lines`` with the style spans parsed from each (FR36)."""
+    return RenderedFrame(lines, [_extract_style_spans(line) for line in lines])
+
+
 _FOOTER_HINT_DISPLAY: dict[FooterHint, tuple[str, str]] = {
     FooterHint.PAGE_SCROLL:     ("shift+↑↓", "pageup/dn"),
     FooterHint.EDIT_SELECTED:   ("↵",        "edit selected"),
@@ -257,7 +323,7 @@ def _editing_body_rows(
     return before + [edited] + after, edit_content
 
 
-def render_lines(state: AppState) -> list[str]:
+def render_lines(state: AppState) -> RenderedFrame:
     config = state.config
     mappings = state.mappings
     height = state.terminal.height
@@ -265,7 +331,7 @@ def render_lines(state: AppState) -> list[str]:
     # Terminal accepted-result frame (spec §6.7, storyboard frame 15): the
     # created message over a bare prompt glyph, exactly two rows tall.
     if state.result.status == "ACCEPTED":
-        return [config.created_message(len(mappings)), "❯"]
+        return _rendered_frame([config.created_message(len(mappings)), "❯"])
 
     unresolved_count = select_unresolved_collision_count(mappings)
     collision_ordinals = select_render_collision_ordinals(state)
@@ -420,4 +486,4 @@ def render_lines(state: AppState) -> list[str]:
 
     # ── assemble ──────────────────────────────────────────────────────────────
     lines = [header, prompt, "", table_header, *body_lines, "", footer]
-    return lines
+    return _rendered_frame(lines)

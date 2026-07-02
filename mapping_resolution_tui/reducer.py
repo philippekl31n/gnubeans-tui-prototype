@@ -7,6 +7,7 @@ from typing import Callable, Optional
 import shutil
 import time
 
+from mapping_resolution_tui.actions import UpdateTerminalSize
 from mapping_resolution_tui.events import InputEvent, KeyEvent
 from mapping_resolution_tui.selectors import (
     parse_filter,
@@ -49,9 +50,14 @@ def make_initial_state(
     config: AppConfig,
     mappings: list[Mapping],
     frame_height: Optional[int] = None,
+    frame_width: Optional[int] = None,
 ) -> AppState:
-    if frame_height is None:
-        frame_height = shutil.get_terminal_size(fallback=(75, 15)).lines
+    if frame_height is None or frame_width is None:
+        size = shutil.get_terminal_size(fallback=(75, 15))
+        if frame_height is None:
+            frame_height = size.lines
+        if frame_width is None:
+            frame_width = size.columns
 
     sorted_mappings = list(sort_mappings_for_initial_display(mappings))
 
@@ -80,7 +86,7 @@ def make_initial_state(
             choice=ConfirmationChoice.NO,
             second_ctrl_c_armed=False,
         ),
-        terminal=TerminalState(height=frame_height),
+        terminal=TerminalState(height=frame_height, width=frame_width),
         result=ResultState(status="RUNNING"),
     )
 
@@ -507,6 +513,23 @@ def _reduce_enter_edit(state: AppState) -> AppState:
 
 def _reduce_redraw(state: AppState) -> AppState:
     return state  # ctrl+l re-renders only; never mutates state (spec S5.1)
+
+
+def _reduce_update_terminal_size(state: AppState, action: UpdateTerminalSize) -> AppState:
+    """Update ``TerminalState`` from a SIGWINCH resize (spec §6.2, FR37).
+
+    Both ``width`` and ``height`` are captured — width feeds later Unicode
+    display-width layout (FR33) and column clamping (FR34), height drives body
+    capacity (§8.1). A resize that reports the same dimensions preserves state
+    identity so the loop skips the repaint.
+    """
+    terminal = state.terminal
+    if terminal.width == action.columns and terminal.height == action.rows:
+        return state
+    return replace(
+        state,
+        terminal=replace(terminal, width=action.columns, height=action.rows),
+    )
 
 
 # ── BROWSING table/navigation handlers ───────────────────────────────────────
@@ -958,15 +981,23 @@ _MODE_INSERT: dict[Mode, Callable[[AppState, str, Optional[float]], AppState]] =
 }
 
 
-def reduce(state: AppState, event: InputEvent, now: Optional[float] = None) -> AppState:
+def reduce(
+    state: AppState,
+    event: InputEvent | UpdateTerminalSize,
+    now: Optional[float] = None,
+) -> AppState:
     """Pure dispatch: route ``event`` to its handler, returning new state.
 
-    Dispatch is mode-aware via ``_MODE_HANDLERS`` and ``_MODE_INSERT``.
-    An unrecognised event (no handler in the active mode's table) is a no-op —
-    the same ``state`` object is returned unchanged (FR30). ``now`` injects the
-    clock used by the EDITING over-limit flash (FR20); it defaults to
-    wall-clock time and is unused outside that one path.
+    Dispatch is mode-aware via ``_MODE_HANDLERS`` and ``_MODE_INSERT``. A
+    mode-independent :class:`UpdateTerminalSize` resize is handled before the
+    mode tables (spec §6.2, FR37). An unrecognised event (no handler in the
+    active mode's table) is a no-op — the same ``state`` object is returned
+    unchanged (FR30). ``now`` injects the clock used by the EDITING over-limit
+    flash (FR20); it defaults to wall-clock time and is unused outside that one
+    path.
     """
+    if isinstance(event, UpdateTerminalSize):
+        return _reduce_update_terminal_size(state, event)
     if isinstance(event, str):
         insert = _MODE_INSERT.get(state.mode)
         return insert(state, event, now) if insert else state

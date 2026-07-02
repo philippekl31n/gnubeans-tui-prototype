@@ -376,3 +376,130 @@ def test_ctrl_s_reentry_accept_flow_returns_the_resolved_mappings():
     assert result is not None
     assert next(m for m in result if m.ordinal == 3).target_value == "ATT"
     assert frames[-1] == ["11 commodities created.", "❯"]
+
+
+# ── SIGWINCH resize wiring (TASK-013, spec §6.2, FR32/FR37) ──────────────────
+
+
+@pytest.fixture
+def clear_resize_flag():
+    """Keep the module-level pending-SIGWINCH flag clear around each test."""
+    loop._resize_pending.clear()
+    yield
+    loop._resize_pending.clear()
+
+
+def test_sigwinch_handler_only_sets_the_pending_flag(clear_resize_flag):
+    # The handler must be signal-safe: it does no I/O, only flips the flag the
+    # loop polls (FR37). resize_demo.py models the same deferred-flag pattern.
+    assert not loop._resize_pending.is_set()
+    loop._sigwinch_handler(28, None)  # simulate SIGWINCH delivery
+    assert loop._resize_pending.is_set()
+
+
+def test_install_sigwinch_handler_installs_and_restores():
+    import signal
+
+    if not hasattr(signal, "SIGWINCH"):
+        pytest.skip("SIGWINCH not available on this platform")
+    before = signal.getsignal(signal.SIGWINCH)
+    restore = loop._install_sigwinch_handler()
+    try:
+        assert signal.getsignal(signal.SIGWINCH) is loop._sigwinch_handler
+    finally:
+        restore()
+    assert signal.getsignal(signal.SIGWINCH) is before
+
+
+def _resize_between(first, second):
+    """Yield two keys with a simulated SIGWINCH delivered between them."""
+    def gen():
+        yield first
+        loop._sigwinch_handler(28, None)
+        yield second
+    return gen()
+
+
+def test_resize_between_keys_rerenders_at_the_new_height(monkeypatch, clear_resize_flag):
+    # The initial size and the post-SIGWINCH size both come through the one
+    # _read_terminal_size seam, so the test drives the resize deterministically.
+    sizes = iter([(75, 15), (90, 40)])
+    monkeypatch.setattr(loop, "_read_terminal_size", lambda: next(sizes))
+
+    frames = []
+    loop.run(
+        make_config(),
+        make_mappings(),
+        keys=_resize_between(CTRL_X, CTRL_X),  # unsupported keys: no key-driven frame
+        render=frames.append,
+    )
+    # Only the initial frame and the resize repaint; the two no-op keys add none.
+    assert len(frames) == 2
+    # height 15 -> 9 body rows -> 15 lines; height 40 -> all 11 rows -> 17 lines.
+    assert len(frames[0]) == 15
+    assert len(frames[1]) == 17
+
+
+def test_resize_to_the_same_size_does_not_repaint(monkeypatch, clear_resize_flag):
+    monkeypatch.setattr(loop, "_read_terminal_size", lambda: (75, 15))
+
+    frames = []
+    loop.run(
+        make_config(),
+        make_mappings(),
+        keys=_resize_between(CTRL_X, CTRL_X),
+        render=frames.append,
+    )
+    # The resize reports the current size, so the reducer returns the same state
+    # and the loop skips the repaint: only the initial frame remains.
+    assert len(frames) == 1
+
+
+def test_resize_and_key_dispatch_share_the_render_path(monkeypatch, clear_resize_flag):
+    sizes = iter([(75, 15), (90, 40)])
+    monkeypatch.setattr(loop, "_read_terminal_size", lambda: next(sizes))
+
+    def keys():
+        yield "3"                          # key dispatch -> repaint (filter "3")
+        loop._sigwinch_handler(28, None)
+        yield ""                           # empty poll: services the resize only
+
+    frames = []
+    loop.run(make_config(), make_mappings(), keys=keys(), render=frames.append)
+    # initial + the "3" insert + the resize repaint, all via render(render_lines).
+    assert len(frames) == 3
+    assert "Filter: 3" in filter_line(frames[1])
+    assert "Filter: 3" in filter_line(frames[2])  # resize preserves the filter
+
+
+# ── inline redraw / clear, no alternate screen (TASK-013, spec §6.2, FR32) ───
+
+
+def test_inline_renderer_clears_leftover_lines_without_alt_screen(monkeypatch):
+    # A shorter frame following a taller one must move the cursor up and clear
+    # the stale trailing lines, all inline (no alternate screen). Verified with
+    # a pyte virtual terminal, as the implementation notes recommend.
+    import io
+
+    import blessed
+    import pyte
+
+    term = blessed.Terminal(force_styling=True, kind="xterm-256color")
+    buf = io.StringIO()
+    monkeypatch.setattr(loop.sys, "stdout", buf)
+
+    renderer = loop._InlineRenderer(term=term)
+    renderer(["aaa", "bbb", "ccc"])
+    renderer(["xxx", "yyy"])
+
+    screen = pyte.Screen(20, 5)
+    pyte.Stream(screen).feed(buf.getvalue())
+    display = [row.rstrip() for row in screen.display]
+    assert display[0] == "xxx"
+    assert display[1] == "yyy"
+    assert display[2] == ""  # the previous frame's "ccc" was cleared
+
+    written = buf.getvalue()
+    assert term.move_up in written        # cursor returned to the top of the frame
+    assert "\x1b[?1049h" not in written   # never enters the alternate screen buffer
+    assert "\x1b[?47h" not in written
