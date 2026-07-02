@@ -634,8 +634,38 @@ def _reduce_cancel_edit(state: AppState) -> AppState:
 
 
 def _reduce_submit_edit(state: AppState) -> AppState:
-    # TASK-008: submit path not yet implemented
-    return state
+    """Submit the edit, committing the buffer to the target (spec §4.2, FR22/FR23).
+
+    Enter commits only when validation is VALID and the buffer is non-empty;
+    otherwise it is a no-op — the mode stays EDITING and any validation error
+    remains visible (FR18). The buffer is committed literally (equal to
+    :func:`select_concrete_value` under the non-empty guard) and ``edit``
+    clears. If the post-commit collision count is zero the app enters the
+    accept confirmation with ``choice = NO`` (spec §4.1/§4.2, FR23); otherwise
+    it returns to BROWSING with filter and selection untouched (FR16) — no
+    editing transition ever mutates them.
+    """
+    edit = state.edit
+    if edit.validation.status != "VALID" or not edit.buffer:
+        return state
+
+    new_mappings = [
+        replace(m, target_value=edit.buffer) if m.ordinal == edit.mapping_ordinal else m
+        for m in state.mappings
+    ]
+    committed = replace(state, mode=Mode.BROWSING, mappings=new_mappings, edit=None)
+
+    if select_unresolved_collision_count(committed.mappings) > 0:
+        return committed
+    return replace(
+        committed,
+        mode=Mode.CONFIRMING,
+        confirmation=replace(
+            committed.confirmation,
+            kind=ConfirmationKind.ACCEPT,
+            choice=ConfirmationChoice.NO,
+        ),
+    )
 
 
 # ── dispatch tables ───────────────────────────────────────────────────────────
