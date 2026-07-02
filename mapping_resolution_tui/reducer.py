@@ -509,19 +509,6 @@ def _reduce_redraw(state: AppState) -> AppState:
     return state  # ctrl+l re-renders only; never mutates state (spec S5.1)
 
 
-def _reduce_quit(state: AppState) -> AppState:
-    """Mark the run cancelled; the loop exits on any non-RUNNING result status.
-
-    Interim pre-confirmation behavior for ctrl+c outside an edit: the full
-    spec §4.2 contract routes ctrl+c in BROWSING and CONFIRMING through the
-    EXIT confirmation (frame 1b, with a second armed ctrl+c sending SIGINT).
-    Until that story lands, ctrl+c ends the review directly. In EDITING the
-    mode table maps QUIT to :func:`_reduce_cancel_edit` instead, so an edit
-    is never fatal (FR16).
-    """
-    return replace(state, result=ResultState(status="CANCELLED"))
-
-
 # ── BROWSING table/navigation handlers ───────────────────────────────────────
 
 
@@ -893,7 +880,12 @@ def _reduce_confirm_quit(state: AppState) -> AppState:
 
 
 _BROWSING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
-    KeyEvent.QUIT:               _reduce_quit,
+    # ctrl+c in BROWSING opens the exit confirmation (frame 1b) rather than
+    # ending the review directly, guarding against an accidental discard; a
+    # second ctrl+c there force-exits via SIGINT (spec §4.2). In EDITING the
+    # mode table maps QUIT to _reduce_cancel_edit, so an edit is never fatal
+    # (FR16).
+    KeyEvent.QUIT:               _enter_exit_confirmation,
     KeyEvent.ESCAPE:             _reduce_clear_filter,
     KeyEvent.ENTER:              _reduce_enter_edit,
     KeyEvent.BACKSPACE:          _reduce_filter_backspace,

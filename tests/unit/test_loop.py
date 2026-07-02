@@ -229,11 +229,12 @@ def test_redundant_clear_after_typing_still_rerenders_once_then_skips():
     assert len(frames) == 3  # initial + insert + first (effective) clear
 
 
-def test_quit_key_exits_cleanly_with_none():
-    result, frames = run_keys(["a", CTRL_C, "b"])
+def test_double_ctrl_c_exits_with_none():
+    # TASK-012: the first ctrl+c opens the exit confirmation (frame 1b); the
+    # second force-exits, and the trailing key is never processed.
+    result, frames = run_keys(["a", CTRL_C, CTRL_C, "b"])
     assert result is None
-    # the trailing "b" after the quit key is never processed
-    assert len(frames) == 2  # initial + the "a" insert
+    assert len(frames) == 3  # initial + the "a" insert + the exit prompt
 
 
 # ── ctrl+c during EDITING cancels the edit (TASK-008, spec §4.2 / FR16) ──────
@@ -256,10 +257,21 @@ def test_ctrl_c_cancel_rerenders_the_restored_browsing_frame():
     assert "Filter:" in filter_line(frames[-1])  # back to the browsing prompt
 
 
-def test_ctrl_c_outside_an_edit_still_quits():
-    result, frames = run_keys(["3", CTRL_C, "4"])
+def test_ctrl_c_in_browsing_opens_the_exit_prompt():
+    result, frames = run_keys(["3", CTRL_C])
+    # The run is still live: the exit prompt is painted and end-of-input ends
+    # the loop with the mappings as they stand.
+    assert result is not None
+    assert any("Skip adding commodities?" in line for line in frames[-1])
+
+
+def test_confirming_the_exit_prompt_skips_with_none():
+    # ctrl+c, then y and Enter: a clean skip that adds no commodities.
+    result, frames = run_keys(["3", CTRL_C, "y", Key(name="KEY_ENTER"), "4"])
     assert result is None
-    assert "Filter: 3" in filter_line(frames[-1])  # the trailing "4" never ran
+    # The trailing "4" never ran; the last frame is still the exit prompt.
+    assert any("Skip adding commodities?" in line for line in frames[-1])
+    assert not any("Filter: 34" in line for line in frames[-1])
 
 
 def test_ctrl_c_in_confirming_opens_the_exit_prompt_and_a_second_forces_out():
@@ -278,10 +290,10 @@ def test_ctrl_c_in_confirming_opens_the_exit_prompt_and_a_second_forces_out():
 
 
 def test_quit_does_not_render_a_terminal_frame():
-    # Ending the run repaints nothing: the §6.7 result frame is a later task,
-    # so the last rendered frame is the state before ctrl+c.
-    _, frames = run_keys(["3", CTRL_C])
-    assert len(frames) == 2  # initial + the "3" insert only
+    # Force-exiting paints no §6.7 result frame: the last rendered frame is
+    # the exit prompt the first ctrl+c opened.
+    _, frames = run_keys(["3", CTRL_C, CTRL_C])
+    assert len(frames) == 3  # initial + the "3" insert + the exit prompt
 
 
 # ── accept confirmation produces output (TASK-010, spec §6.7) ─────────────────

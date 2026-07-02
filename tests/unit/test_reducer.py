@@ -390,13 +390,22 @@ def test_backward_kill_word_with_no_word_behind_is_a_noop(state):
 # ── KeyEvent.QUIT: mode-dispatched ctrl+c (spec §4.2 ctrl+c rows) ────────────
 
 
-def test_quit_in_browsing_marks_the_run_cancelled(state):
-    from mapping_resolution_tui.state import Mode
+def test_quit_in_browsing_enters_the_exit_confirmation(state):
+    # TASK-012: ctrl+c in BROWSING opens the exit confirmation (frame 1b)
+    # instead of ending the review directly, guarding an accidental discard.
+    from mapping_resolution_tui.state import (
+        ConfirmationChoice,
+        ConfirmationKind,
+        Mode,
+    )
 
     result = reduce(state, KeyEvent.QUIT)
 
-    assert result.result.status == "CANCELLED"
-    assert result.mode == Mode.BROWSING  # only the result lifecycle changes
+    assert result.result.status == "RUNNING"
+    assert result.mode == Mode.CONFIRMING
+    assert result.confirmation.kind is ConfirmationKind.EXIT
+    assert result.confirmation.choice is ConfirmationChoice.NO
+    assert result.confirmation.second_ctrl_c_armed is True
     assert result.mappings == state.mappings
 
 

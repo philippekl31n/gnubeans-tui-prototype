@@ -210,22 +210,8 @@ def test_enter_on_yes_marks_the_run_accepted():
 
 
 def _exit_confirming_state():
-    """CONFIRMING/EXIT/NO with the second ctrl+c armed (spec §4.2).
-
-    Constructed directly for now; the ctrl+c entry paths that produce exactly
-    this state are wired to the mode tables in the follow-up steps.
-    """
-    state = _initial_state()
-    return replace(
-        state,
-        mode=Mode.CONFIRMING,
-        confirmation=replace(
-            state.confirmation,
-            kind=ConfirmationKind.EXIT,
-            choice=ConfirmationChoice.NO,
-            second_ctrl_c_armed=True,
-        ),
-    )
+    """CONFIRMING/EXIT/NO with the second ctrl+c armed, via ctrl+c (§4.2)."""
+    return reduce(_initial_state(), KeyEvent.QUIT)
 
 
 def test_enter_on_yes_in_exit_confirmation_marks_the_run_skipped():
