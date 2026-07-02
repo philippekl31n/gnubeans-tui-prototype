@@ -388,10 +388,9 @@ def frame_6_lines():
     count is zero, so the app auto-enters the accept confirmation with
     ``choice = NO`` (FR23 / spec §4.2). The full table renders at ``scrollOffset
     = 0`` with no row cursor and the ``Accept all? [y/N]`` prompt (spec §6.4–6.6,
-    storyboard frame 6). The footer follows the choice-driven rule
-    (``edit mappings`` while ``choice = NO``); the storyboard's schematic
-    ``↵ confirm`` footer for this frame is the documented storyboard-specific
-    exception reconciled by the accept-flow story (TASK-010).
+    storyboard frame 6). The footer follows the choice-driven rule, so with
+    ``choice = NO`` it renders the ``↵ edit mappings`` hint — identical to frame
+    7a and never the obsolete ``↵ confirm`` (spec §6.6 / §10.2).
     """
     from tests.fixtures.storyboard import make_config, make_mappings
     from mapping_resolution_tui.events import KeyEvent
@@ -419,18 +418,17 @@ def frame_14_lines():
 
     The AT-T collision (ordinal 3) is resolved to ``ATT`` as the storyboard does
     before frame 14, then the reviewer applies the ``12`` text filter (frame 13,
-    no matching rows) before entering the accept confirmation. The confirming
-    table MUST ignore that filter and render the full 11-row list windowed at
-    ``scrollOffset = 0`` (spec §8.2 / §10.1 frame 14). The accept-confirmation
-    entry is constructed directly because the ``ctrl+s`` entry path is a later
-    story (TASK-010).
+    no matching rows) and presses ``ctrl+s`` to re-enter the accept confirmation.
+    ``ctrl+s`` is accepted because no collision remains (spec §4.2), and the
+    confirming table MUST ignore that filter and render the full 11-row list
+    windowed at ``scrollOffset = 0`` (spec §8.2 / §10.1 frame 14).
     """
     from dataclasses import replace
 
     from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.events import KeyEvent
     from mapping_resolution_tui.reducer import make_initial_state, reduce
     from mapping_resolution_tui.renderer import render_lines
-    from mapping_resolution_tui.state import ConfirmationChoice, ConfirmationKind, Mode
 
     state = make_initial_state(make_config(), make_mappings(), frame_height=15)
     mappings = [
@@ -440,15 +438,7 @@ def frame_14_lines():
     state = replace(state, mappings=mappings)
     state = reduce(state, "1")
     state = reduce(state, "2")  # filter "12" matches no rows (frame 13)
-    state = replace(
-        state,
-        mode=Mode.CONFIRMING,
-        confirmation=replace(
-            state.confirmation,
-            kind=ConfirmationKind.ACCEPT,
-            choice=ConfirmationChoice.NO,
-        ),
-    )
+    state = reduce(state, KeyEvent.SUBMIT)  # ctrl+s re-enters the accept confirmation
     return render_lines(state)
 
 
@@ -501,6 +491,45 @@ def frame_15_lines():
 @pytest.fixture
 def frame_15_screen(frame_15_lines):
     return make_pyte_screen(frame_15_lines)
+
+
+@pytest.fixture
+def frame_accept_terminal_lines():
+    """Accepted terminal frame reached end-to-end through the reducer (spec §6.7).
+
+    Continuing the storyboard frame 13 → 14 → 15 path: with the AT-T collision
+    resolved (ordinal 3 -> ``ATT``) and the non-matching ``12`` filter applied,
+    ``ctrl+s`` re-enters the accept confirmation (frame 14), ``y`` toggles the
+    choice to YES, and ``Enter`` commits every mapping — ``result.status =
+    ACCEPTED``. The render collapses to the two-row result frame of the created
+    message over a bare prompt glyph (storyboard frame 15). Unlike ``frame_15``,
+    the ACCEPTED state here is produced solely by reducer transitions, proving
+    the full accept flow.
+    """
+    from dataclasses import replace
+
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.events import KeyEvent
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    mappings = [
+        replace(m, target_value="ATT") if m.ordinal == 3 else m
+        for m in state.mappings
+    ]
+    state = replace(state, mappings=mappings)
+    state = reduce(state, "1")
+    state = reduce(state, "2")  # filter "12" matches no rows (frame 13)
+    state = reduce(state, KeyEvent.SUBMIT)  # ctrl+s re-enters accept confirmation
+    state = reduce(state, "y")              # toggle the choice to YES
+    state = reduce(state, KeyEvent.ENTER)   # commit -> ACCEPTED
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_accept_terminal_screen(frame_accept_terminal_lines):
+    return make_pyte_screen(frame_accept_terminal_lines)
 
 
 @pytest.fixture

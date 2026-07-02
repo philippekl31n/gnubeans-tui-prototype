@@ -670,15 +670,171 @@ def _reduce_submit_edit(state: AppState) -> AppState:
 
     if select_unresolved_collision_count(committed.mappings) > 0:
         return committed
+    return _enter_accept_confirmation(committed)
+
+
+# ── CONFIRMING handlers (spec §4.1/§4.2, §8.4/§8.5) ──────────────────────────
+
+
+def _enter_accept_confirmation(state: AppState) -> AppState:
+    """Enter the accept confirmation defaulting to NO (spec §4.1/§4.2).
+
+    Shared by the FR23 auto-entry (:func:`_reduce_submit_edit`) and the ctrl+s
+    entry (:func:`_reduce_submit`) so both land on the identical
+    ``CONFIRMING``/``ACCEPT``/``NO`` state before the first render.
+    """
     return replace(
-        committed,
+        state,
         mode=Mode.CONFIRMING,
         confirmation=replace(
-            committed.confirmation,
+            state.confirmation,
             kind=ConfirmationKind.ACCEPT,
             choice=ConfirmationChoice.NO,
         ),
     )
+
+
+def _reduce_submit(state: AppState) -> AppState:
+    """ctrl+s in BROWSING opens the accept confirmation (spec §4.2).
+
+    Accepted whenever ``select_unresolved_collision_count() == 0`` — whether the
+    collisions were just resolved or were already clear at session start — and a
+    no-op (same state returned) while any collision remains open.
+    """
+    if select_unresolved_collision_count(state.mappings) > 0:
+        return state
+    return _enter_accept_confirmation(state)
+
+
+def _reduce_confirm_toggle(state: AppState) -> AppState:
+    """←/→ toggle the confirmation choice between YES and NO (spec §4.2)."""
+    choice = (
+        ConfirmationChoice.NO
+        if state.confirmation.choice is ConfirmationChoice.YES
+        else ConfirmationChoice.YES
+    )
+    return replace(state, confirmation=replace(state.confirmation, choice=choice))
+
+
+def _reduce_confirm_set_choice(state: AppState, choice: ConfirmationChoice) -> AppState:
+    if state.confirmation.choice is choice:
+        return state
+    return replace(state, confirmation=replace(state.confirmation, choice=choice))
+
+
+def _reduce_confirm_insert_char(state: AppState, char: str, now: Optional[float]) -> AppState:
+    """y sets the choice to YES, n to NO; any other printable is a no-op (spec §5)."""
+    if char == "y":
+        return _reduce_confirm_set_choice(state, ConfirmationChoice.YES)
+    if char == "n":
+        return _reduce_confirm_set_choice(state, ConfirmationChoice.NO)
+    return state
+
+
+def _confirming_scroll(state: AppState, offset: int, max_offset: int) -> AppState:
+    """Set the confirming scroll window to ``offset`` clamped to ``[0, max_offset]``.
+
+    CONFIRMING scrolls the full-list window only, with no selected-row movement
+    (spec §8.4). ``max_offset`` distinguishes single-row movement (clamped to
+    maxFillOffset so the window stays full) from page movement (clamped to
+    maxScrollOffset so the last row may anchor a partial window, §8.5).
+    """
+    scroll = max(0, min(offset, max_offset))
+    if scroll == state.selection.scroll_offset:
+        return state
+    return replace(state, selection=replace(state.selection, scroll_offset=scroll))
+
+
+def _reduce_confirm_scroll_up(state: AppState) -> AppState:
+    capacity = select_body_capacity(state.terminal.height)
+    max_fill_offset = max(0, len(state.mappings) - capacity)
+    return _confirming_scroll(state, state.selection.scroll_offset - 1, max_fill_offset)
+
+
+def _reduce_confirm_scroll_down(state: AppState) -> AppState:
+    capacity = select_body_capacity(state.terminal.height)
+    max_fill_offset = max(0, len(state.mappings) - capacity)
+    return _confirming_scroll(state, state.selection.scroll_offset + 1, max_fill_offset)
+
+
+def _reduce_confirm_page_up(state: AppState) -> AppState:
+    capacity = select_body_capacity(state.terminal.height)
+    max_scroll_offset = max(0, len(state.mappings) - 1)
+    return _confirming_scroll(
+        state, state.selection.scroll_offset - capacity, max_scroll_offset
+    )
+
+
+def _reduce_confirm_page_down(state: AppState) -> AppState:
+    capacity = select_body_capacity(state.terminal.height)
+    max_scroll_offset = max(0, len(state.mappings) - 1)
+    return _confirming_scroll(
+        state, state.selection.scroll_offset + capacity, max_scroll_offset
+    )
+
+
+def _leave_confirming(state: AppState) -> AppState:
+    """Return to BROWSING preserving the filter (spec §4.2 / §8.4).
+
+    The selected row becomes the first visible row at the current scroll offset
+    — which in CONFIRMING indexes the full mapping list — clamped onto the
+    (possibly filtered) BROWSING visible rows. When that anchor row is filtered
+    out (frame-14-style preserved filter) the selection snaps to the first
+    visible row with the scroll reset; an empty result clears the selection.
+    """
+    browsing = replace(
+        state,
+        mode=Mode.BROWSING,
+        confirmation=ConfirmationState(
+            kind=ConfirmationKind.NONE,
+            choice=ConfirmationChoice.NO,
+            second_ctrl_c_armed=False,
+        ),
+    )
+    scroll = state.selection.scroll_offset
+    anchor_ordinal = (
+        state.mappings[scroll].ordinal if 0 <= scroll < len(state.mappings) else None
+    )
+    visible_ordinals = [m.ordinal for m in select_visible_rows(browsing)]
+
+    if anchor_ordinal in visible_ordinals:
+        selected = anchor_ordinal
+        new_scroll = min(
+            visible_ordinals.index(anchor_ordinal), max(0, len(visible_ordinals) - 1)
+        )
+    elif visible_ordinals:
+        selected = visible_ordinals[0]
+        new_scroll = 0
+    else:
+        selected = None
+        new_scroll = 0
+
+    return replace(
+        browsing,
+        selection=SelectionState(selected_ordinal=selected, scroll_offset=new_scroll),
+    )
+
+
+def _reduce_confirm_enter(state: AppState) -> AppState:
+    """Enter in CONFIRMING (spec §4.2).
+
+    With ``choice = NO`` it leaves the confirmation and returns to BROWSING. With
+    ``choice = YES`` an accept confirmation commits every mapping and marks the
+    run ``ACCEPTED``, driving the §6.7 terminal result frame. The exit
+    confirmation's YES action (skip and SIGINT) is owned by a later story, so a
+    YES enter only produces the ACCEPTED terminal state for an accept
+    confirmation.
+    """
+    if state.confirmation.choice is not ConfirmationChoice.YES:
+        return _leave_confirming(state)
+    if state.confirmation.kind is ConfirmationKind.ACCEPT:
+        return replace(state, result=ResultState(status="ACCEPTED"))
+    return state
+
+
+def _reduce_confirm_escape(state: AppState) -> AppState:
+    """Esc leaves the confirmation and returns to BROWSING (spec §4.2)."""
+    return _leave_confirming(state)
 
 
 # ── dispatch tables ───────────────────────────────────────────────────────────
@@ -700,6 +856,7 @@ _BROWSING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
     KeyEvent.BACKWARD_KILL_WORD: _reduce_filter_delete_prev_word,
     KeyEvent.REDRAW:             _reduce_redraw,
     KeyEvent.TAB:                _reduce_filter_autocomplete_bang,
+    KeyEvent.SUBMIT:             _reduce_submit,
     KeyEvent.PAGE_UP:            _reduce_table_page_up,
     KeyEvent.PAGE_DOWN:          _reduce_table_page_down,
     KeyEvent.SELECTION_UP:       _reduce_table_selection_up,
@@ -729,10 +886,19 @@ _EDITING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
     # PAGE_UP/DOWN → no-op in EDITING for now
 }
 
-# CONFIRMING key handling (y/n/arrows/Enter, spec §4.2) is a future story; only
-# ctrl+c is wired so a reviewer who lands here via submit is never trapped.
 _CONFIRMING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
-    KeyEvent.QUIT: _reduce_quit,
+    # ctrl+c stays wired to the interim cancel (CANCELLED); the EXIT-confirmation
+    # transition (frame 1b, with an armed second ctrl+c sending SIGINT) is a
+    # later story that owns this slot, so it is left untouched here (spec §4.2).
+    KeyEvent.QUIT:           _reduce_quit,
+    KeyEvent.ENTER:          _reduce_confirm_enter,
+    KeyEvent.ESCAPE:         _reduce_confirm_escape,
+    KeyEvent.CURSOR_LEFT:    _reduce_confirm_toggle,
+    KeyEvent.CURSOR_RIGHT:   _reduce_confirm_toggle,
+    KeyEvent.SELECTION_UP:   _reduce_confirm_scroll_up,
+    KeyEvent.SELECTION_DOWN: _reduce_confirm_scroll_down,
+    KeyEvent.PAGE_UP:        _reduce_confirm_page_up,
+    KeyEvent.PAGE_DOWN:      _reduce_confirm_page_down,
 }
 
 # Top-level registry: one dict per mode.
@@ -743,8 +909,9 @@ _MODE_HANDLERS: dict[Mode, dict[KeyEvent, Callable[[AppState], AppState]]] = {
 }
 
 _MODE_INSERT: dict[Mode, Callable[[AppState, str, Optional[float]], AppState]] = {
-    Mode.BROWSING: _reduce_filter_insert_char,
-    Mode.EDITING:  _reduce_token_insert_char,
+    Mode.BROWSING:   _reduce_filter_insert_char,
+    Mode.EDITING:    _reduce_token_insert_char,
+    Mode.CONFIRMING: _reduce_confirm_insert_char,
 }
 
 

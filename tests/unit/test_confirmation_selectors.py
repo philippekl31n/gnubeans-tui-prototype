@@ -16,6 +16,7 @@ from mapping_resolution_tui.selectors import (
     select_body_rows,
     select_confirmation_header,
     select_confirmation_prompt,
+    select_footer_content,
     select_visible_rows,
 )
 from mapping_resolution_tui.state import (
@@ -183,3 +184,62 @@ def test_render_lines_is_idempotent_and_preserves_the_choice():
     second = render_lines(state)
     assert first == second
     assert state.confirmation.choice is ConfirmationChoice.NO
+
+
+# ── confirming footer hint drift (spec §6.6 / §10.2) ─────────────────────────
+#
+# The ENTER footer hint is keyed on (kind, choice), not on how the confirmation
+# was entered: choice=NO returns to BROWSING ("edit mappings"), accept+YES
+# submits every mapping ("submit mappings"), exit+YES skips ("skip"), and the
+# obsolete "confirm" verb is never produced.
+
+def _footer_hints(state):
+    from mapping_resolution_tui.state import FooterHint
+    return select_footer_content(state).hints
+
+
+def _footer_text(state):
+    from mapping_resolution_tui.renderer import render_lines
+    return render_lines(state)[-1]
+
+
+def test_accept_no_and_scrolled_accept_no_share_the_edit_mappings_hint():
+    from mapping_resolution_tui.state import FooterHint
+
+    frame_6 = _confirming(_resolved_state(), ConfirmationKind.ACCEPT, ConfirmationChoice.NO)
+    frame_7a = replace(frame_6, selection=replace(frame_6.selection, scroll_offset=1))
+
+    assert FooterHint.EDIT_MAPPINGS in _footer_hints(frame_6)
+    assert FooterHint.EDIT_MAPPINGS in _footer_hints(frame_7a)
+    assert "↵ edit mappings" in _footer_text(frame_6)
+    assert "↵ edit mappings" in _footer_text(frame_7a)
+
+
+def test_accept_yes_footer_reads_submit_mappings():
+    from mapping_resolution_tui.state import FooterHint
+
+    state = _confirming(_resolved_state(), ConfirmationKind.ACCEPT, ConfirmationChoice.YES)
+    assert FooterHint.SUBMIT_MAPPINGS in _footer_hints(state)
+    assert "↵ submit mappings" in _footer_text(state)
+
+
+def test_exit_yes_footer_reads_skip():
+    from mapping_resolution_tui.state import FooterHint
+
+    state = _confirming(_base_state(), ConfirmationKind.EXIT, ConfirmationChoice.YES)
+    assert FooterHint.SKIP in _footer_hints(state)
+    assert "↵ skip" in _footer_text(state)
+
+
+@pytest.mark.parametrize(
+    "kind, choice",
+    [
+        (ConfirmationKind.ACCEPT, ConfirmationChoice.NO),
+        (ConfirmationKind.ACCEPT, ConfirmationChoice.YES),
+        (ConfirmationKind.EXIT, ConfirmationChoice.NO),
+        (ConfirmationKind.EXIT, ConfirmationChoice.YES),
+    ],
+)
+def test_no_confirm_verb_is_ever_produced(kind, choice):
+    state = _confirming(_resolved_state(), kind, choice)
+    assert "↵ confirm " not in _footer_text(state) + " "
