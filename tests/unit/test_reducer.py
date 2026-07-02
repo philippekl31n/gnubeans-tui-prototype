@@ -385,3 +385,33 @@ def test_backward_kill_word_with_no_word_behind_is_a_noop(state):
     s = reduce(s, KeyEvent.CURSOR_HOME)  # cursor at 0; nothing to kill backward
     same = reduce(s, KeyEvent.BACKWARD_KILL_WORD)
     assert same is s
+
+
+# ── KeyEvent.QUIT: mode-dispatched ctrl+c (spec §4.2 ctrl+c rows) ────────────
+
+
+def test_quit_in_browsing_marks_the_run_cancelled(state):
+    from mapping_resolution_tui.state import Mode
+
+    result = reduce(state, KeyEvent.QUIT)
+
+    assert result.result.status == "CANCELLED"
+    assert result.mode == Mode.BROWSING  # only the result lifecycle changes
+    assert result.mappings == state.mappings
+
+
+def test_quit_in_confirming_marks_the_run_cancelled(state):
+    from mapping_resolution_tui.state import Mode
+
+    # Drive to CONFIRMING by resolving the final collision from ordinal 3.
+    s = reduce(state, KeyEvent.SELECTION_DOWN)
+    s = reduce(s, KeyEvent.SELECTION_DOWN)
+    s = reduce(s, KeyEvent.ENTER)
+    for ch in "ATT":
+        s = reduce(s, ch)
+    s = reduce(s, KeyEvent.ENTER)
+    assert s.mode == Mode.CONFIRMING  # sanity
+
+    result = reduce(s, KeyEvent.QUIT)
+
+    assert result.result.status == "CANCELLED"

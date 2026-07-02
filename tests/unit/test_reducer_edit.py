@@ -650,3 +650,15 @@ def test_cancel_discards_the_buffer_and_preserves_the_filter():
     assert result.selection.selected_ordinal == 1
     untouched = next(m for m in result.mappings if m.ordinal == 1)
     assert untouched.target_value is None
+
+
+def test_quit_during_editing_cancels_the_edit_not_the_run():
+    state = make_initial_state(make_config(), make_mappings())
+    state = reduce(state, KeyEvent.ENTER)
+    state = _typed(state, "X")
+
+    result = reduce(state, KeyEvent.QUIT)
+
+    assert result.mode == Mode.BROWSING
+    assert result.edit is None
+    assert result.result.status == "RUNNING"  # the run itself continues

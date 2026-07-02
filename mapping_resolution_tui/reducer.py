@@ -509,6 +509,19 @@ def _reduce_redraw(state: AppState) -> AppState:
     return state  # ctrl+l re-renders only; never mutates state (spec S5.1)
 
 
+def _reduce_quit(state: AppState) -> AppState:
+    """Mark the run cancelled; the loop exits on any non-RUNNING result status.
+
+    Interim pre-confirmation behavior for ctrl+c outside an edit: the full
+    spec §4.2 contract routes ctrl+c in BROWSING and CONFIRMING through the
+    EXIT confirmation (frame 1b, with a second armed ctrl+c sending SIGINT).
+    Until that story lands, ctrl+c ends the review directly. In EDITING the
+    mode table maps QUIT to :func:`_reduce_cancel_edit` instead, so an edit
+    is never fatal (FR16).
+    """
+    return replace(state, result=ResultState(status="CANCELLED"))
+
+
 # ── BROWSING table/navigation handlers ───────────────────────────────────────
 
 
@@ -672,6 +685,7 @@ def _reduce_submit_edit(state: AppState) -> AppState:
 
 
 _BROWSING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
+    KeyEvent.QUIT:               _reduce_quit,
     KeyEvent.ESCAPE:             _reduce_clear_filter,
     KeyEvent.ENTER:              _reduce_enter_edit,
     KeyEvent.BACKSPACE:          _reduce_filter_backspace,
@@ -693,6 +707,9 @@ _BROWSING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
 }
 
 _EDITING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
+    # ctrl+c while editing cancels the edit exactly like Esc — the buffer is
+    # discarded and the pre-edit browsing context is restored (spec §4.2 / FR16).
+    KeyEvent.QUIT:               _reduce_cancel_edit,
     KeyEvent.ESCAPE:             _reduce_cancel_edit,
     KeyEvent.ENTER:              _reduce_submit_edit,
     KeyEvent.BACKSPACE:          _reduce_token_backspace,
@@ -712,10 +729,17 @@ _EDITING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
     # PAGE_UP/DOWN → no-op in EDITING for now
 }
 
-# Top-level registry: adding CONFIRMING requires only a new dict + one entry here.
+# CONFIRMING key handling (y/n/arrows/Enter, spec §4.2) is a future story; only
+# ctrl+c is wired so a reviewer who lands here via submit is never trapped.
+_CONFIRMING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
+    KeyEvent.QUIT: _reduce_quit,
+}
+
+# Top-level registry: one dict per mode.
 _MODE_HANDLERS: dict[Mode, dict[KeyEvent, Callable[[AppState], AppState]]] = {
-    Mode.BROWSING: _BROWSING_HANDLERS,
-    Mode.EDITING:  _EDITING_HANDLERS,
+    Mode.BROWSING:   _BROWSING_HANDLERS,
+    Mode.EDITING:    _EDITING_HANDLERS,
+    Mode.CONFIRMING: _CONFIRMING_HANDLERS,
 }
 
 _MODE_INSERT: dict[Mode, Callable[[AppState, str, Optional[float]], AppState]] = {

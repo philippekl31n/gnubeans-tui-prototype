@@ -24,11 +24,7 @@ from mapping_resolution_tui.config import QUIT_KEY
 from mapping_resolution_tui.events import InputEvent, KeyEvent
 from mapping_resolution_tui.reducer import make_initial_state, reduce
 from mapping_resolution_tui.renderer import render_lines
-from mapping_resolution_tui.state import AppConfig, Mapping, Mode
-
-# Raw ctrl+c byte. The configured QUIT_KEY is the readable token "ctrl+c"; a live
-# blessed keystroke delivers it as this control byte under term.raw().
-_CTRL_C = "\x03"
+from mapping_resolution_tui.state import AppConfig, Mapping
 
 # blessed Keystroke.name → KeyEvent (multi-byte named escape sequences).
 _NAME_EVENTS: dict[str, KeyEvent] = {
@@ -58,6 +54,7 @@ _META_EVENTS: dict[str, KeyEvent] = {
 
 # Single control characters / readline aliases → KeyEvent.
 _CTRL_EVENTS: dict[str, KeyEvent] = {
+    "\x03": KeyEvent.QUIT,               # ctrl+c  raw byte under term.raw()
     "\x01": KeyEvent.CURSOR_HOME,        # ctrl+a  beginning-of-line
     "\x05": KeyEvent.CURSOR_END,         # ctrl+e  end-of-line
     "\x02": KeyEvent.CURSOR_LEFT,        # ctrl+b  backward-char
@@ -78,16 +75,6 @@ _CTRL_EVENTS: dict[str, KeyEvent] = {
 }
 
 
-def is_quit_key(key) -> bool:
-    """Return True when ``key`` is the configured quit key.
-
-    Accepts the live ctrl+c control byte as well as the readable ``"ctrl+c"``
-    token, so both the terminal reader and headless tests can signal a quit.
-    """
-    text = str(key)
-    return text == _CTRL_C or text == QUIT_KEY
-
-
 def key_to_event(key) -> Optional[InputEvent]:
     """Normalise a keypress into an :data:`~mapping_resolution_tui.events.InputEvent`, or ``None`` for a no-op (FR30).
 
@@ -96,8 +83,12 @@ def key_to_event(key) -> Optional[InputEvent]:
     function serves both the live loop and headless tests. Named keys resolve via
     ``.name``; control chords and meta sequences via the raw key text; a single
     printable character — including a literal ``!`` (spec §3.3) — is returned as
-    a bare ``str``. The quit key, the no-op readline families, and anything
-    unrecognised return ``None``.
+    a bare ``str``. ctrl+c is :data:`KeyEvent.QUIT` like any other chord — the
+    reducer's mode tables decide what it means (spec §4.2 has a ctrl+c row per
+    mode) — accepted both as the raw control byte a live blessed keystroke
+    delivers under ``term.raw()`` and as the readable ``QUIT_KEY`` token headless
+    drivers pass. The no-op readline families and anything unrecognised return
+    ``None``.
     """
     name = getattr(key, "name", None)
     text = str(key)
@@ -109,6 +100,8 @@ def key_to_event(key) -> Optional[InputEvent]:
         return _META_EVENTS[text]
     if text in _CTRL_EVENTS:
         return _CTRL_EVENTS[text]
+    if text == QUIT_KEY:
+        return KeyEvent.QUIT
 
     if len(text) == 1 and " " <= text <= "~":
         return text
@@ -123,15 +116,18 @@ def run(
     keys: Optional[Iterable] = None,
     render: Optional[Callable[[list[str]], None]] = None,
 ) -> list[Mapping] | None:
-    """Drive the blocking event loop until the quit key or end of input.
+    """Drive the blocking event loop until the run ends or input is exhausted.
 
     ``keys`` supplies keystrokes (defaulting to the live ``blessed`` terminal
     reader); ``render`` receives each rendered frame (defaulting to an inline
     in-place repaint). Both are injectable so the loop is exercisable without a
     real TTY.
 
-    Returns the resolved mappings on a clean end-of-input exit, or ``None`` when
-    the user quits with the configured quit key (cancellation).
+    The loop itself is mode-blind: every key goes through :func:`key_to_event`
+    and the reducer's mode tables, and the run is over when the reducer marks
+    ``result.status`` terminal (ctrl+c outside an edit → CANCELLED). Returns
+    the resolved mappings on a clean end-of-input exit, or ``None`` when the
+    run was cancelled.
     """
     if keys is None:
         keys = _terminal_keys()
@@ -142,17 +138,6 @@ def run(
     render(render_lines(state))
 
     for key in keys:
-        if is_quit_key(key):
-            if state.mode is Mode.EDITING:
-                # ctrl+c in EDITING cancels the edit exactly like Esc — the
-                # buffer is discarded and the pre-edit browsing context is
-                # restored (spec §4.2 / FR16). Only ctrl+c outside an edit
-                # quits the review.
-                state = reduce(state, KeyEvent.ESCAPE)
-                render(render_lines(state))
-                continue
-            return None
-
         event = key_to_event(key)
         if event is None:
             # FR30: unsupported keys mutate nothing and trigger no redraw.
@@ -165,6 +150,13 @@ def run(
             continue
 
         new_state = reduce(state, event)
+        if new_state.result.status != "RUNNING":
+            # The reducer marked the run over (ctrl+c outside an edit →
+            # CANCELLED for now; ACCEPTED/SKIPPED/SIGINT arrive with the
+            # confirmation flows). No terminal frame is rendered yet — the
+            # §6.7 result frame is a later task.
+            return None
+
         if new_state is state:
             # A recognised event that changed nothing (the reducer returned the
             # same object) needs no repaint — state and output stay unchanged.
@@ -204,7 +196,7 @@ def _terminal_keys() -> Iterable:
     ``blessed`` owns escape-sequence decoding; ``term.raw()`` delivers control
     chords (including ctrl+c as the quit key) as keystrokes rather than signals,
     and avoids the alternate screen buffer. Each keystroke is yielded straight to
-    :func:`key_to_action`, which performs all normalisation.
+    :func:`key_to_event`, which performs all normalisation.
     """
     term = blessed.Terminal()
     if not term.is_a_tty:  # nothing interactive to read from
