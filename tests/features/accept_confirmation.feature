@@ -70,3 +70,60 @@ Feature: Accept all resolved mappings and produce the output
     And I press "KEY_ESCAPE"
     Then the app should be in BROWSING mode
     And the filter raw should be "1"
+
+  Scenario: Down and up arrows scroll the confirming table without moving the selection
+    Given the AT-T collision is already resolved
+    When I press ctrl+s
+    Then the scroll offset should be 0
+    And the selected ordinal should be 1
+    And the confirming body should show ordinals "1,2,3,4,5,6,7,8,9"
+    When I press "KEY_DOWN"
+    Then the scroll offset should be 1
+    And the selected ordinal should be 1
+    And the confirming body should show ordinals "2,3,4,5,6,7,8,9,10"
+    When I press "KEY_UP"
+    Then the scroll offset should be 0
+    And the selected ordinal should be 1
+    And the confirming body should show ordinals "1,2,3,4,5,6,7,8,9"
+
+  Scenario: Up arrow at the top of the confirming table is clamped
+    Given the AT-T collision is already resolved
+    When I press ctrl+s
+    And I press "KEY_UP"
+    Then the scroll offset should be 0
+    And the selected ordinal should be 1
+
+  Scenario: Down arrow scrolling clamps at the last full window
+    Given the AT-T collision is already resolved
+    When I press ctrl+s
+    And I press "KEY_DOWN"
+    And I press "KEY_DOWN"
+    Then the scroll offset should be 2
+    When I press "KEY_DOWN"
+    Then the scroll offset should be 2
+    And the selected ordinal should be 1
+
+  Scenario: Shift arrows page-scroll the confirming table without moving the selection
+    Given the AT-T collision is already resolved
+    When I press ctrl+s
+    And I press "KEY_SDOWN"
+    Then the scroll offset should be 9
+    And the selected ordinal should be 1
+    When I press "KEY_SUP"
+    Then the scroll offset should be 0
+    And the selected ordinal should be 1
+
+  Scenario: PageDown and PageUp page-scroll and clamp at the last row
+    Given the AT-T collision is already resolved
+    When I press ctrl+s
+    And I press "KEY_PGDOWN"
+    Then the scroll offset should be 9
+    When I press "KEY_PGDOWN"
+    Then the scroll offset should be 10
+    And the confirming body should show ordinals "11"
+    When I press "KEY_PGDOWN"
+    Then the scroll offset should be 10
+    When I press "KEY_PGUP"
+    Then the scroll offset should be 1
+    When I press "KEY_PGUP"
+    Then the scroll offset should be 0
