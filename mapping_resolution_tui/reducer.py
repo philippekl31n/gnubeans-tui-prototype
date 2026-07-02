@@ -726,6 +726,39 @@ def _reduce_confirming_enter(state: AppState) -> AppState:
 def _reduce_confirming_escape(state: AppState) -> AppState:
     return replace(state, mode=Mode.BROWSING)
 
+def _scroll_only(state: AppState, delta: int) -> AppState:
+    visible = select_visible_rows(state)
+    if not visible:
+        return state
+        
+    capacity = select_body_capacity(state.terminal.height)
+    max_scroll = max(0, len(visible) - capacity)
+    
+    current_scroll = state.selection.scroll_offset
+    new_scroll = max(0, min(current_scroll + delta, max_scroll))
+    
+    if new_scroll == current_scroll:
+        return state
+        
+    selection = replace(state.selection, scroll_offset=new_scroll)
+    return replace(state, selection=selection)
+
+def _page_scroll_only(state: AppState, direction: int) -> AppState:
+    capacity = select_body_capacity(state.terminal.height)
+    delta = capacity if direction > 0 else -capacity
+    return _scroll_only(state, delta)
+
+def _reduce_confirming_scroll_up(state: AppState) -> AppState:
+    return _scroll_only(state, -1)
+
+def _reduce_confirming_scroll_down(state: AppState) -> AppState:
+    return _scroll_only(state, 1)
+
+def _reduce_confirming_page_up(state: AppState) -> AppState:
+    return _page_scroll_only(state, -1)
+
+def _reduce_confirming_page_down(state: AppState) -> AppState:
+    return _page_scroll_only(state, 1)
 
 # ── dispatch tables ───────────────────────────────────────────────────────────
 
@@ -783,6 +816,10 @@ _CONFIRMING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
     KeyEvent.CURSOR_RIGHT: _reduce_confirming_right,
     KeyEvent.ENTER: _reduce_confirming_enter,
     KeyEvent.ESCAPE: _reduce_confirming_escape,
+    KeyEvent.SELECTION_UP: _reduce_confirming_scroll_up,
+    KeyEvent.SELECTION_DOWN: _reduce_confirming_scroll_down,
+    KeyEvent.PAGE_UP: _reduce_confirming_page_up,
+    KeyEvent.PAGE_DOWN: _reduce_confirming_page_down,
 }
 
 # Top-level registry: one dict per mode.

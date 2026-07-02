@@ -402,6 +402,29 @@ def frame_6_screen(frame_6_lines):
     return make_pyte_screen(frame_6_lines)
 
 @pytest.fixture
+def frame_7a_lines(frame_6_lines):
+    from dataclasses import replace
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.events import KeyEvent
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    mappings = [replace(m, target_value="ATT") if m.ordinal == 3 else m for m in state.mappings]
+    state = replace(state, mappings=mappings)
+    
+    state = reduce(state, KeyEvent.ENTER)
+    for char in "APPLE":
+        state = reduce(state, char)
+    state = reduce(state, KeyEvent.ENTER)
+    state = reduce(state, KeyEvent.SELECTION_DOWN)
+    return render_lines(state)
+
+@pytest.fixture
+def frame_7a_screen(frame_7a_lines):
+    return make_pyte_screen(frame_7a_lines)
+
+@pytest.fixture
 def frame_14_lines():
     from dataclasses import replace
     from tests.fixtures.storyboard import make_config, make_mappings
