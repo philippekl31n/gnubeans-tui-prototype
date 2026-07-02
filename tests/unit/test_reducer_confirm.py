@@ -270,6 +270,34 @@ def test_submit_entry_matches_last_resolution_auto_entry():
     assert via_submit.confirmation == via_auto.confirmation
 
 
+# ── ctrl+c in CONFIRMING: enter or force the exit (TASK-012, spec §4.2) ──────
+
+
+def test_ctrl_c_in_accept_confirmation_enters_the_exit_confirmation():
+    exiting = reduce(_confirming_state(), KeyEvent.QUIT)
+    assert exiting.mode is Mode.CONFIRMING
+    assert exiting.confirmation.kind is ConfirmationKind.EXIT
+    assert exiting.confirmation.choice is ConfirmationChoice.NO
+    assert exiting.confirmation.second_ctrl_c_armed is True
+    assert exiting.result.status == "RUNNING"
+
+
+def test_second_ctrl_c_in_exit_confirmation_marks_the_run_sigint():
+    # An armed exit confirmation force-exits on ctrl+c, bypassing the y/N
+    # choice entirely; the loop owns the actual signal (spec §4.2).
+    forced = reduce(_exit_confirming_state(), KeyEvent.QUIT)
+    assert forced.result.status == "SIGINT"
+
+
+def test_second_ctrl_c_bypasses_the_choice_even_on_yes():
+    # second_ctrl_c_armed is never reset within CONFIRMING, so moving the
+    # choice first changes nothing about the force-exit.
+    on_yes = reduce(_exit_confirming_state(), "y")
+    assert on_yes.confirmation.second_ctrl_c_armed is True
+    forced = reduce(on_yes, KeyEvent.QUIT)
+    assert forced.result.status == "SIGINT"
+
+
 # ── ↑/↓ row scrolling of the confirming window (TASK-011, spec §8.4) ─────────
 
 

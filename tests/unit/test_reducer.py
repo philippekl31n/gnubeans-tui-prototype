@@ -400,8 +400,10 @@ def test_quit_in_browsing_marks_the_run_cancelled(state):
     assert result.mappings == state.mappings
 
 
-def test_quit_in_confirming_marks_the_run_cancelled(state):
-    from mapping_resolution_tui.state import Mode
+def test_quit_in_confirming_enters_the_exit_confirmation(state):
+    # TASK-012: ctrl+c in an accept confirmation opens the exit confirmation
+    # (spec §4.2); the run keeps going until it is confirmed or forced.
+    from mapping_resolution_tui.state import ConfirmationKind, Mode
 
     # Drive to CONFIRMING by resolving the final collision from ordinal 3.
     s = reduce(state, KeyEvent.SELECTION_DOWN)
@@ -414,4 +416,7 @@ def test_quit_in_confirming_marks_the_run_cancelled(state):
 
     result = reduce(s, KeyEvent.QUIT)
 
-    assert result.result.status == "CANCELLED"
+    assert result.result.status == "RUNNING"
+    assert result.mode == Mode.CONFIRMING
+    assert result.confirmation.kind is ConfirmationKind.EXIT
+    assert result.confirmation.second_ctrl_c_armed is True

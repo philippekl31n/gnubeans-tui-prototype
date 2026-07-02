@@ -694,6 +694,27 @@ def _enter_accept_confirmation(state: AppState) -> AppState:
     )
 
 
+def _enter_exit_confirmation(state: AppState) -> AppState:
+    """Enter the ctrl+c exit confirmation defaulting to NO (spec §4.1/§4.2).
+
+    Shared by ctrl+c in BROWSING and ctrl+c in an accept confirmation, so both
+    land on the identical ``CONFIRMING``/``EXIT``/``NO`` state before the first
+    render (frame 1b). ``second_ctrl_c_armed`` is set here and — per §4.2 —
+    never reset while CONFIRMING, so a second ctrl+c force-exits via SIGINT
+    (:func:`_reduce_confirm_quit`) rather than obeying the y/N choice.
+    """
+    return replace(
+        state,
+        mode=Mode.CONFIRMING,
+        confirmation=replace(
+            state.confirmation,
+            kind=ConfirmationKind.EXIT,
+            choice=ConfirmationChoice.NO,
+            second_ctrl_c_armed=True,
+        ),
+    )
+
+
 def _reduce_submit(state: AppState) -> AppState:
     """ctrl+s in BROWSING opens the accept confirmation (spec §4.2).
 
@@ -850,6 +871,24 @@ def _reduce_confirm_escape(state: AppState) -> AppState:
     return _leave_confirming(state)
 
 
+def _reduce_confirm_quit(state: AppState) -> AppState:
+    """ctrl+c in CONFIRMING (spec §4.2 ctrl+c rows).
+
+    From an accept confirmation it enters the exit confirmation exactly like
+    ctrl+c in BROWSING. From an already-armed exit confirmation the second
+    ctrl+c force-exits: it marks ``result.status = SIGINT``, which the loop
+    turns into an actual interrupt, bypassing the y/N choice entirely.
+    ``second_ctrl_c_armed`` is set on entry to EXIT and never reset while
+    CONFIRMING, so any ctrl+c in EXIT is a force-exit.
+    """
+    if (
+        state.confirmation.kind is ConfirmationKind.EXIT
+        and state.confirmation.second_ctrl_c_armed
+    ):
+        return replace(state, result=ResultState(status="SIGINT"))
+    return _enter_exit_confirmation(state)
+
+
 # ── dispatch tables ───────────────────────────────────────────────────────────
 
 
@@ -900,10 +939,9 @@ _EDITING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
 }
 
 _CONFIRMING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
-    # ctrl+c stays wired to the interim cancel (CANCELLED); the EXIT-confirmation
-    # transition (frame 1b, armed second ctrl+c) is a later story that owns this
-    # slot (spec §4.2).
-    KeyEvent.QUIT:           _reduce_quit,
+    # ctrl+c from an accept confirmation enters the exit confirmation; a second
+    # ctrl+c from the (armed) exit confirmation force-exits via SIGINT (§4.2).
+    KeyEvent.QUIT:           _reduce_confirm_quit,
     KeyEvent.ENTER:          _reduce_confirm_enter,
     KeyEvent.ESCAPE:         _reduce_confirm_escape,
     KeyEvent.CURSOR_LEFT:    _reduce_confirm_toggle,

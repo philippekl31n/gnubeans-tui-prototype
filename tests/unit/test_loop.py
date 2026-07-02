@@ -262,18 +262,18 @@ def test_ctrl_c_outside_an_edit_still_quits():
     assert "Filter: 3" in filter_line(frames[-1])  # the trailing "4" never ran
 
 
-def test_ctrl_c_in_confirming_quits_the_run():
+def test_ctrl_c_in_confirming_opens_the_exit_prompt_and_a_second_forces_out():
     # Resolve the final collision (ordinal 3 -> "ATT") to land in CONFIRMING,
-    # then ctrl+c: no EXIT-confirmation flow exists yet, so the run ends and
-    # the trailing key is never consumed.
+    # then ctrl+c: the accept prompt becomes the exit confirmation (TASK-012,
+    # spec §4.2); a second ctrl+c force-exits and the trailing key never runs.
     result, frames = run_keys(
         [Key(name="KEY_DOWN"), Key(name="KEY_DOWN"), Key(name="KEY_ENTER"),
-         "A", "T", "T", Key(name="KEY_ENTER"), CTRL_C, "3"]
+         "A", "T", "T", Key(name="KEY_ENTER"), CTRL_C, CTRL_C, "3"]
     )
     assert result is None
-    # The last frame is the CONFIRMING accept prompt (no Filter line renders in
-    # CONFIRMING), and the trailing "3" was never consumed into the filter.
-    assert any("Accept all?" in line for line in frames[-1])
+    # The last frame is the exit prompt (no Filter line renders in CONFIRMING),
+    # and the trailing "3" was never consumed into the filter.
+    assert any("Skip adding commodities?" in line for line in frames[-1])
     assert not any("Filter: 3" in line for line in frames[-1])
 
 
