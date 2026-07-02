@@ -203,3 +203,88 @@ def test_page_movement_scrolls_by_a_page_and_clamps_to_max_scroll():
     assert state.selection.scroll_offset == 1
     state = reduce(state, KeyEvent.PAGE_UP)
     assert state.selection.scroll_offset == 0
+
+
+# ── ctrl+c exit confirmation (TASK-012, spec §4.1/§4.2 ctrl+c rows) ──────────
+
+def test_ctrl_c_in_browsing_enters_exit_confirmation_armed():
+    # The fresh storyboard still has an open collision, so the exit confirmation
+    # keeps that count while offering the ctrl+c-exit force-quit affordance.
+    state = _base_state()
+    result = reduce(state, KeyEvent.QUIT)
+    assert result.mode == Mode.CONFIRMING
+    assert result.confirmation.kind == ConfirmationKind.EXIT
+    assert result.confirmation.choice == ConfirmationChoice.NO
+    assert result.confirmation.second_ctrl_c_armed is True
+    assert result.result.status == "RUNNING"
+
+
+def test_ctrl_c_from_accept_confirmation_enters_exit_confirmation():
+    state = _accept_confirming()  # CONFIRMING / ACCEPT
+    result = reduce(state, KeyEvent.QUIT)
+    assert result.mode == Mode.CONFIRMING
+    assert result.confirmation.kind == ConfirmationKind.EXIT
+    assert result.confirmation.choice == ConfirmationChoice.NO
+    assert result.confirmation.second_ctrl_c_armed is True
+
+
+def _exit_confirming():
+    """A fresh state that has entered the exit confirmation via ctrl+c."""
+    return reduce(_base_state(), KeyEvent.QUIT)
+
+
+def test_exit_confirmation_y_n_and_arrows_set_choice():
+    state = _exit_confirming()
+    assert state.confirmation.choice == ConfirmationChoice.NO
+    state = reduce(state, "y")
+    assert state.confirmation.choice == ConfirmationChoice.YES
+    state = reduce(state, "n")
+    assert state.confirmation.choice == ConfirmationChoice.NO
+    state = reduce(state, KeyEvent.CURSOR_LEFT)
+    assert state.confirmation.choice == ConfirmationChoice.YES
+    state = reduce(state, KeyEvent.CURSOR_RIGHT)
+    assert state.confirmation.choice == ConfirmationChoice.NO
+
+
+def test_second_ctrl_c_in_exit_confirmation_marks_sigint_bypassing_choice():
+    # The second ctrl+c force-exits regardless of the choice — it MUST NOT be
+    # gated on YES (spec §4.2). Even with choice = NO it emits SIGINT.
+    state = _exit_confirming()
+    assert state.confirmation.choice == ConfirmationChoice.NO
+    result = reduce(state, KeyEvent.QUIT)
+    assert result.result.status == "SIGINT"
+
+
+def test_second_ctrl_c_armed_flag_is_never_reset_within_confirming():
+    # Toggling the choice and scrolling MUST leave second_ctrl_c_armed set, so a
+    # later ctrl+c still force-exits (spec §4.2).
+    state = _exit_confirming()
+    state = reduce(state, "y")
+    state = reduce(state, "n")
+    state = reduce(state, KeyEvent.SELECTION_DOWN)
+    assert state.confirmation.second_ctrl_c_armed is True
+    assert reduce(state, KeyEvent.QUIT).result.status == "SIGINT"
+
+
+def test_enter_on_yes_in_exit_confirmation_marks_skipped_without_sigint():
+    state = _exit_confirming()
+    state = reduce(state, "y")
+    result = reduce(state, KeyEvent.ENTER)
+    assert result.result.status == "SKIPPED"  # clean skip, not SIGINT
+
+
+def test_enter_on_no_in_exit_confirmation_returns_to_browsing():
+    state = _exit_confirming()
+    result = reduce(state, KeyEvent.ENTER)  # choice defaults to NO
+    assert result.mode == Mode.BROWSING
+    assert result.confirmation.kind == ConfirmationKind.NONE
+    assert result.confirmation.second_ctrl_c_armed is False
+    assert result.result.status == "RUNNING"
+
+
+def test_escape_in_exit_confirmation_returns_to_browsing():
+    state = _exit_confirming()
+    result = reduce(state, KeyEvent.ESCAPE)
+    assert result.mode == Mode.BROWSING
+    assert result.confirmation.kind == ConfirmationKind.NONE
+    assert result.result.status == "RUNNING"

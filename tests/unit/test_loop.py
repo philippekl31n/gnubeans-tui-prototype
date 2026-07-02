@@ -10,6 +10,9 @@ readline families return ``None`` so the loop leaves state and output unchanged
 ``Key`` standing in for a blessed ``Keystroke`` (a str carrying a ``.name``).
 """
 
+import os
+import signal
+
 import pytest
 
 from mapping_resolution_tui import loop
@@ -228,11 +231,15 @@ def test_redundant_clear_after_typing_still_rerenders_once_then_skips():
     assert len(frames) == 3  # initial + insert + first (effective) clear
 
 
-def test_quit_key_exits_cleanly_with_none():
+def test_ctrl_c_in_browsing_enters_the_exit_confirmation():
+    # ctrl+c no longer quits directly: it opens the exit confirmation (frame 1b),
+    # so the run keeps consuming input rather than ending. A printable in
+    # CONFIRMING is a no-op, so the trailing "b" changes nothing and end-of-input
+    # returns the mappings (spec §4.2).
     result, frames = run_keys(["a", CTRL_C, "b"])
-    assert result is None
-    # the trailing "b" after the quit key is never processed
-    assert len(frames) == 2  # initial + the "a" insert
+    assert result is not None  # the confirmation was entered, not a quit
+    assert len(frames) == 3  # initial + "a" insert + exit-confirmation repaint
+    assert any("Skip adding commodities?" in line for line in frames[-1])
 
 
 # ── ctrl+c during EDITING cancels the edit (TASK-008, spec §4.2 / FR16) ──────
@@ -255,32 +262,40 @@ def test_ctrl_c_cancel_rerenders_the_restored_browsing_frame():
     assert "Filter:" in filter_line(frames[-1])  # back to the browsing prompt
 
 
-def test_ctrl_c_outside_an_edit_still_quits():
-    result, frames = run_keys(["3", CTRL_C, "4"])
-    assert result is None
-    assert "Filter: 3" in filter_line(frames[-1])  # the trailing "4" never ran
+def test_skip_on_yes_exits_cleanly_returning_none():
+    # In the exit confirmation, y then Enter marks the run SKIPPED: a clean skip
+    # that adds no commodities. The loop returns None and paints no §6.7
+    # created-message frame (spec §6.7).
+    result, frames = run_keys([CTRL_C, "y", Key(name="KEY_ENTER")])
+    assert result is None  # no mappings applied
+    assert not any("commodities created" in line for line in frames[-1])
 
 
-def test_ctrl_c_in_confirming_quits_the_run():
-    # Resolve the final collision (ordinal 3 -> "ATT") to land in CONFIRMING,
-    # then ctrl+c: no EXIT-confirmation flow exists yet, so the run ends and
-    # the trailing key is never consumed.
+def test_ctrl_c_in_accept_confirmation_enters_the_exit_confirmation():
+    # Resolve the final collision (ordinal 3 -> "ATT") to auto-enter the accept
+    # confirmation, then ctrl+c: from an accept confirmation ctrl+c opens the
+    # exit confirmation (spec §11.2), so the run keeps going and end-of-input
+    # returns the mappings.
     result, frames = run_keys(
         [Key(name="KEY_DOWN"), Key(name="KEY_DOWN"), Key(name="KEY_ENTER"),
-         "A", "T", "T", Key(name="KEY_ENTER"), CTRL_C, "3"]
+         "A", "T", "T", Key(name="KEY_ENTER"), CTRL_C]
     )
+    assert result is not None
+    assert any("Skip adding commodities?" in line for line in frames[-1])
+    assert any("ctrl+c exit" in line for line in frames[-1])
+
+
+def test_second_ctrl_c_in_exit_confirmation_sends_sigint(monkeypatch):
+    # The first ctrl+c arms the exit confirmation; the second force-exits by
+    # sending SIGINT to the process (spec §4.2/§6.7), bypassing the y/N choice.
+    # The signal is stubbed so the test process survives; the loop then returns.
+    calls: list[tuple[int, int]] = []
+    monkeypatch.setattr(loop.os, "kill", lambda pid, sig: calls.append((pid, sig)))
+    result, frames = run_keys([CTRL_C, CTRL_C])
     assert result is None
-    # The last frame is the CONFIRMING accept prompt (not a filter line), and
-    # the trailing "3" was never consumed into the filter.
-    assert any("Accept all?" in line for line in frames[-1])
-    assert not any("Filter: 3" in line for line in frames[-1])
-
-
-def test_quit_does_not_render_a_terminal_frame():
-    # Ending the run repaints nothing: the §6.7 result frame is a later task,
-    # so the last rendered frame is the state before ctrl+c.
-    _, frames = run_keys(["3", CTRL_C])
-    assert len(frames) == 2  # initial + the "3" insert only
+    assert calls == [(os.getpid(), signal.SIGINT)]
+    # No §6.7 created-message frame is painted on the force-exit.
+    assert not any("commodities created" in line for line in frames[-1])
 
 
 # ── ctrl+s accept confirmation flow (TASK-010, spec §4.2 / §6.7) ─────────────
