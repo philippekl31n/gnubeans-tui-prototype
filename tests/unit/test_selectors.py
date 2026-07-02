@@ -399,6 +399,49 @@ def test_render_collision_ordinals_reacts_live_to_edit_buffer():
     assert select_render_collision_ordinals(state) == frozenset()
 
 
+def test_render_collision_ordinals_empty_buffer_never_resolves_a_collision():
+    from dataclasses import replace
+    from unittest.mock import Mock
+
+    from mapping_resolution_tui.state import AppState, EditState, Mode
+    from mapping_resolution_tui.selectors import select_render_collision_ordinals
+
+    # Mappings 2 and 3 collide on a committed literal target that differs from
+    # both default source values. Clearing the edit buffer must NOT substitute
+    # the default source value ("AT-T") for the committed "XCOL" — an empty
+    # buffer never resolves a conflict (TASK-008 / FR8).
+    mappings = [
+        replace(m, target_value="XCOL") if m.ordinal in (2, 3) else m
+        for m in _story_1_4_mappings()
+    ]
+    state = Mock(spec=AppState)
+    state.mode = Mode.EDITING
+    state.mappings = mappings
+    state.edit = Mock(spec=EditState)
+    state.edit.mapping_ordinal = 3
+    state.edit.buffer = ""
+
+    assert select_render_collision_ordinals(state) == frozenset({2, 3})
+
+
+def test_render_collision_ordinals_empty_buffer_keeps_default_value_collision():
+    from unittest.mock import Mock
+
+    from mapping_resolution_tui.state import AppState, EditState, Mode
+    from mapping_resolution_tui.selectors import select_render_collision_ordinals
+
+    # Frame 4: entering edit on the AT-T collision row seeds an empty buffer;
+    # both AT-T rows keep their committed markers until the buffer deviates.
+    state = Mock(spec=AppState)
+    state.mode = Mode.EDITING
+    state.mappings = _story_1_4_mappings()
+    state.edit = Mock(spec=EditState)
+    state.edit.mapping_ordinal = 3
+    state.edit.buffer = ""
+
+    assert select_render_collision_ordinals(state) == frozenset({2, 3})
+
+
 def test_edit_is_submittable_false_when_validation_invalid():
     from unittest.mock import Mock
 
