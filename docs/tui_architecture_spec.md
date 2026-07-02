@@ -750,6 +750,16 @@ When `result.status = ACCEPTED`, the TUI MUST render the final inline frame show
   drew below row 2 MUST be cleared (see §6.2).
 - The alternate screen buffer MUST NOT be used.
 
+The `ACCEPTED` frame is the only terminal frame. The other two terminal `result.status` values from §4.2
+MUST NOT render it and are distinct outcomes, not synonyms:
+
+- `SKIPPED` (exit confirmation, `Enter` on `YES`) exits cleanly without adding commodities. It MUST NOT
+  render the created-message frame and MUST NOT raise a signal; the run ends normally with no mappings
+  applied.
+- `SIGINT` (the second `ctrl+c` in exit confirmation) re-raises the interrupt to terminate the process
+  (conventionally exit code 130). It is the deliberate force-exit path that bypasses the `y`/`N` prompt,
+  which is why it is a separate status from the chosen `SKIPPED` skip.
+
 ## 7. Edit Buffer, Ghost Text, Source Pointer, and Validation
 
 ### 7.1 Entering Edit Mode

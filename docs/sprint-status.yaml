@@ -159,7 +159,9 @@ tasks:
         second_ctrl_c_armed = True"
       - "y key sets choice = YES; n sets choice = NO; left/right arrows
         toggle between YES and NO"
-      - "Enter when choice = YES sends SIGINT and exits the process"
+      - "Enter when choice = YES sets result.status = SKIPPED and exits
+        without adding commodities (clean skip); it MUST NOT send SIGINT —
+        SIGINT is reserved for the second ctrl+c force-exit (spec §4.1/§4.2)"
       - "Enter when choice = NO, or Esc, returns to BROWSING mode"
       - "A second ctrl+c while in EXIT confirmation sends SIGINT immediately,
         bypassing the y/n check entirely (second_ctrl_c_armed = True on
@@ -173,6 +175,6 @@ tasks:
       - "All existing golden tests continue to pass"
     definition_of_done:
       - "Feature is implemented and tested"
-      - "BDD scenarios for exit confirmation (y exit, n return to browsing,
-        second ctrl+c SIGINT) all pass"
+      - "BDD scenarios for exit confirmation (y → SKIPPED clean exit,
+        n/esc → return to browsing, second ctrl+c → SIGINT) all pass"
       - "Golden frame frame_1b committed and passing under uv run pytest"
