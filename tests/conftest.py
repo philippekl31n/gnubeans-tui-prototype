@@ -380,6 +380,130 @@ def frame_submit_no_resolution_screen(frame_submit_no_resolution_lines):
 
 
 @pytest.fixture
+def frame_6_lines():
+    """Frame 6: accept confirmation entered by resolving the last collision.
+
+    From the initial browsing state the reviewer selects the AT-T collision
+    (ordinal 3), edits it to ``ATT`` and submits. The post-commit collision
+    count is zero, so the app auto-enters the accept confirmation with
+    ``choice = NO`` (FR23 / spec §4.2). The full table renders at ``scrollOffset
+    = 0`` with no row cursor and the ``Accept all? [y/N]`` prompt (spec §6.4–6.6,
+    storyboard frame 6). The footer follows the choice-driven rule
+    (``edit mappings`` while ``choice = NO``); the storyboard's schematic
+    ``↵ confirm`` footer for this frame is the documented storyboard-specific
+    exception reconciled by the accept-flow story (TASK-010).
+    """
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.events import KeyEvent
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    state = reduce(state, KeyEvent.SELECTION_DOWN)
+    state = reduce(state, KeyEvent.SELECTION_DOWN)
+    state = reduce(state, KeyEvent.ENTER)
+    for char in "ATT":
+        state = reduce(state, char)
+    state = reduce(state, KeyEvent.ENTER)
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_6_screen(frame_6_lines):
+    return make_pyte_screen(frame_6_lines)
+
+
+@pytest.fixture
+def frame_14_lines():
+    """Frame 14: re-entered accept confirmation over an active filter.
+
+    The AT-T collision (ordinal 3) is resolved to ``ATT`` as the storyboard does
+    before frame 14, then the reviewer applies the ``12`` text filter (frame 13,
+    no matching rows) before entering the accept confirmation. The confirming
+    table MUST ignore that filter and render the full 11-row list windowed at
+    ``scrollOffset = 0`` (spec §8.2 / §10.1 frame 14). The accept-confirmation
+    entry is constructed directly because the ``ctrl+s`` entry path is a later
+    story (TASK-010).
+    """
+    from dataclasses import replace
+
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+    from mapping_resolution_tui.state import ConfirmationChoice, ConfirmationKind, Mode
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    mappings = [
+        replace(m, target_value="ATT") if m.ordinal == 3 else m
+        for m in state.mappings
+    ]
+    state = replace(state, mappings=mappings)
+    state = reduce(state, "1")
+    state = reduce(state, "2")  # filter "12" matches no rows (frame 13)
+    state = replace(
+        state,
+        mode=Mode.CONFIRMING,
+        confirmation=replace(
+            state.confirmation,
+            kind=ConfirmationKind.ACCEPT,
+            choice=ConfirmationChoice.NO,
+        ),
+    )
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_14_screen(frame_14_lines):
+    return make_pyte_screen(frame_14_lines)
+
+
+@pytest.fixture
+def frame_15_lines():
+    """Frame 15: the terminal accepted-result frame (spec §6.7).
+
+    From the accept confirmation the reviewer toggles ``choice = YES`` and
+    confirms, committing all mappings and exiting the TUI. The render collapses
+    to the two-row result frame — the created message over a bare prompt glyph
+    (storyboard frame 15). The commit is constructed directly because the accept
+    transition is a later story (TASK-010).
+    """
+    from dataclasses import replace
+
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+    from mapping_resolution_tui.state import (
+        ConfirmationChoice,
+        ConfirmationKind,
+        Mode,
+        ResultState,
+    )
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    mappings = [
+        replace(m, target_value="ATT") if m.ordinal == 3 else m
+        for m in state.mappings
+    ]
+    state = replace(
+        state,
+        mappings=mappings,
+        mode=Mode.CONFIRMING,
+        confirmation=replace(
+            state.confirmation,
+            kind=ConfirmationKind.ACCEPT,
+            choice=ConfirmationChoice.YES,
+        ),
+        result=ResultState(status="ACCEPTED"),
+    )
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_15_screen(frame_15_lines):
+    return make_pyte_screen(frame_15_lines)
+
+
+@pytest.fixture
 def assert_snapshot(update_snapshots):
     def _check(screen: pyte.Screen, snapshot_path: Path):
         actual = "\n".join(row.rstrip() for row in screen.display) + "\n"

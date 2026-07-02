@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 from mapping_resolution_tui.state import (
     AppConfig,
     ConfirmationChoice,
+    ConfirmationKind,
+    ConfirmationPromptContent,
     FilterPromptContent,
     FooterContent,
     FooterHint,
@@ -349,13 +351,19 @@ def select_ordinal_match_spans(
 
 
 def select_body_rows(state: "AppState") -> list[Mapping]:
-    """Return the mappings to render in the table body (spec §8.2)."""
-    visible = select_visible_rows(state)
+    """Return the mappings to render in the table body (spec §8.2).
+
+    ``BROWSING`` windows the filtered ``visibleRows``; ``CONFIRMING`` windows the
+    full mapping list, so the active filter never constrains the confirming
+    table (spec §8.2 / §10.1 frame 14). Both apply the same ``scrollOffset``
+    window over their respective row lists.
+    """
+    rows = list(state.mappings) if state.mode is Mode.CONFIRMING else select_visible_rows(state)
     capacity = select_body_capacity(state.terminal.height)
-    if capacity <= 0 or not visible:
+    if capacity <= 0 or not rows:
         return []
     scroll = state.selection.scroll_offset
-    return visible[scroll : scroll + capacity]
+    return rows[scroll : scroll + capacity]
 
 
 def select_filter_prompt(state: "AppState", unresolved_count: int) -> FilterPromptContent:
@@ -366,6 +374,58 @@ def select_filter_prompt(state: "AppState", unresolved_count: int) -> FilterProm
         collision_only=state.filter.collision_only,
         collision_hint_visible=unresolved_count > 0,
     )
+
+
+def select_confirmation_prompt(state: "AppState") -> ConfirmationPromptContent:
+    """Derive the confirmation prompt content for CONFIRMING mode (spec §6.5).
+
+    The prompt text comes from ``config.acceptPrompt``/``config.exitPrompt`` per
+    ``confirmation.kind``; the ``[y/N]``/``[Y/n]`` indicators are cased so the
+    active choice is upper-case, and ``yes_active`` tells the renderer which
+    indicator to render reverse-video. Rendering is driven entirely from this
+    output so the renderer never branches on ``ConfirmationKind``/``choice``.
+    """
+    config = state.config
+    prompt = (
+        config.exit_prompt
+        if state.confirmation.kind is ConfirmationKind.EXIT
+        else config.accept_prompt
+    )
+    yes_active = state.confirmation.choice is ConfirmationChoice.YES
+    return ConfirmationPromptContent(
+        prompt=prompt,
+        yes_indicator="Y" if yes_active else "y",
+        no_indicator="n" if yes_active else "N",
+        yes_active=yes_active,
+    )
+
+
+def select_confirmation_header(state: "AppState") -> str:
+    """Header line text for CONFIRMING mode (spec §6.4).
+
+    Always opens with the ``❯ Reviewing …`` review clause and appends the
+    unresolved-collision clause only when collisions remain (frame 1b keeps its
+    count while an accept confirmation, which is entered only at zero collisions,
+    omits it). The trailing shortcut is ``ctrl+c exit`` for an exit confirmation
+    and ``ctrl+c cancel`` otherwise. Returned as plain text; the renderer applies
+    the bold glyph and dim shortcut styling.
+    """
+    config = state.config
+    total = len(state.mappings)
+    review = (
+        f"❯ Reviewing {total} {config.entity_name_singular} "
+        f"{config.mapping_noun_plural}."
+    )
+    count = select_unresolved_collision_count(state.mappings)
+    if count > 0:
+        plural = "" if count == 1 else "s"
+        review += f" {count} unresolved collision{plural}."
+    shortcut = (
+        "ctrl+c exit"
+        if state.confirmation.kind is ConfirmationKind.EXIT
+        else "ctrl+c cancel"
+    )
+    return f"{review} {shortcut}"
 
 
 def select_edit_is_submittable(state: "AppState", edit: "EditState") -> bool:

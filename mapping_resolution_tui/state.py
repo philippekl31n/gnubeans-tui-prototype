@@ -131,6 +131,14 @@ class FilterPromptContent:
 
 
 @dataclass(frozen=True)
+class ConfirmationPromptContent:
+    prompt: str
+    yes_indicator: str
+    no_indicator: str
+    yes_active: bool
+
+
+@dataclass(frozen=True)
 class AppState:
     config: AppConfig
     mode: Mode
