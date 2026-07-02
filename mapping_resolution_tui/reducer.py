@@ -316,15 +316,16 @@ def _apply_edit_buffer(state: AppState, new_buffer: str, new_cursor: int) -> App
     return replace(state, edit=_validate_edit(state, new_edit, new_buffer))
 
 
-def _autofill_source_pointer(state: AppState, edit: EditState, index: int) -> AppState:
+def _autofill_source_pointer(state: AppState, mapping: Mapping, edit: EditState, index: int) -> AppState:
     """Point ``edit`` at active source ``index``, autofill the buffer from it, and revalidate.
 
     Resolves the buffer through :func:`select_source_pointer_value` (TASK-005)
     against a state whose pointer already targets ``index``, so the
-    active-source lookup is never re-derived here.
+    active-source lookup is never re-derived here. ``mapping`` is taken from
+    the caller (:func:`_move_source_pointer` already has it via
+    :func:`_edited_mapping`) rather than re-derived per call.
     """
     pointed = replace(edit, source_pointer_index=index)
-    mapping = _edited_mapping(state)
     new_buffer = select_source_pointer_value(replace(state, edit=pointed), mapping)
     final_edit = replace(pointed, cursor=len(new_buffer))
     return replace(state, edit=_validate_edit(state, final_edit, new_buffer))
@@ -355,7 +356,7 @@ def _move_source_pointer(state: AppState, direction: int) -> AppState:
             focus_region=FocusRegion.SOURCE_LIST,
             source_entry_buffer=edit.buffer,
         )
-        return _autofill_source_pointer(state, entering, index)
+        return _autofill_source_pointer(state, mapping, entering, index)
 
     new_index = edit.source_pointer_index + direction
     if new_index < 0 or new_index >= len(active_sources):
@@ -363,7 +364,7 @@ def _move_source_pointer(state: AppState, direction: int) -> AppState:
         exited = replace(_exit_source_list(edit), cursor=len(restored_buffer))
         return replace(state, edit=_validate_edit(state, exited, restored_buffer))
 
-    return _autofill_source_pointer(state, edit, new_index)
+    return _autofill_source_pointer(state, mapping, edit, new_index)
 
 
 # ── BROWSING filter handlers ──────────────────────────────────────────────────
