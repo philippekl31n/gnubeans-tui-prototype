@@ -735,6 +735,68 @@ def _reduce_confirm_insert_char(state: AppState, char: str, now: Optional[float]
     return state
 
 
+def _leave_confirming(state: AppState) -> AppState:
+    """Return to BROWSING preserving the filter (spec §4.2 / §8.4).
+
+    The selected row becomes the first visible row at the current scroll offset
+    — which in CONFIRMING indexes the full mapping list — snapped onto the
+    (possibly filtered) BROWSING visible rows. When that anchor row is filtered
+    out the selection falls back to the first visible row with the scroll
+    reset; an empty result clears the selection. Confirmation state resets to
+    NONE so nothing stale leaks into a later confirmation entry.
+    """
+    browsing = replace(
+        state,
+        mode=Mode.BROWSING,
+        confirmation=ConfirmationState(
+            kind=ConfirmationKind.NONE,
+            choice=ConfirmationChoice.NO,
+            second_ctrl_c_armed=False,
+        ),
+    )
+    scroll = state.selection.scroll_offset
+    anchor_ordinal = (
+        state.mappings[scroll].ordinal if 0 <= scroll < len(state.mappings) else None
+    )
+    visible_ordinals = [m.ordinal for m in select_visible_rows(browsing)]
+
+    if anchor_ordinal in visible_ordinals:
+        selected = anchor_ordinal
+        new_scroll = visible_ordinals.index(anchor_ordinal)
+    elif visible_ordinals:
+        selected = visible_ordinals[0]
+        new_scroll = 0
+    else:
+        selected = None
+        new_scroll = 0
+
+    return replace(
+        browsing,
+        selection=SelectionState(selected_ordinal=selected, scroll_offset=new_scroll),
+    )
+
+
+def _reduce_confirm_enter(state: AppState) -> AppState:
+    """Enter in CONFIRMING (spec §4.2).
+
+    With ``choice = NO`` it leaves the confirmation back to BROWSING. With
+    ``choice = YES`` an accept confirmation commits every mapping and marks the
+    run ``ACCEPTED``, driving the §6.7 terminal result frame. The exit
+    confirmation's YES action (skip and SIGINT) is owned by a later story, so
+    a YES enter changes nothing outside ``kind = ACCEPT``.
+    """
+    if state.confirmation.choice is not ConfirmationChoice.YES:
+        return _leave_confirming(state)
+    if state.confirmation.kind is ConfirmationKind.ACCEPT:
+        return replace(state, result=ResultState(status="ACCEPTED"))
+    return state
+
+
+def _reduce_confirm_escape(state: AppState) -> AppState:
+    """Esc leaves the confirmation and returns to BROWSING (spec §4.2)."""
+    return _leave_confirming(state)
+
+
 # ── dispatch tables ───────────────────────────────────────────────────────────
 
 
@@ -789,6 +851,8 @@ _CONFIRMING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
     # transition (frame 1b, armed second ctrl+c) is a later story that owns this
     # slot (spec §4.2). Scrolling in CONFIRMING is TASK-011.
     KeyEvent.QUIT:         _reduce_quit,
+    KeyEvent.ENTER:        _reduce_confirm_enter,
+    KeyEvent.ESCAPE:       _reduce_confirm_escape,
     KeyEvent.CURSOR_LEFT:  _reduce_confirm_toggle,
     KeyEvent.CURSOR_RIGHT: _reduce_confirm_toggle,
 }

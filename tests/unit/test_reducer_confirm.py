@@ -148,6 +148,70 @@ def test_choice_movement_leaves_mode_kind_and_table_state_untouched():
     assert on_yes.filter is confirming.filter
 
 
+# ── Enter and Esc: leave or commit (spec §4.2, §8.4) ─────────────────────────
+
+
+def test_enter_on_no_returns_to_browsing_with_confirmation_reset():
+    browsing = reduce(_confirming_state(), KeyEvent.ENTER)
+    assert browsing.mode is Mode.BROWSING
+    assert browsing.confirmation.kind is ConfirmationKind.NONE
+    assert browsing.confirmation.choice is ConfirmationChoice.NO
+    assert browsing.confirmation.second_ctrl_c_armed is False
+    assert browsing.result.status == "RUNNING"
+
+
+def test_escape_returns_to_browsing_like_enter_on_no():
+    via_enter = reduce(_confirming_state(), KeyEvent.ENTER)
+    via_escape = reduce(_confirming_state(), KeyEvent.ESCAPE)
+    assert via_escape.mode is Mode.BROWSING
+    assert via_escape.confirmation == via_enter.confirmation
+    assert via_escape.selection == via_enter.selection
+
+
+def test_leave_confirming_selects_first_visible_row_at_current_scroll():
+    # §8.4: the selected row becomes the first visible row at the current
+    # scroll offset — here scroll 0 over the full list, so ordinal 1.
+    browsing = reduce(_confirming_state(), KeyEvent.ESCAPE)
+    assert browsing.selection.selected_ordinal == 1
+    assert browsing.selection.scroll_offset == 0
+
+
+def test_leave_confirming_preserves_filter_and_snaps_selection_onto_visible_rows():
+    # Enter the confirmation with the text filter 'AT' active (rows 2 and 3).
+    # The full-list anchor row at scroll 0 (ordinal 1) is filtered out of the
+    # BROWSING view, so the selection snaps to the first visible row instead.
+    state = _reduce_all(_resolved_state(), ["A", "T", KeyEvent.SUBMIT])
+    browsing = reduce(state, KeyEvent.ESCAPE)
+    assert browsing.mode is Mode.BROWSING
+    assert browsing.filter.raw == "AT"
+    assert browsing.selection.selected_ordinal == 2
+    assert browsing.selection.scroll_offset == 0
+
+
+def test_leave_confirming_with_no_matching_rows_clears_selection():
+    # Frame 13 -> 14 -> Esc: the preserved '12' filter matches nothing, so the
+    # selection clears and the scroll resets.
+    state = _reduce_all(_resolved_state(), ["1", "2", KeyEvent.SUBMIT])
+    browsing = reduce(state, KeyEvent.ESCAPE)
+    assert browsing.mode is Mode.BROWSING
+    assert browsing.filter.raw == "12"
+    assert browsing.selection.selected_ordinal is None
+    assert browsing.selection.scroll_offset == 0
+
+
+def test_enter_on_yes_marks_the_run_accepted():
+    confirming = reduce(_confirming_state(), "y")
+    accepted = reduce(confirming, KeyEvent.ENTER)
+    assert accepted.result.status == "ACCEPTED"
+    assert accepted.mappings is confirming.mappings
+
+
+def test_leave_confirming_preserves_mappings_identity():
+    confirming = _confirming_state()
+    browsing = reduce(confirming, KeyEvent.ENTER)
+    assert browsing.mappings is confirming.mappings
+
+
 def test_submit_entry_matches_last_resolution_auto_entry():
     # Both entry paths share _enter_accept_confirmation and must land on the
     # identical CONFIRMING/ACCEPT/NO confirmation state (spec §4.1).
