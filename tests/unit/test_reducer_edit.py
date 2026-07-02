@@ -544,3 +544,121 @@ def test_source_navigation_does_not_special_case_a_buffer_matching_a_source_valu
     assert result.edit.source_pointer_index == 0
     assert result.edit.source_entry_buffer == "AAPL"
     assert result.edit.buffer == "AAPL"
+
+
+# ── TASK-008: submit and cancel (FR16/FR18/FR22/FR23) ────────────────────────
+
+
+def test_submit_commits_buffer_and_returns_to_browsing_when_collisions_remain():
+    state = make_initial_state(make_config(), make_mappings())
+    state = _typed(state, "1")  # filter to ordinal 1 (APPLE)
+    state = reduce(state, KeyEvent.ENTER)
+    state = _typed(state, "APPL")
+
+    result = reduce(state, KeyEvent.ENTER)
+
+    assert result.mode == Mode.BROWSING
+    assert result.edit is None
+    committed = next(m for m in result.mappings if m.ordinal == 1)
+    assert committed.target_value == "APPL"
+
+
+def test_submit_preserves_filter_and_selection_exactly():
+    state = make_initial_state(make_config(), make_mappings())
+    state = _typed(state, "1")
+    pre_filter = state.filter
+    pre_selected = state.selection.selected_ordinal
+    state = reduce(state, KeyEvent.ENTER)
+    state = _typed(state, "APPL")
+
+    result = reduce(state, KeyEvent.ENTER)
+
+    assert result.filter == pre_filter  # raw, text, collision_only, cursor (FR16)
+    assert result.selection.selected_ordinal == pre_selected
+
+
+def test_submit_resolving_the_final_collision_enters_accept_confirmation():
+    from mapping_resolution_tui.state import ConfirmationChoice, ConfirmationKind
+
+    state = make_initial_state(make_config(), make_mappings())
+    state = _select(state, 3)  # the AT-T collision row
+    state = reduce(state, KeyEvent.ENTER)
+    state = _typed(state, "ATT")
+
+    result = reduce(state, KeyEvent.ENTER)
+
+    assert result.mode == Mode.CONFIRMING
+    assert result.confirmation.kind == ConfirmationKind.ACCEPT
+    assert result.confirmation.choice == ConfirmationChoice.NO
+    assert result.confirmation.second_ctrl_c_armed is False
+    assert result.edit is None
+    committed = next(m for m in result.mappings if m.ordinal == 3)
+    assert committed.target_value == "ATT"
+
+
+def test_submit_over_an_already_collision_free_dataset_enters_accept_confirmation():
+    # Spec §4.2: Enter with VALID validation → "CONFIRMING with ACCEPT if
+    # collisions now zero" — the guard is the post-commit count alone, with no
+    # requirement that the commit itself resolved anything.
+    from mapping_resolution_tui.state import ConfirmationKind
+
+    state = make_initial_state(make_config(), make_mappings())
+    state = _with_target_value(state, 3, "ATT")  # resolve the AT-T collision first
+    state = _select(state, 1)
+    state = reduce(state, KeyEvent.ENTER)
+    state = _typed(state, "APPL")
+
+    result = reduce(state, KeyEvent.ENTER)
+
+    assert result.mode == Mode.CONFIRMING
+    assert result.confirmation.kind == ConfirmationKind.ACCEPT
+
+
+def test_submit_with_invalid_buffer_is_a_noop_keeping_the_error_visible():
+    state = make_initial_state(make_config(), make_mappings())
+    state = reduce(state, KeyEvent.ENTER)
+    state = _typed(state, "44PL")
+    assert state.edit.validation.status == "INVALID"
+
+    result = reduce(state, KeyEvent.ENTER)
+
+    assert result is state  # no commit, mode unchanged, error remains (FR18)
+
+
+def test_submit_with_empty_buffer_is_a_noop():
+    state = make_initial_state(make_config(), make_mappings())
+    state = reduce(state, KeyEvent.ENTER)
+    assert state.edit.buffer == ""
+
+    result = reduce(state, KeyEvent.ENTER)
+
+    assert result is state
+
+
+def test_cancel_discards_the_buffer_and_preserves_the_filter():
+    state = make_initial_state(make_config(), make_mappings())
+    state = _typed(state, "1")
+    pre_filter = state.filter
+    state = reduce(state, KeyEvent.ENTER)
+    state = _typed(state, "XYZ")
+
+    result = reduce(state, KeyEvent.ESCAPE)
+
+    assert result.mode == Mode.BROWSING
+    assert result.edit is None
+    assert result.filter == pre_filter  # FR16: intact exactly as on entry
+    assert result.selection.selected_ordinal == 1
+    untouched = next(m for m in result.mappings if m.ordinal == 1)
+    assert untouched.target_value is None
+
+
+def test_quit_during_editing_cancels_the_edit_not_the_run():
+    state = make_initial_state(make_config(), make_mappings())
+    state = reduce(state, KeyEvent.ENTER)
+    state = _typed(state, "X")
+
+    result = reduce(state, KeyEvent.QUIT)
+
+    assert result.mode == Mode.BROWSING
+    assert result.edit is None
+    assert result.result.status == "RUNNING"  # the run itself continues

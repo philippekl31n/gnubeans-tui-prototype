@@ -16,6 +16,7 @@ from enum import Enum, auto
 
 
 class KeyEvent(Enum):
+    QUIT = auto()
     ESCAPE = auto()
     ENTER = auto()
     BACKSPACE = auto()

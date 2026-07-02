@@ -54,13 +54,15 @@ def filter_line(frame):
     return next(line for line in frame if "Filter:" in line)
 
 
-# ── quit-key detection ────────────────────────────────────────────────────────
+# ── quit-key normalisation ───────────────────────────────────────────────────
 
-def test_is_quit_key_accepts_raw_ctrl_c_and_readable_token():
-    assert loop.is_quit_key(CTRL_C) is True
-    assert loop.is_quit_key("ctrl+c") is True
-    assert loop.is_quit_key("a") is False
-    assert loop.is_quit_key(Key(name="KEY_LEFT")) is False
+def test_key_to_event_maps_ctrl_c_and_readable_token_to_quit():
+    # ctrl+c is an ordinary mode-dispatched event (spec §4.2 has a ctrl+c row
+    # per mode), normalised like every other key: the raw control byte from a
+    # live blessed keystroke and the readable config token from headless
+    # drivers both collapse onto KeyEvent.QUIT.
+    assert loop.key_to_event(CTRL_C) is KeyEvent.QUIT
+    assert loop.key_to_event("ctrl+c") is KeyEvent.QUIT
 
 
 # ── key -> event mapping (one unified, table-driven function) ─────────────────
@@ -113,7 +115,6 @@ def test_key_to_event_maps_supported_keys(key, expected):
     "key",
     [
         CTRL_X,
-        CTRL_C,                  # quit is handled by is_quit_key, not key_to_event
         # no-op readline families:
         CTRL_G, CTRL_Q, CTRL_V, CTRL_US, CTRL_T, CTRL_Y, CTRL_R,
     ],
@@ -230,3 +231,48 @@ def test_quit_key_exits_cleanly_with_none():
     assert result is None
     # the trailing "b" after the quit key is never processed
     assert len(frames) == 2  # initial + the "a" insert
+
+
+# ── ctrl+c during EDITING cancels the edit (TASK-008, spec §4.2 / FR16) ──────
+
+def test_ctrl_c_during_editing_cancels_the_edit_instead_of_quitting():
+    # Enter edit on the selected row, type into the buffer, then ctrl+c: the
+    # edit is discarded like Esc and the loop keeps consuming input — the
+    # trailing "3" still reaches the filter and the run ends cleanly.
+    result, frames = run_keys([Key(name="KEY_ENTER"), "X", CTRL_C, "3"])
+
+    assert result is not None  # clean end-of-input exit, not a quit
+    assert "Filter: 3" in filter_line(frames[-1])
+    assert all(m.target_value is None for m in result)  # buffer discarded
+
+
+def test_ctrl_c_cancel_rerenders_the_restored_browsing_frame():
+    _, frames = run_keys([Key(name="KEY_ENTER"), CTRL_C])
+    # initial + edit entry + cancel repaint
+    assert len(frames) == 3
+    assert "Filter:" in filter_line(frames[-1])  # back to the browsing prompt
+
+
+def test_ctrl_c_outside_an_edit_still_quits():
+    result, frames = run_keys(["3", CTRL_C, "4"])
+    assert result is None
+    assert "Filter: 3" in filter_line(frames[-1])  # the trailing "4" never ran
+
+
+def test_ctrl_c_in_confirming_quits_the_run():
+    # Resolve the final collision (ordinal 3 -> "ATT") to land in CONFIRMING,
+    # then ctrl+c: no EXIT-confirmation flow exists yet, so the run ends and
+    # the trailing key is never consumed.
+    result, frames = run_keys(
+        [Key(name="KEY_DOWN"), Key(name="KEY_DOWN"), Key(name="KEY_ENTER"),
+         "A", "T", "T", Key(name="KEY_ENTER"), CTRL_C, "3"]
+    )
+    assert result is None
+    assert "Filter: 3" not in filter_line(frames[-1])
+
+
+def test_quit_does_not_render_a_terminal_frame():
+    # Ending the run repaints nothing: the §6.7 result frame is a later task,
+    # so the last rendered frame is the state before ctrl+c.
+    _, frames = run_keys(["3", CTRL_C])
+    assert len(frames) == 2  # initial + the "3" insert only
