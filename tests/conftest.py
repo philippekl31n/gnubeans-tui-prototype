@@ -39,6 +39,36 @@ def frame_1a_screen(frame_1a_lines):
 
 
 @pytest.fixture
+def frame_1b_lines():
+    """Frame 1b: ctrl+c from the initial browsing state opens the exit confirmation.
+
+    From frame 1a (fresh dataset, the AT-T collision still open) the reviewer
+    presses ctrl+c. The app enters the exit confirmation: ``mode = CONFIRMING``,
+    ``confirmation.kind = EXIT``, ``choice = NO``, ``second_ctrl_c_armed = True``
+    (spec §4.2). The header keeps the ``1 unresolved collision`` count and swaps
+    its shortcut to ``ctrl+c exit``; the prompt becomes ``Skip adding
+    commodities? [y/N]`` with the active NO reverse-video; the confirming table
+    windows the full 11-row list (ordinals 1..9 at ``scrollOffset = 0``) with no
+    row cursor; rows 2/3 keep their ``!`` collision markers; and the footer
+    follows the choice-driven rule for ``choice = NO`` (``↑↓ scroll · shift+↑↓
+    pageup/dn · ↵ edit mappings``) (storyboard frame 1b / spec §6.4–6.6).
+    """
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.events import KeyEvent
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    state = reduce(state, KeyEvent.QUIT)
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_1b_screen(frame_1b_lines):
+    return make_pyte_screen(frame_1b_lines)
+
+
+@pytest.fixture
 def frame_2_lines():
     """Frame 2: Tab autocompletes a leading ``!`` collision metafilter from 1a.
 

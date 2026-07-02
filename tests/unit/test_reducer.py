@@ -390,20 +390,34 @@ def test_backward_kill_word_with_no_word_behind_is_a_noop(state):
 # ── KeyEvent.QUIT: mode-dispatched ctrl+c (spec §4.2 ctrl+c rows) ────────────
 
 
-def test_quit_in_browsing_marks_the_run_cancelled(state):
-    from mapping_resolution_tui.state import Mode
+def test_quit_in_browsing_enters_the_exit_confirmation(state):
+    from mapping_resolution_tui.state import (
+        ConfirmationChoice,
+        ConfirmationKind,
+        Mode,
+    )
 
     result = reduce(state, KeyEvent.QUIT)
 
-    assert result.result.status == "CANCELLED"
-    assert result.mode == Mode.BROWSING  # only the result lifecycle changes
+    # ctrl+c in BROWSING opens the exit confirmation (frame 1b), guarding against
+    # an accidental discard rather than ending the run (spec §4.2).
+    assert result.mode == Mode.CONFIRMING
+    assert result.confirmation.kind == ConfirmationKind.EXIT
+    assert result.confirmation.choice == ConfirmationChoice.NO
+    assert result.confirmation.second_ctrl_c_armed is True
+    assert result.result.status == "RUNNING"  # not a terminal state
     assert result.mappings == state.mappings
 
 
-def test_quit_in_confirming_marks_the_run_cancelled(state):
-    from mapping_resolution_tui.state import Mode
+def test_quit_in_accept_confirming_enters_the_exit_confirmation(state):
+    from mapping_resolution_tui.state import (
+        ConfirmationChoice,
+        ConfirmationKind,
+        Mode,
+    )
 
-    # Drive to CONFIRMING by resolving the final collision from ordinal 3.
+    # Drive to the accept confirmation by resolving the final collision from
+    # ordinal 3.
     s = reduce(state, KeyEvent.SELECTION_DOWN)
     s = reduce(s, KeyEvent.SELECTION_DOWN)
     s = reduce(s, KeyEvent.ENTER)
@@ -411,7 +425,14 @@ def test_quit_in_confirming_marks_the_run_cancelled(state):
         s = reduce(s, ch)
     s = reduce(s, KeyEvent.ENTER)
     assert s.mode == Mode.CONFIRMING  # sanity
+    assert s.confirmation.kind == ConfirmationKind.ACCEPT
 
     result = reduce(s, KeyEvent.QUIT)
 
-    assert result.result.status == "CANCELLED"
+    # ctrl+c from the accept confirmation enters the exit confirmation (spec
+    # §4.2/§11.2), arming the second ctrl+c force-exit.
+    assert result.mode == Mode.CONFIRMING
+    assert result.confirmation.kind == ConfirmationKind.EXIT
+    assert result.confirmation.choice == ConfirmationChoice.NO
+    assert result.confirmation.second_ctrl_c_armed is True
+    assert result.result.status == "RUNNING"
