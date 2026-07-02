@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 from mapping_resolution_tui.state import (
     AppConfig,
     ConfirmationChoice,
+    ConfirmationKind,
+    ConfirmationPromptContent,
     FilterPromptContent,
     FooterContent,
     FooterHint,
@@ -365,6 +367,30 @@ def select_filter_prompt(state: "AppState", unresolved_count: int) -> FilterProm
         filter_cursor=state.filter.cursor,
         collision_only=state.filter.collision_only,
         collision_hint_visible=unresolved_count > 0,
+    )
+
+
+def select_confirmation_prompt(state: "AppState") -> ConfirmationPromptContent:
+    """Derive the confirmation prompt content for CONFIRMING mode (spec §6.5).
+
+    The prompt text comes from ``config.acceptPrompt``/``config.exitPrompt`` per
+    ``confirmation.kind``; the ``[y/N]``/``[Y/n]`` indicators are cased so the
+    active choice is upper-case, and ``yes_active`` tells the renderer which
+    indicator to render reverse-video. Rendering is driven entirely from this
+    output so the renderer never branches on ``ConfirmationKind``/``choice``.
+    """
+    config = state.config
+    prompt = (
+        config.exit_prompt
+        if state.confirmation.kind is ConfirmationKind.EXIT
+        else config.accept_prompt
+    )
+    yes_active = state.confirmation.choice is ConfirmationChoice.YES
+    return ConfirmationPromptContent(
+        prompt=prompt,
+        yes_indicator="Y" if yes_active else "y",
+        no_indicator="n" if yes_active else "N",
+        yes_active=yes_active,
     )
 
 
