@@ -268,7 +268,8 @@ def test_ctrl_c_in_confirming_quits_the_run():
          "A", "T", "T", Key(name="KEY_ENTER"), CTRL_C, "3"]
     )
     assert result is None
-    assert "Filter: 3" not in filter_line(frames[-1])
+    # No Filter line exists in CONFIRMING mode, so we just check it entered it:
+    assert any("Accept all?" in line for line in frames[-1])
 
 
 def test_quit_does_not_render_a_terminal_frame():

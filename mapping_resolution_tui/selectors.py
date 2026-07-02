@@ -15,6 +15,7 @@ from mapping_resolution_tui.state import (
     Mode,
     Source,
     FocusRegion,
+    ConfirmationKind,
 )
 
 if TYPE_CHECKING:
@@ -42,6 +43,53 @@ class EditRowContent:
     validation_error: str | None
     focus_region: FocusRegion
     sources: tuple[EditSourceRow, ...]
+
+
+@dataclass(frozen=True)
+class ConfirmationPromptContent:
+    prompt_text: str
+    yes_text: str
+    no_text: str
+    is_yes_active: bool
+
+
+def select_confirmation_prompt(state: "AppState") -> ConfirmationPromptContent:
+    config = state.config
+    conf = state.confirmation
+
+    if conf.kind == ConfirmationKind.ACCEPT:
+        prompt_text = config.accept_prompt
+    elif conf.kind == ConfirmationKind.EXIT:
+        prompt_text = config.exit_prompt
+    else:
+        prompt_text = ""
+
+    is_yes = (conf.choice == ConfirmationChoice.YES)
+    return ConfirmationPromptContent(
+        prompt_text=prompt_text,
+        yes_text="Y" if is_yes else "y",
+        no_text="N" if not is_yes else "n",
+        is_yes_active=is_yes,
+    )
+
+
+def select_confirmation_header(state: "AppState") -> str:
+    """Return the raw header text template for CONFIRMING mode."""
+    config = state.config
+    total = len(state.mappings)
+    count = select_unresolved_collision_count(state.mappings)
+    entity = config.entity_name_singular
+    noun = config.mapping_noun_plural
+    plural = "" if count == 1 else "s"
+
+    if state.confirmation.kind == ConfirmationKind.EXIT:
+        if count > 0:
+            return f"❯ Reviewing {total} {entity} {noun}. {count} unresolved collision{plural}. ctrl+c exit"
+        else:
+            return f"❯ Reviewing {total} {entity} {noun}. ctrl+c exit"
+    else:
+        # ACCEPT confirmation always has zero collisions
+        return f"❯ Reviewing {total} {entity} {noun}. ctrl+c cancel"
 
 
 def select_source_effective_value(source: Source) -> str | None:

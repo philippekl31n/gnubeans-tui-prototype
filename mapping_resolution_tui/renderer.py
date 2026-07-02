@@ -23,6 +23,8 @@ from mapping_resolution_tui.selectors import (
     select_render_collision_ordinals,
     select_visible_rows,
     select_edit_render_row,
+    select_confirmation_prompt,
+    select_confirmation_header,
 )
 
 _BOLD = "\x1b[1m"
@@ -267,7 +269,13 @@ def render_lines(state: AppState) -> list[str]:
     # ── header ────────────────────────────────────────────────────────────────
     noun = config.mapping_noun_plural
     entity = config.entity_name_singular
-    if unresolved_count > 0:
+    if state.mode == Mode.CONFIRMING:
+        raw_header = select_confirmation_header(state)
+        raw_header = raw_header.replace("❯", f"{_BOLD}❯{_RESET}")
+        raw_header = raw_header.replace("ctrl+c cancel", f"{_DIM}ctrl+c cancel{_RESET}")
+        raw_header = raw_header.replace("ctrl+c exit", f"{_DIM}ctrl+c exit{_RESET}")
+        header = raw_header
+    elif unresolved_count > 0:
         plural = "" if unresolved_count == 1 else "s"
         header = (
             f"{_BOLD}❯{_RESET} Reviewing {total} {entity} {noun}. "
@@ -281,7 +289,16 @@ def render_lines(state: AppState) -> list[str]:
         )
 
     # ── prompt ────────────────────────────────────────────────────────────────
-    if state.mode == Mode.EDITING:
+    if state.mode == Mode.CONFIRMING:
+        prompt_data = select_confirmation_prompt(state)
+        if prompt_data.is_yes_active:
+            yes_str = f"{_REV}{_BOLD}{prompt_data.yes_text}{_RESET}"
+            no_str = prompt_data.no_text
+        else:
+            yes_str = prompt_data.yes_text
+            no_str = f"{_REV}{_BOLD}{prompt_data.no_text}{_RESET}"
+        prompt = f"  {prompt_data.prompt_text} [{yes_str}/{no_str}]"
+    elif state.mode == Mode.EDITING:
         mapping = next(m for m in state.mappings if m.ordinal == state.edit.mapping_ordinal)
         default_val = select_default_source_value(mapping)
         prompt = f'  Editing mapping for "{default_val}":'
@@ -327,7 +344,12 @@ def render_lines(state: AppState) -> list[str]:
     for mapping in shown:
         is_selected = mapping.ordinal == state.selection.selected_ordinal
         collision = "!" if mapping.ordinal in collision_ordinals else " "
-        cursor = "▸" if is_selected else " "
+        
+        # Hide cursor in CONFIRMING mode
+        if state.mode == Mode.CONFIRMING:
+            cursor = " "
+        else:
+            cursor = "▸" if is_selected else " "
 
         if editing and is_selected:
             body_lines.append(
