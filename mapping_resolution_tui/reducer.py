@@ -832,15 +832,17 @@ def _reduce_confirm_enter(state: AppState) -> AppState:
 
     With ``choice = NO`` it leaves the confirmation back to BROWSING. With
     ``choice = YES`` an accept confirmation commits every mapping and marks the
-    run ``ACCEPTED``, driving the §6.7 terminal result frame. The exit
-    confirmation's YES action (skip and SIGINT) is owned by a later story, so
-    a YES enter changes nothing outside ``kind = ACCEPT``.
+    run ``ACCEPTED``, driving the §6.7 terminal result frame; an exit
+    confirmation marks it ``SKIPPED`` — a clean skip that adds no commodities.
+    A YES exit MUST NOT send SIGINT: the force-exit is reserved for the second
+    ctrl+c (spec §4.1/§4.2).
     """
     if state.confirmation.choice is not ConfirmationChoice.YES:
         return _leave_confirming(state)
-    if state.confirmation.kind is ConfirmationKind.ACCEPT:
-        return replace(state, result=ResultState(status="ACCEPTED"))
-    return state
+    accepting = state.confirmation.kind is ConfirmationKind.ACCEPT
+    return replace(
+        state, result=ResultState(status="ACCEPTED" if accepting else "SKIPPED")
+    )
 
 
 def _reduce_confirm_escape(state: AppState) -> AppState:

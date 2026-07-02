@@ -206,6 +206,51 @@ def test_enter_on_yes_marks_the_run_accepted():
     assert accepted.mappings is confirming.mappings
 
 
+# ── exit confirmation: Enter skips or returns (TASK-012, spec §4.1/§4.2) ─────
+
+
+def _exit_confirming_state():
+    """CONFIRMING/EXIT/NO with the second ctrl+c armed (spec §4.2).
+
+    Constructed directly for now; the ctrl+c entry paths that produce exactly
+    this state are wired to the mode tables in the follow-up steps.
+    """
+    state = _initial_state()
+    return replace(
+        state,
+        mode=Mode.CONFIRMING,
+        confirmation=replace(
+            state.confirmation,
+            kind=ConfirmationKind.EXIT,
+            choice=ConfirmationChoice.NO,
+            second_ctrl_c_armed=True,
+        ),
+    )
+
+
+def test_enter_on_yes_in_exit_confirmation_marks_the_run_skipped():
+    # A YES exit is a clean skip: SKIPPED, never SIGINT (spec §4.1/§4.2).
+    exiting = _exit_confirming_state()
+    skipped = _reduce_all(exiting, ["y", KeyEvent.ENTER])
+    assert skipped.result.status == "SKIPPED"
+    assert skipped.mappings is exiting.mappings  # nothing was committed
+
+
+def test_enter_on_no_in_exit_confirmation_returns_to_browsing():
+    browsing = reduce(_exit_confirming_state(), KeyEvent.ENTER)
+    assert browsing.mode is Mode.BROWSING
+    assert browsing.confirmation.kind is ConfirmationKind.NONE
+    assert browsing.confirmation.second_ctrl_c_armed is False
+    assert browsing.result.status == "RUNNING"
+
+
+def test_escape_in_exit_confirmation_returns_to_browsing():
+    browsing = reduce(_exit_confirming_state(), KeyEvent.ESCAPE)
+    assert browsing.mode is Mode.BROWSING
+    assert browsing.confirmation.kind is ConfirmationKind.NONE
+    assert browsing.result.status == "RUNNING"
+
+
 def test_leave_confirming_preserves_mappings_identity():
     confirming = _confirming_state()
     browsing = reduce(confirming, KeyEvent.ENTER)
