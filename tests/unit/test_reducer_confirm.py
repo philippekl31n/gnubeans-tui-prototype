@@ -272,3 +272,44 @@ def test_row_scrolling_clamps_over_the_full_list_despite_an_active_filter():
         state = reduce(state, KeyEvent.SELECTION_DOWN)
     assert state.selection.scroll_offset == 2
     assert state.filter.raw == "AT"
+
+
+# ── page scrolling of the confirming window (TASK-011, spec §8.5) ────────────
+
+
+def test_page_down_scrolls_by_one_page_without_moving_the_selection():
+    confirming = _confirming_state()
+    paged = reduce(confirming, KeyEvent.PAGE_DOWN)
+    assert paged.mode is Mode.CONFIRMING
+    assert paged.selection.scroll_offset == 9
+    # §8.5: in CONFIRMING, selection MUST NOT change.
+    assert paged.selection.selected_ordinal == confirming.selection.selected_ordinal
+    assert paged.confirmation is confirming.confirmation
+
+
+def test_page_down_clamps_at_max_scroll_offset_with_a_partial_window():
+    # Unlike row movement, page movement clamps to maxScrollOffset = 10, so
+    # the last row may anchor the top of a partially-full window (§8.5,
+    # frame 7b: PgDn from offset 1 lands on min(1 + 9, 10) = 10).
+    state = reduce(_confirming_state(), KeyEvent.SELECTION_DOWN)
+    paged = reduce(state, KeyEvent.PAGE_DOWN)
+    assert paged.selection.scroll_offset == 10
+    assert reduce(paged, KeyEvent.PAGE_DOWN) is paged
+
+
+def test_page_up_scrolls_back_and_clamps_at_zero():
+    paged = reduce(_confirming_state(), KeyEvent.PAGE_DOWN)
+    back = reduce(paged, KeyEvent.PAGE_UP)
+    assert back.selection.scroll_offset == 0
+    assert back.selection.selected_ordinal == paged.selection.selected_ordinal
+    assert reduce(back, KeyEvent.PAGE_UP) is back
+
+
+def test_page_up_from_a_partial_window_steps_back_by_page_size():
+    # Frame 7b -> PgUp: max(10 - 9, 0) = 1, not a snap to the top.
+    state = _reduce_all(
+        _confirming_state(),
+        [KeyEvent.SELECTION_DOWN, KeyEvent.PAGE_DOWN],
+    )
+    assert state.selection.scroll_offset == 10  # sanity: frame 7b
+    assert reduce(state, KeyEvent.PAGE_UP).selection.scroll_offset == 1

@@ -767,6 +767,25 @@ def _reduce_confirm_scroll_down(state: AppState) -> AppState:
     return _confirming_scroll(state, 1, _confirming_max_fill_offset(state))
 
 
+def _confirming_max_scroll_offset(state: AppState) -> int:
+    """maxScrollOffset over the full mapping list (spec §8.5).
+
+    Page movement may anchor the last row at the top of a partially-full
+    window (frame 7b), so it clamps here, NOT to maxFillOffset.
+    """
+    return max(0, len(state.mappings) - 1)
+
+
+def _reduce_confirm_page_up(state: AppState) -> AppState:
+    capacity = select_body_capacity(state.terminal.height)
+    return _confirming_scroll(state, -capacity, _confirming_max_scroll_offset(state))
+
+
+def _reduce_confirm_page_down(state: AppState) -> AppState:
+    capacity = select_body_capacity(state.terminal.height)
+    return _confirming_scroll(state, capacity, _confirming_max_scroll_offset(state))
+
+
 def _leave_confirming(state: AppState) -> AppState:
     """Return to BROWSING preserving the filter (spec §4.2 / §8.4).
 
@@ -889,6 +908,8 @@ _CONFIRMING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
     KeyEvent.CURSOR_RIGHT:   _reduce_confirm_toggle,
     KeyEvent.SELECTION_UP:   _reduce_confirm_scroll_up,
     KeyEvent.SELECTION_DOWN: _reduce_confirm_scroll_down,
+    KeyEvent.PAGE_UP:        _reduce_confirm_page_up,
+    KeyEvent.PAGE_DOWN:      _reduce_confirm_page_down,
 }
 
 # Top-level registry: one dict per mode.
