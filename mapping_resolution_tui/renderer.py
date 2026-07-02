@@ -11,6 +11,8 @@ from mapping_resolution_tui.selectors import (
     EditSourceRow,
     select_body_capacity,
     select_body_rows,
+    select_confirmation_header,
+    select_confirmation_prompt,
     select_current_target_value,
     select_default_source,
     select_default_source_value,
@@ -67,6 +69,17 @@ def _apply_bold_spans(text: str, spans: tuple[tuple[int, int], ...]) -> str:
         prev = end
     out.append(text[prev:])
     return "".join(out)
+
+
+def _style_confirmation_header(plain: str) -> str:
+    """Apply header styling to a plain CONFIRMING header line (spec §6.4).
+
+    The leading ``❯`` glyph is bold and the trailing keyboard shortcut — always
+    starting at the first ``ctrl+`` — is dim, matching the styling the browsing
+    header builds inline.
+    """
+    idx = plain.index("ctrl+")
+    return f"{_BOLD}❯{_RESET}{plain[1:idx]}{_DIM}{plain[idx:]}{_RESET}"
 
 
 def _render_filter_cursor(raw: str, cursor: int) -> str:
@@ -267,7 +280,9 @@ def render_lines(state: AppState) -> list[str]:
     # ── header ────────────────────────────────────────────────────────────────
     noun = config.mapping_noun_plural
     entity = config.entity_name_singular
-    if unresolved_count > 0:
+    if state.mode == Mode.CONFIRMING:
+        header = _style_confirmation_header(select_confirmation_header(state))
+    elif unresolved_count > 0:
         plural = "" if unresolved_count == 1 else "s"
         header = (
             f"{_BOLD}❯{_RESET} Reviewing {total} {entity} {noun}. "
@@ -285,6 +300,18 @@ def render_lines(state: AppState) -> list[str]:
         mapping = next(m for m in state.mappings if m.ordinal == state.edit.mapping_ordinal)
         default_val = select_default_source_value(mapping)
         prompt = f'  Editing mapping for "{default_val}":'
+    elif state.mode == Mode.CONFIRMING:
+        # Driven entirely by select_confirmation_prompt (spec §6.5): the active
+        # y/n choice renders reverse-video and bold; the renderer never
+        # branches on confirmation.kind or choice.
+        prompt_content = select_confirmation_prompt(state)
+        if prompt_content.yes_active:
+            yes = f"{_REV}{_BOLD}{prompt_content.yes_indicator}{_RESET}"
+            no = prompt_content.no_indicator
+        else:
+            yes = prompt_content.yes_indicator
+            no = f"{_REV}{_BOLD}{prompt_content.no_indicator}{_RESET}"
+        prompt = f"  {prompt_content.prompt} [{yes}/{no}]"
     else:
         prompt_content = select_filter_prompt(state, unresolved_count)
         if prompt_content.filter_raw == "!":
@@ -327,7 +354,9 @@ def render_lines(state: AppState) -> list[str]:
     for mapping in shown:
         is_selected = mapping.ordinal == state.selection.selected_ordinal
         collision = "!" if mapping.ordinal in collision_ordinals else " "
-        cursor = "▸" if is_selected else " "
+        # The row cursor is a BROWSING affordance: CONFIRMING renders no
+        # selectedOrdinal cursor (spec §8.4) even though a selection persists.
+        cursor = "▸" if is_selected and state.mode != Mode.CONFIRMING else " "
 
         if editing and is_selected:
             body_lines.append(
