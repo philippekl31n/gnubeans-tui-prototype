@@ -271,8 +271,13 @@ def _target_validation(state: AppState, mapping: Mapping, buffer: str) -> Valida
     return state.config.target_policy.validate(effective_text, context)
 
 
+def _edited_mapping(state: AppState) -> Mapping:
+    """The mapping currently under edit (``state.edit.mapping_ordinal``)."""
+    return next(m for m in state.mappings if m.ordinal == state.edit.mapping_ordinal)
+
+
 def _validate_edit(state: AppState, edit: EditState, new_buffer: str) -> EditState:
-    mapping = next(m for m in state.mappings if m.ordinal == edit.mapping_ordinal)
+    mapping = _edited_mapping(state)
     validation = _target_validation(state, mapping, new_buffer)
     return replace(edit, buffer=new_buffer, validation=validation)
 
@@ -319,7 +324,7 @@ def _autofill_source_pointer(state: AppState, edit: EditState, index: int) -> Ap
     active-source lookup is never re-derived here.
     """
     pointed = replace(edit, source_pointer_index=index)
-    mapping = next(m for m in state.mappings if m.ordinal == edit.mapping_ordinal)
+    mapping = _edited_mapping(state)
     new_buffer = select_source_pointer_value(replace(state, edit=pointed), mapping)
     final_edit = replace(pointed, cursor=len(new_buffer))
     return replace(state, edit=_validate_edit(state, final_edit, new_buffer))
@@ -338,7 +343,7 @@ def _move_source_pointer(state: AppState, direction: int) -> AppState:
     sets cursor to the end of the new buffer, and revalidates.
     """
     edit = state.edit
-    mapping = next(m for m in state.mappings if m.ordinal == edit.mapping_ordinal)
+    mapping = _edited_mapping(state)
     active_sources = select_active_sources(mapping)
     if not active_sources:
         return state
@@ -532,7 +537,7 @@ def _reduce_token_insert_char(state: AppState, char: str, now: Optional[float]) 
         # Over-limit: the character is discarded (buffer/cursor unchanged), but
         # the rejected candidate is still validated so the real policy error
         # ("24 chars max") surfaces immediately, and the flash timer arms (FR20).
-        mapping = next(m for m in state.mappings if m.ordinal == edit.mapping_ordinal)
+        mapping = _edited_mapping(state)
         context = TargetValidationContext(
             is_concrete_buffer=True,
             is_ghost_only_default=False,
