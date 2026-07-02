@@ -64,8 +64,9 @@ The arch spec footer table now matches the storyboard:
 - Browsing, inactive/empty filter: `shift+↑↓ pageup/dn  ·  ↵ edit selected`
 - Browsing, active filter with rows: `shift+↑↓ pageup/dn  ·  ↵ edit selected  ·  esc clear filter`
 - Browsing, active filter, no rows: `Error: no matching rows  ·  esc clear filter`
-- Confirming (YES): `↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ confirm`
-- Confirming (NO): `↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ edit mappings`
+- Confirming, choice NO (accept or exit): `↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ edit mappings`
+- Confirming accept, choice YES: `↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ submit mappings`
+- Confirming exit, choice YES: `↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ skip`
 
 ---
 

@@ -85,11 +85,13 @@ tasks:
       - "Enter when choice = NO, or Esc, returns to BROWSING with filter
         state preserved"
       - "Footer renders 'scroll · shift pageup/dn · enter edit mappings'
-        when choice = NO; 'scroll · shift pageup/dn · enter confirm' when
-        choice = YES"
+        when choice = NO; 'scroll · shift pageup/dn · enter submit mappings'
+        when choice = YES (spec section 6.6; the accept/YES footer appears in
+        no storyboard frame)"
       - "Golden frame frame_6 committed: ACCEPT confirmation after last
         collision resolved; 'Accept all? [y/*N*]'; full table visible; NO
-        reverse-video active"
+        reverse-video active; footer 'enter edit mappings' (identical to
+        frame 7a — no 'enter confirm')"
       - "Golden frame frame_14 committed: re-entry via ctrl+s after returning
         to BROWSING; state matches frame_6"
       - "Golden frame frame_accept_terminal committed: TUI exits cleanly with

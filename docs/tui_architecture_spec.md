@@ -483,7 +483,7 @@ between key events until the user confirms, changes choice, cancels, or leaves c
 | `Shift+↓` / `PgDn` | Page down and select first visible row | No-op | Page scroll down | Page scroll down |
 | `←` | Move filter cursor left | Move edit cursor left in token input; no-op in source list | Toggle choice | Toggle choice |
 | `→` | Move filter cursor right | Move edit cursor right in token input; no-op in source list | Toggle choice | Toggle choice |
-| `Enter` | Edit selected row | Submit only if valid | Confirm if YES, otherwise edit mappings | Skip if YES, otherwise edit mappings |
+| `Enter` | Edit selected row | Submit only if valid | Submit mappings if YES, otherwise edit mappings | Skip if YES, otherwise edit mappings |
 | `Esc` | Clear active filter, otherwise no-op | Cancel edit | Edit mappings | Edit mappings |
 | `Tab` | Autocomplete `!` when `Tab to view collisions` ghost visible, else no-op | Complete ghost text in token input | No-op | No-op |
 | `!` | Insert literal `!` at cursor (a leading `!` is the collision metafilter) | Insert literal `!`; validation becomes invalid | No-op | No-op |
@@ -712,12 +712,19 @@ Shortcut portions in the header MUST be dim. The `❯` glyph SHOULD be bold.
 | Browsing, non-empty filter (`filter.raw != ""`) with no rows | `  Error: no matching rows  ·  esc clear filter` |
 | Editing, valid or empty | `  type to edit  ·  ↑↓ select source  ·  ↵ submit  ·  esc cancel` when valid; omit submit when invalid/empty |
 | Editing, invalid | `  Error: {message}  ·  ↑↓ select source  ·  esc cancel` |
-| Confirming, choice YES | `  ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ confirm` |
-| Confirming, choice NO | `  ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ edit mappings` |
+| Confirming, choice `NO` (accept or exit) | `  ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ edit mappings` |
+| Confirming accept, choice `YES` | `  ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ submit mappings` |
+| Confirming exit, choice `YES` | `  ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ skip` |
 
-Frame 6 is a storyboard-specific render case: it enters `CONFIRMING ACCEPT` with `NO` selected but
-still renders the footer text `↵ confirm`. This footer text MUST be preserved for frame-accurate
-rendering; the `Enter` key behavior MUST still follow `choice == NO` and return to `BROWSING`.
+The confirming ENTER hint is keyed on `(confirmation.kind, confirmation.choice)` and describes exactly
+what `Enter` does in that state: `choice == NO` returns to `BROWSING` (`↵ edit mappings`), accept
+confirmation with `choice == YES` accepts every mapping and renders the completion output
+(`↵ submit mappings`, §4.1/§4.2), and exit confirmation with `choice == YES` skips and exits (`↵ skip`,
+§4.1/§4.2). The hint MUST change the moment the choice toggles and MUST NOT depend on how the
+confirmation was entered. Frame 6 and frame 7a are both `CONFIRMING ACCEPT` with `choice == NO` and MUST
+render the identical `↵ edit mappings` footer; an earlier revision showed `↵ confirm` in frame 6 only,
+which contradicted frame 7a and is no longer permitted. The `↵ submit mappings` and `↵ skip` footers are
+correct but appear in no storyboard frame, because no frame toggles a confirmation to `YES`.
 
 For browsing filters with search text, `{cursor}` MUST render at `filter.cursor` within `filter.raw`. If
 `filter.cursor == filter.raw.length`, the cursor MUST be a reverse-video space after the visible query.
@@ -1265,7 +1272,7 @@ file; snapshots are regenerated with `pytest --update-snapshots`.
 | 3 | Frame 2 | `3` | `BROWSING`, `filter.raw="!3"`, `collisionOnly=true` (derived), `text="3"` (derived), `filter.cursor=2`, selected row 3 | 3 | Prompt `!3{cursor}`; footer clear filter | Ordinal `3` bold; no source matching; footer row 7 |
 | 4 | Frame 3 | `Backspace`, `↓`, `Enter` | `EDITING` row 3, empty buffer, ghost `AT-T`, token focus | 2 dim, expanded 3 | Editing prompt for `AT-T`; footer no submit | Row 2 super dim; active row shows `▸`, `!`, reverse `A`, dim `T-T`; source rows include `(not set)` |
 | 5 | Frame 4 | `A`, `T`, `T` | `EDITING` row 3, buffer `ATT`, valid, collisions zero live | 2 dim, expanded 3 | Footer includes submit | Rows 2/3 have no `!`; active row shows `ATT`, cursor, `✓` |
-| 6 | Frame 5 | `Enter` | `CONFIRMING ACCEPT`, choice `NO`, `scrollOffset=0`, collisions zero | 1..9 | `Accept all? [y/N]`; footer confirm per storyboard frame | Header omits collision count; no cursor; row 3 target `ATT` |
+| 6 | Frame 5 | `Enter` | `CONFIRMING ACCEPT`, choice `NO`, `scrollOffset=0`, collisions zero | 1..9 | `Accept all? [y/N]`; footer edit mappings (identical to frame 7a) | Header omits collision count; no cursor; row 3 target `ATT` |
 | 7a | Frame 6 | `↓` | `CONFIRMING ACCEPT`, choice `NO`, `scrollOffset=1` | 2..10 | `Accept all? [y/N]`; footer edit mappings | No cursor; first visible row is 2; row 10 visible |
 | 7b | Frame 7a | `Shift+↓`, `Enter` | `BROWSING`, collisions zero, selected row 11 | 11 | Filter ghost `Type to filter`; footer edit selected | Header includes `ctrl+s submit`; row 11 has `▸`; footer row 7 |
 | 7c | Frame 7b | `↑` | `BROWSING`, selected row 10, last page visible | 10,11 | Filter ghost `Type to filter`; footer edit selected | Row 10 has `▸`; row 11 follows; footer row 8 |
@@ -1285,6 +1292,7 @@ file; snapshots are regenerated with `pytest --update-snapshots`.
 |---|---|
 | Distinct confirmation intents missing | Assert frame 1b uses `kind=EXIT`, prompt `Skip adding commodities?`, default `NO`, and `YES` result `SKIPPED`; frames 6 and 14 both use `kind=ACCEPT`, default `NO`, and `YES` result `ACCEPTED`. |
 | Confirmation default regression | Change an accept or exit prompt to `YES`, leave confirmation, re-enter any y/n confirmation, and assert `confirmation.choice=NO` immediately on entry. Also assert the renderer does not reset choice during redraw inside the same confirmation visit. |
+| Confirming footer hint drift | Assert the confirming ENTER footer hint is keyed on `(kind, choice)`, not on the entry path: `choice=NO` renders `↵ edit mappings` for both frame 6 (submit auto-entry) and frame 7a (after a scroll), accept `choice=YES` renders `↵ submit mappings`, and exit `choice=YES` renders `↵ skip`. Assert no `↵ confirm` footer is ever produced. |
 | `ctrl+c` dispatcher absent | Assert `ctrl+c` in `BROWSING` enters exit confirmation, in `EDITING` cancels edit, in `ACCEPT` cancels batch, and second `ctrl+c` in `EXIT` emits SIGINT. |
 | Filtering underspecified | Assert `!` inserts a literal `!` into `filter.raw` (a leading `!` enabling the collision metafilter) and `Tab`/`ctrl+i` autocompletes a leading `!` only when the `Tab to view collisions` ghost is visible (and is otherwise a no-op, including a second `Tab` and when no collisions exist); the `!` then edits like ordinary text via readline controls; query text matches ordinal/token only; source text does not match; empty results clear selection; `ctrl+s` still opens accept confirmation with zero collisions. |
 | Edit input insertion contradiction | Assert frame 4 to 5 end-cursor insertion produces `ATT`, not `AT-TATT` or `ATTT`; ghost disappears when buffer no longer prefixes `defaultSourceValue`. |

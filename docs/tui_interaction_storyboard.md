@@ -134,9 +134,10 @@ Below are the exact visual states the TUI must accurately render across its life
    8   QQQ                        cmdty_id: "QQQ"
    9   SPY                        cmdty_id: "SPY"
 
-  ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ confirm
+  ↑↓ scroll  ·  shift+↑↓ pageup/dn  ·  ↵ edit mappings
 ```
-- CONFIRMING mode is triggered upon submit of a Beancount Token that results in there being 0 unresolved collisions; the “Accept all” prompt is set to 'N' 
+- CONFIRMING mode is triggered upon submit of a Beancount Token that results in there being 0 unresolved collisions; the “Accept all” prompt is set to 'N'
+- The ENTER footer hint tracks the current choice: while `N` is active (as here and in frame 7a) it reads `↵ edit mappings`, because ENTER on `N` returns to BROWSING. Toggling to `Y` (never pictured) changes the hint to `↵ submit mappings`, because ENTER on `Y` accepts every mapping and produces the completion output (arch spec §6.6). Frame 6 and frame 7a therefore share the same `↵ edit mappings` footer — an earlier `↵ confirm` here was an inconsistency, now removed.
 
 > TRANSITION to 7a: User types `↓` (or vice-versa)
 > TRANSITION to 7c: User types `shift`+`↓`, then `↵` (or vice-versa)
