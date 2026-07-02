@@ -30,6 +30,7 @@ class Key(str):
 CTRL_A, CTRL_B, CTRL_D, CTRL_E, CTRL_F = "\x01", "\x02", "\x04", "\x05", "\x06"
 CTRL_H, CTRL_K, CTRL_L, CTRL_U, CTRL_W = "\x08", "\x0b", "\x0c", "\x15", "\x17"
 CTRL_C, DEL, ESC, TAB = "\x03", "\x7f", "\x1b", "\t"
+CTRL_S = "\x13"
 META_D, META_BS = "\x1bd", "\x1b\x7f"
 # No-op readline families (abort, quoted-insert, undo, transpose, yank, search).
 CTRL_G, CTRL_Q, CTRL_V, CTRL_R, CTRL_T, CTRL_Y, CTRL_US = (
@@ -101,6 +102,8 @@ def test_key_to_event_maps_ctrl_c_and_readable_token_to_quit():
         # Tab / ctrl+i -> bang autocomplete (the reducer applies the ghost gate)
         (Key(name="KEY_TAB"), KeyEvent.TAB),
         (TAB,                 KeyEvent.TAB),
+        # ctrl+s -> SUBMIT (the reducer applies the zero-collision gate)
+        (CTRL_S, KeyEvent.SUBMIT),
         # printable insertion (incl. a literal bang) — returned as bare str
         ("a", "a"),
         ("3", "3"),

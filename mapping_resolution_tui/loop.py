@@ -63,6 +63,9 @@ _CTRL_EVENTS: dict[str, KeyEvent] = {
     "\x08": KeyEvent.BACKSPACE,          # ctrl+h  backward-delete-char
     "\x7f": KeyEvent.BACKSPACE,          # DEL     backward-delete-char
     "\x09": KeyEvent.TAB,                # ctrl+i  Tab / autocomplete
+    "\x13": KeyEvent.SUBMIT,             # ctrl+s  open accept confirmation (may
+                                         #         be swallowed by terminal XOFF
+                                         #         flow control on a live TTY)
     "\x0b": KeyEvent.KILL_LINE,          # ctrl+k  kill-line
     "\x15": KeyEvent.UNIX_LINE_DISCARD,  # ctrl+u  unix-line-discard
     "\x17": KeyEvent.BACKWARD_KILL_WORD, # ctrl+w  unix-word-rubout
