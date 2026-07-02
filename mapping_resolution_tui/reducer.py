@@ -670,15 +670,41 @@ def _reduce_submit_edit(state: AppState) -> AppState:
 
     if select_unresolved_collision_count(committed.mappings) > 0:
         return committed
+    return _enter_accept_confirmation(committed)
+
+
+# ── CONFIRMING handlers (spec §4.1/§4.2) ──────────────────────────────────────
+
+
+def _enter_accept_confirmation(state: AppState) -> AppState:
+    """Enter the accept confirmation defaulting to NO (spec §4.1/§4.2).
+
+    Shared by the FR23 auto-entry (:func:`_reduce_submit_edit`) and the ctrl+s
+    entry (:func:`_reduce_submit`) so both land on the identical
+    ``CONFIRMING``/``ACCEPT``/``NO`` state before the first render.
+    """
     return replace(
-        committed,
+        state,
         mode=Mode.CONFIRMING,
         confirmation=replace(
-            committed.confirmation,
+            state.confirmation,
             kind=ConfirmationKind.ACCEPT,
             choice=ConfirmationChoice.NO,
         ),
     )
+
+
+def _reduce_submit(state: AppState) -> AppState:
+    """ctrl+s in BROWSING opens the accept confirmation (spec §4.2).
+
+    Accepted whenever ``select_unresolved_collision_count() == 0`` — whether
+    the collisions were just resolved or were already clear at session start,
+    and even when the active filter matches no rows (spec §3.4) — and a no-op
+    (same state returned) while any collision remains open.
+    """
+    if select_unresolved_collision_count(state.mappings) > 0:
+        return state
+    return _enter_accept_confirmation(state)
 
 
 # ── dispatch tables ───────────────────────────────────────────────────────────
@@ -700,6 +726,7 @@ _BROWSING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
     KeyEvent.BACKWARD_KILL_WORD: _reduce_filter_delete_prev_word,
     KeyEvent.REDRAW:             _reduce_redraw,
     KeyEvent.TAB:                _reduce_filter_autocomplete_bang,
+    KeyEvent.SUBMIT:             _reduce_submit,
     KeyEvent.PAGE_UP:            _reduce_table_page_up,
     KeyEvent.PAGE_DOWN:          _reduce_table_page_down,
     KeyEvent.SELECTION_UP:       _reduce_table_selection_up,
