@@ -735,6 +735,38 @@ def _reduce_confirm_insert_char(state: AppState, char: str, now: Optional[float]
     return state
 
 
+def _confirming_scroll(state: AppState, delta: int, max_offset: int) -> AppState:
+    """Scroll the confirming window by ``delta``, clamped to ``[0, max_offset]``.
+
+    CONFIRMING scrolls the full-mapping-list window only — no row cursor moves
+    and the active filter never constrains the table (spec §8.4, §10.1 frame
+    14), so both clamp bounds derive from ``len(state.mappings)``. A clamped
+    no-op preserves identity for the loop's repaint skip.
+    """
+    scroll = max(0, min(state.selection.scroll_offset + delta, max_offset))
+    if scroll == state.selection.scroll_offset:
+        return state
+    return replace(state, selection=replace(state.selection, scroll_offset=scroll))
+
+
+def _confirming_max_fill_offset(state: AppState) -> int:
+    """maxFillOffset over the full mapping list (spec §8.3).
+
+    Row movement keeps the window full; only page movement (§8.5) may scroll
+    further, into a partially-full window.
+    """
+    capacity = select_body_capacity(state.terminal.height)
+    return max(0, len(state.mappings) - capacity)
+
+
+def _reduce_confirm_scroll_up(state: AppState) -> AppState:
+    return _confirming_scroll(state, -1, _confirming_max_fill_offset(state))
+
+
+def _reduce_confirm_scroll_down(state: AppState) -> AppState:
+    return _confirming_scroll(state, 1, _confirming_max_fill_offset(state))
+
+
 def _leave_confirming(state: AppState) -> AppState:
     """Return to BROWSING preserving the filter (spec §4.2 / §8.4).
 
@@ -849,12 +881,14 @@ _EDITING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
 _CONFIRMING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
     # ctrl+c stays wired to the interim cancel (CANCELLED); the EXIT-confirmation
     # transition (frame 1b, armed second ctrl+c) is a later story that owns this
-    # slot (spec §4.2). Scrolling in CONFIRMING is TASK-011.
-    KeyEvent.QUIT:         _reduce_quit,
-    KeyEvent.ENTER:        _reduce_confirm_enter,
-    KeyEvent.ESCAPE:       _reduce_confirm_escape,
-    KeyEvent.CURSOR_LEFT:  _reduce_confirm_toggle,
-    KeyEvent.CURSOR_RIGHT: _reduce_confirm_toggle,
+    # slot (spec §4.2).
+    KeyEvent.QUIT:           _reduce_quit,
+    KeyEvent.ENTER:          _reduce_confirm_enter,
+    KeyEvent.ESCAPE:         _reduce_confirm_escape,
+    KeyEvent.CURSOR_LEFT:    _reduce_confirm_toggle,
+    KeyEvent.CURSOR_RIGHT:   _reduce_confirm_toggle,
+    KeyEvent.SELECTION_UP:   _reduce_confirm_scroll_up,
+    KeyEvent.SELECTION_DOWN: _reduce_confirm_scroll_down,
 }
 
 # Top-level registry: one dict per mode.

@@ -223,3 +223,52 @@ def test_submit_entry_matches_last_resolution_auto_entry():
     )
     assert via_auto.mode is Mode.CONFIRMING  # FR23 auto-entry engaged
     assert via_submit.confirmation == via_auto.confirmation
+
+
+# ── ↑/↓ row scrolling of the confirming window (TASK-011, spec §8.4) ─────────
+
+
+def test_down_arrow_scrolls_the_window_without_moving_the_selection():
+    confirming = _confirming_state()
+    scrolled = reduce(confirming, KeyEvent.SELECTION_DOWN)
+    assert scrolled.mode is Mode.CONFIRMING
+    assert scrolled.selection.scroll_offset == 1
+    # No row cursor in CONFIRMING: the arrow scrolls the window only (§8.4).
+    assert scrolled.selection.selected_ordinal == confirming.selection.selected_ordinal
+    assert scrolled.confirmation is confirming.confirmation
+    assert scrolled.mappings is confirming.mappings
+
+
+def test_up_arrow_scrolls_the_window_back():
+    scrolled = reduce(_confirming_state(), KeyEvent.SELECTION_DOWN)
+    back = reduce(scrolled, KeyEvent.SELECTION_UP)
+    assert back.selection.scroll_offset == 0
+    assert back.selection.selected_ordinal == scrolled.selection.selected_ordinal
+
+
+def test_up_arrow_at_the_top_is_an_identity_noop():
+    confirming = _confirming_state()
+    assert reduce(confirming, KeyEvent.SELECTION_UP) is confirming
+
+
+def test_down_arrow_clamps_at_max_fill_offset():
+    # 11 mappings over a capacity-9 window: row movement keeps the window full,
+    # so the offset clamps at maxFillOffset = 2 (§8.3); only page movement may
+    # scroll into a partially-full window (§8.5).
+    state = _confirming_state()
+    for _ in range(2):
+        state = reduce(state, KeyEvent.SELECTION_DOWN)
+    assert state.selection.scroll_offset == 2
+    assert reduce(state, KeyEvent.SELECTION_DOWN) is state
+
+
+def test_row_scrolling_clamps_over_the_full_list_despite_an_active_filter():
+    # The confirming table windows the full mapping list, never the filtered
+    # visibleRows (spec §10.1 frame 14) — so the clamp bound must too. With
+    # the 'AT' filter (2 visible rows) a visibleRows-based clamp would pin the
+    # offset at 0; the full-list maxFillOffset still allows 2.
+    state = _reduce_all(_resolved_state(), ["A", "T", KeyEvent.SUBMIT])
+    for _ in range(3):
+        state = reduce(state, KeyEvent.SELECTION_DOWN)
+    assert state.selection.scroll_offset == 2
+    assert state.filter.raw == "AT"
