@@ -37,7 +37,7 @@ _FOOTER_HINT_DISPLAY: dict[FooterHint, tuple[str, str]] = {
     FooterHint.EDIT_SELECTED: ("↵",        "edit selected"),
     FooterHint.CLEAR_FILTER:  ("esc",      "clear filter"),
     FooterHint.SCROLL:        ("↑↓",       "scroll"),
-    FooterHint.CONFIRM:       ("↵",        "confirm"),
+    FooterHint.CONFIRM:       ("↵",        "submit mappings"),
     FooterHint.EDIT_MAPPINGS: ("↵",        "edit mappings"),
     FooterHint.TYPE_TO_EDIT:  ("type",     "to edit"),
     FooterHint.SELECT_SOURCE: ("↑↓",       "select source"),
@@ -246,6 +246,12 @@ def _editing_body_rows(
 
 
 def render_lines(state: AppState) -> list[str]:
+    if state.result.status == "ACCEPTED":
+        return [
+            state.config.created_message(len(state.mappings)),
+            f"{_BOLD}❯{_RESET}",
+        ]
+
     config = state.config
     mappings = state.mappings
     height = state.terminal.height

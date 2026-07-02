@@ -380,6 +380,77 @@ def frame_submit_no_resolution_screen(frame_submit_no_resolution_lines):
 
 
 @pytest.fixture
+def frame_6_lines():
+    from dataclasses import replace
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.events import KeyEvent
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    mappings = [replace(m, target_value="ATT") if m.ordinal == 3 else m for m in state.mappings]
+    state = replace(state, mappings=mappings)
+    
+    state = reduce(state, KeyEvent.ENTER)
+    for char in "APPLE":
+        state = reduce(state, char)
+    state = reduce(state, KeyEvent.ENTER)
+    return render_lines(state)
+
+@pytest.fixture
+def frame_6_screen(frame_6_lines):
+    return make_pyte_screen(frame_6_lines)
+
+@pytest.fixture
+def frame_14_lines():
+    from dataclasses import replace
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.events import KeyEvent
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    mappings = [replace(m, target_value="ATT") if m.ordinal == 3 else m for m in state.mappings]
+    state = replace(state, mappings=mappings)
+    
+    state = reduce(state, KeyEvent.ENTER)
+    for char in "APPLE":
+        state = reduce(state, char)
+    state = reduce(state, KeyEvent.ENTER)
+    state = reduce(state, KeyEvent.ESCAPE)
+    state = reduce(state, KeyEvent.SUBMIT_ALL)
+    return render_lines(state)
+
+@pytest.fixture
+def frame_14_screen(frame_14_lines):
+    return make_pyte_screen(frame_14_lines)
+
+@pytest.fixture
+def frame_accept_terminal_lines():
+    from dataclasses import replace
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.events import KeyEvent
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    mappings = [replace(m, target_value="ATT") if m.ordinal == 3 else m for m in state.mappings]
+    state = replace(state, mappings=mappings)
+    
+    state = reduce(state, KeyEvent.ENTER)
+    for char in "APPLE":
+        state = reduce(state, char)
+    state = reduce(state, KeyEvent.ENTER)
+    state = reduce(state, "y")
+    state = reduce(state, KeyEvent.ENTER)
+    return render_lines(state)
+
+@pytest.fixture
+def frame_accept_terminal_screen(frame_accept_terminal_lines):
+    return make_pyte_screen(frame_accept_terminal_lines)
+
+
+@pytest.fixture
 def assert_snapshot(update_snapshots):
     def _check(screen: pyte.Screen, snapshot_path: Path):
         actual = "\n".join(row.rstrip() for row in screen.display) + "\n"

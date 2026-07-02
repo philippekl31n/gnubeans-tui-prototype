@@ -70,6 +70,7 @@ _CTRL_EVENTS: dict[str, KeyEvent] = {
     "\x0e": KeyEvent.PAGE_DOWN,          # ctrl+n  next-history -> PageDown
     "\x0c": KeyEvent.REDRAW,             # ctrl+l  clear-screen / redraw only
     "\x1b": KeyEvent.ESCAPE,             # ESC     clear filter / cancel edit
+    "\x13": KeyEvent.SUBMIT_ALL,         # ctrl+s  submit all mappings
     "\r":   KeyEvent.ENTER,              # enter
     "\n":   KeyEvent.ENTER,              # enter
 }

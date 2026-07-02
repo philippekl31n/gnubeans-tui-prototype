@@ -541,6 +541,20 @@ def _reduce_table_page_down(state: AppState) -> AppState:
     return _page_selection(state, 1)
 
 
+def _reduce_browsing_submit_all(state: AppState) -> AppState:
+    if select_unresolved_collision_count(state.mappings) == 0:
+        return replace(
+            state,
+            mode=Mode.CONFIRMING,
+            confirmation=replace(
+                state.confirmation,
+                kind=ConfirmationKind.ACCEPT,
+                choice=ConfirmationChoice.NO,
+            ),
+        )
+    return state
+
+
 # ── EDITING token handlers ────────────────────────────────────────────────────
 
 
@@ -677,8 +691,40 @@ def _reduce_submit_edit(state: AppState) -> AppState:
             committed.confirmation,
             kind=ConfirmationKind.ACCEPT,
             choice=ConfirmationChoice.NO,
-        ),
-    )
+            )
+        )
+
+
+# ── CONFIRMING handlers ───────────────────────────────────────────────────────
+
+
+def _reduce_confirming_insert_char(state: AppState, char: str, now: Optional[float]) -> AppState:
+    if state.confirmation.kind not in (ConfirmationKind.ACCEPT, ConfirmationKind.EXIT):
+        return state
+    char_lower = char.lower()
+    if char_lower == 'y':
+        return replace(state, confirmation=replace(state.confirmation, choice=ConfirmationChoice.YES))
+    elif char_lower == 'n':
+        return replace(state, confirmation=replace(state.confirmation, choice=ConfirmationChoice.NO))
+    return state
+
+
+def _reduce_confirming_left(state: AppState) -> AppState:
+    return replace(state, confirmation=replace(state.confirmation, choice=ConfirmationChoice.YES))
+
+def _reduce_confirming_right(state: AppState) -> AppState:
+    return replace(state, confirmation=replace(state.confirmation, choice=ConfirmationChoice.NO))
+
+
+def _reduce_confirming_enter(state: AppState) -> AppState:
+    if state.confirmation.choice == ConfirmationChoice.YES:
+        status = "ACCEPTED" if state.confirmation.kind == ConfirmationKind.ACCEPT else "SKIPPED"
+        return replace(state, result=ResultState(status=status))
+    return replace(state, mode=Mode.BROWSING)
+
+
+def _reduce_confirming_escape(state: AppState) -> AppState:
+    return replace(state, mode=Mode.BROWSING)
 
 
 # ── dispatch tables ───────────────────────────────────────────────────────────
@@ -704,6 +750,7 @@ _BROWSING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
     KeyEvent.PAGE_DOWN:          _reduce_table_page_down,
     KeyEvent.SELECTION_UP:       _reduce_table_selection_up,
     KeyEvent.SELECTION_DOWN:     _reduce_table_selection_down,
+    KeyEvent.SUBMIT_ALL:         _reduce_browsing_submit_all,
 }
 
 _EDITING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
@@ -729,10 +776,13 @@ _EDITING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
     # PAGE_UP/DOWN → no-op in EDITING for now
 }
 
-# CONFIRMING key handling (y/n/arrows/Enter, spec §4.2) is a future story; only
-# ctrl+c is wired so a reviewer who lands here via submit is never trapped.
+# CONFIRMING key handling (y/n/arrows/Enter, spec §4.2)
 _CONFIRMING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
     KeyEvent.QUIT: _reduce_quit,
+    KeyEvent.CURSOR_LEFT: _reduce_confirming_left,
+    KeyEvent.CURSOR_RIGHT: _reduce_confirming_right,
+    KeyEvent.ENTER: _reduce_confirming_enter,
+    KeyEvent.ESCAPE: _reduce_confirming_escape,
 }
 
 # Top-level registry: one dict per mode.
@@ -745,6 +795,7 @@ _MODE_HANDLERS: dict[Mode, dict[KeyEvent, Callable[[AppState], AppState]]] = {
 _MODE_INSERT: dict[Mode, Callable[[AppState, str, Optional[float]], AppState]] = {
     Mode.BROWSING: _reduce_filter_insert_char,
     Mode.EDITING:  _reduce_token_insert_char,
+    Mode.CONFIRMING: _reduce_confirming_insert_char,
 }
 
 

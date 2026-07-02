@@ -35,6 +35,7 @@ class KeyEvent(Enum):
     PAGE_DOWN = auto()
     SELECTION_UP = auto()
     SELECTION_DOWN = auto()
+    SUBMIT_ALL = auto()
 
 
 # str branch = single printable character to insert at the active cursor.
