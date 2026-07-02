@@ -411,6 +411,32 @@ def frame_6_screen(frame_6_lines):
 
 
 @pytest.fixture
+def frame_1b_lines():
+    """Frame 1b: ctrl+c from BROWSING opens the exit confirmation (TASK-012).
+
+    From the initial browsing state (frame 1a, one unresolved collision) the
+    reviewer presses ctrl+c: the app enters CONFIRMING/EXIT with choice NO and
+    the second ctrl+c armed. The full table renders at scroll 0 with no row
+    cursor, the prompt reads "Skip adding commodities?" with the N
+    reverse-video, and the footer reads "enter edit mappings" (spec §4.2,
+    §6.4–6.6).
+    """
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.events import KeyEvent
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    state = reduce(state, KeyEvent.QUIT)
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_1b_screen(frame_1b_lines):
+    return make_pyte_screen(frame_1b_lines)
+
+
+@pytest.fixture
 def frame_7a_lines():
     """Frame 7a: one down-arrow scroll of the accept-confirmation table.
 
