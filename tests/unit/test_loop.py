@@ -55,6 +55,18 @@ def filter_line(frame):
     return next(line for line in frame if "Filter:" in line)
 
 
+@pytest.fixture
+def sigint_sends(monkeypatch):
+    """Stub the loop's SIGINT seam, returning the list of recorded sends.
+
+    Any test driving the second-ctrl+c force-exit needs this so the real
+    interrupt never reaches the test process.
+    """
+    sends: list[bool] = []
+    monkeypatch.setattr(loop, "_send_sigint", lambda: sends.append(True))
+    return sends
+
+
 # ── quit-key normalisation ───────────────────────────────────────────────────
 
 def test_key_to_event_maps_ctrl_c_and_readable_token_to_quit():
@@ -229,7 +241,7 @@ def test_redundant_clear_after_typing_still_rerenders_once_then_skips():
     assert len(frames) == 3  # initial + insert + first (effective) clear
 
 
-def test_double_ctrl_c_exits_with_none():
+def test_double_ctrl_c_exits_with_none(sigint_sends):
     # TASK-012: the first ctrl+c opens the exit confirmation (frame 1b); the
     # second force-exits, and the trailing key is never processed.
     result, frames = run_keys(["a", CTRL_C, CTRL_C, "b"])
@@ -274,7 +286,9 @@ def test_confirming_the_exit_prompt_skips_with_none():
     assert not any("Filter: 34" in line for line in frames[-1])
 
 
-def test_ctrl_c_in_confirming_opens_the_exit_prompt_and_a_second_forces_out():
+def test_ctrl_c_in_confirming_opens_the_exit_prompt_and_a_second_forces_out(
+    sigint_sends,
+):
     # Resolve the final collision (ordinal 3 -> "ATT") to land in CONFIRMING,
     # then ctrl+c: the accept prompt becomes the exit confirmation (TASK-012,
     # spec §4.2); a second ctrl+c force-exits and the trailing key never runs.
@@ -289,11 +303,43 @@ def test_ctrl_c_in_confirming_opens_the_exit_prompt_and_a_second_forces_out():
     assert not any("Filter: 3" in line for line in frames[-1])
 
 
-def test_quit_does_not_render_a_terminal_frame():
+def test_quit_does_not_render_a_terminal_frame(sigint_sends):
     # Force-exiting paints no §6.7 result frame: the last rendered frame is
     # the exit prompt the first ctrl+c opened.
     _, frames = run_keys(["3", CTRL_C, CTRL_C])
     assert len(frames) == 3  # initial + the "3" insert + the exit prompt
+
+
+# ── the second ctrl+c sends a real SIGINT (TASK-012, spec §4.2/§6.7) ─────────
+
+
+def test_second_ctrl_c_sends_sigint(sigint_sends):
+    # The force-exit re-raises the interrupt through the _send_sigint seam,
+    # stubbed by the fixture so the test process survives; the loop then
+    # returns None.
+    result, _ = run_keys(["3", CTRL_C, CTRL_C])
+    assert result is None
+    assert len(sigint_sends) == 1
+
+
+def test_enter_on_yes_exit_skips_without_sigint(sigint_sends):
+    # Enter on the YES exit confirmation is a clean skip: SKIPPED, no signal
+    # (spec §4.1/§4.2 reserve SIGINT for the second ctrl+c).
+    result, _ = run_keys([CTRL_C, "y", Key(name="KEY_ENTER")])
+    assert result is None
+    assert sigint_sends == []
+
+
+def test_send_sigint_interrupts_this_process(monkeypatch):
+    # The default seam delivers SIGINT to the running process; os.kill is
+    # stubbed so the interrupt is observed rather than raised.
+    import os
+    import signal
+
+    kills = []
+    monkeypatch.setattr(loop.os, "kill", lambda pid, sig: kills.append((pid, sig)))
+    loop._send_sigint()
+    assert kills == [(os.getpid(), signal.SIGINT)]
 
 
 # ── accept confirmation produces output (TASK-010, spec §6.7) ─────────────────

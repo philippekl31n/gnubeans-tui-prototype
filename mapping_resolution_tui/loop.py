@@ -15,6 +15,8 @@ and rendered output unchanged (FR30). The ``keys`` and ``render`` seams on
 :func:`run` keep the loop drivable headless.
 """
 
+import os
+import signal
 import sys
 from typing import Callable, Iterable, Optional
 
@@ -112,6 +114,16 @@ def key_to_event(key) -> Optional[InputEvent]:
     return None
 
 
+def _send_sigint() -> None:
+    """Deliver SIGINT to this process (the §4.2 second-ctrl+c force-exit).
+
+    The reducer stays pure by only marking ``result.status = SIGINT``; this
+    module-level seam owns the side effect, so tests monkeypatch it to observe
+    the force-exit without interrupting the test process.
+    """
+    os.kill(os.getpid(), signal.SIGINT)
+
+
 def run(
     config: AppConfig,
     mappings: list[Mapping],
@@ -128,10 +140,13 @@ def run(
 
     The loop itself is mode-blind: every key goes through :func:`key_to_event`
     and the reducer's mode tables, and the run is over when the reducer marks
-    ``result.status`` terminal (accept confirmation + YES → ACCEPTED; ctrl+c
-    outside an edit → CANCELLED). Returns the resolved mappings on a clean
+    ``result.status`` terminal: accept confirmation + YES → ACCEPTED (paint the
+    §6.7 result frame, return the resolved mappings); exit confirmation + YES →
+    SKIPPED (a clean skip that adds no commodities — no result frame, return
+    ``None``); a second ctrl+c in the exit confirmation → SIGINT (re-raise the
+    interrupt to force-exit). Returns the resolved mappings on a clean
     end-of-input exit or an ACCEPTED accept confirmation, or ``None`` when the
-    run was cancelled.
+    reviewer skipped adding commodities.
     """
     if keys is None:
         keys = _terminal_keys()
@@ -154,16 +169,24 @@ def run(
             continue
 
         new_state = reduce(state, event)
-        if new_state.result.status == "ACCEPTED":
+        status = new_state.result.status
+        if status == "ACCEPTED":
             # Accept confirmation with choice=YES committed every mapping:
             # paint the §6.7 terminal result frame, then exit returning the
             # resolved mappings (the corrected commodity import).
             render(render_lines(new_state))
             return new_state.mappings
-        if new_state.result.status != "RUNNING":
-            # ctrl+c outside an edit ends the review directly (CANCELLED); the
-            # EXIT-confirmation SKIPPED/SIGINT flow lands with a later story.
-            # No terminal frame is painted for those interim exits.
+        if status == "SIGINT":
+            # The second ctrl+c in the exit confirmation force-exits: re-raise
+            # the interrupt so the process terminates conventionally (exit code
+            # 130, spec §4.2/§6.7), bypassing the y/N choice entirely. No
+            # terminal frame is painted.
+            _send_sigint()
+            return None
+        if status != "RUNNING":
+            # SKIPPED: the reviewer confirmed the exit prompt on YES — a clean
+            # skip that adds no commodities. The run ends with no mappings and
+            # no §6.7 result frame.
             return None
 
         if new_state is state:
