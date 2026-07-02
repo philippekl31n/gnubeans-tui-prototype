@@ -443,11 +443,12 @@ def select_footer_content(state: "AppState") -> FooterContent:
             hints.append(FooterHint.CLEAR_FILTER)
         return FooterContent(hints=tuple(hints))
     if state.mode == Mode.CONFIRMING:
-        action = (
-            FooterHint.CONFIRM
-            if state.confirmation.choice == ConfirmationChoice.YES
-            else FooterHint.EDIT_MAPPINGS
-        )
+        if state.confirmation.choice == ConfirmationChoice.NO:
+            action = FooterHint.EDIT_MAPPINGS
+        elif state.confirmation.kind == ConfirmationKind.ACCEPT:
+            action = FooterHint.SUBMIT_MAPPINGS
+        else:
+            action = FooterHint.SKIP
         return FooterContent(hints=(FooterHint.SCROLL, FooterHint.PAGE_SCROLL, action))
 
     if state.edit is None:

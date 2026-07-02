@@ -39,6 +39,23 @@ def frame_1a_screen(frame_1a_lines):
 
 
 @pytest.fixture
+def frame_1b_lines():
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.events import KeyEvent
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    state = reduce(state, KeyEvent.QUIT)  # ctrl+c
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_1b_screen(frame_1b_lines):
+    return make_pyte_screen(frame_1b_lines)
+
+
+@pytest.fixture
 def frame_2_lines():
     """Frame 2: Tab autocompletes a leading ``!`` collision metafilter from 1a.
 

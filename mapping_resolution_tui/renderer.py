@@ -39,6 +39,8 @@ _FOOTER_HINT_DISPLAY: dict[FooterHint, tuple[str, str]] = {
     FooterHint.SCROLL:        ("↑↓",       "scroll"),
     FooterHint.CONFIRM:       ("↵",        "submit mappings"),
     FooterHint.EDIT_MAPPINGS: ("↵",        "edit mappings"),
+    FooterHint.SUBMIT_MAPPINGS: ("↵",      "submit mappings"),
+    FooterHint.SKIP:          ("↵",        "skip"),
     FooterHint.TYPE_TO_EDIT:  ("type",     "to edit"),
     FooterHint.SELECT_SOURCE: ("↑↓",       "select source"),
     FooterHint.SUBMIT:        ("↵",        "submit"),

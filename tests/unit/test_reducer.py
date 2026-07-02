@@ -390,18 +390,20 @@ def test_backward_kill_word_with_no_word_behind_is_a_noop(state):
 # ── KeyEvent.QUIT: mode-dispatched ctrl+c (spec §4.2 ctrl+c rows) ────────────
 
 
-def test_quit_in_browsing_marks_the_run_cancelled(state):
-    from mapping_resolution_tui.state import Mode
+def test_quit_in_browsing_enters_exit_confirmation(state):
+    from mapping_resolution_tui.state import Mode, ConfirmationKind, ConfirmationChoice
 
     result = reduce(state, KeyEvent.QUIT)
 
-    assert result.result.status == "CANCELLED"
-    assert result.mode == Mode.BROWSING  # only the result lifecycle changes
-    assert result.mappings == state.mappings
+    assert result.result.status == "RUNNING"
+    assert result.mode == Mode.CONFIRMING
+    assert result.confirmation.kind == ConfirmationKind.EXIT
+    assert result.confirmation.choice == ConfirmationChoice.NO
+    assert result.confirmation.second_ctrl_c_armed is True
 
 
-def test_quit_in_confirming_marks_the_run_cancelled(state):
-    from mapping_resolution_tui.state import Mode
+def test_quit_in_confirming_enters_exit_confirmation(state):
+    from mapping_resolution_tui.state import Mode, ConfirmationKind, ConfirmationChoice
 
     # Drive to CONFIRMING by resolving the final collision from ordinal 3.
     s = reduce(state, KeyEvent.SELECTION_DOWN)
@@ -414,4 +416,16 @@ def test_quit_in_confirming_marks_the_run_cancelled(state):
 
     result = reduce(s, KeyEvent.QUIT)
 
-    assert result.result.status == "CANCELLED"
+    assert result.result.status == "RUNNING"
+    assert result.mode == Mode.CONFIRMING
+    assert result.confirmation.kind == ConfirmationKind.EXIT
+    assert result.confirmation.choice == ConfirmationChoice.NO
+    assert result.confirmation.second_ctrl_c_armed is True
+
+def test_second_quit_in_exit_confirmation_marks_the_run_sigint(state):
+    from mapping_resolution_tui.state import Mode
+    s = reduce(state, KeyEvent.QUIT)
+    assert s.mode == Mode.CONFIRMING
+    result = reduce(s, KeyEvent.QUIT)
+    assert result.result.status == "SIGINT"
+

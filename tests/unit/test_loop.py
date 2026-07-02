@@ -227,11 +227,10 @@ def test_redundant_clear_after_typing_still_rerenders_once_then_skips():
 
 
 def test_quit_key_exits_cleanly_with_none():
-    result, frames = run_keys(["a", CTRL_C, "b"])
+    result, frames = run_keys(["a", CTRL_C, CTRL_C, "b"])
     assert result is None
     # the trailing "b" after the quit key is never processed
-    assert len(frames) == 2  # initial + the "a" insert
-
+    assert len(frames) == 3  # initial + the "a" insert + EXIT confirmation
 
 # ── ctrl+c during EDITING cancels the edit (TASK-008, spec §4.2 / FR16) ──────
 
@@ -253,27 +252,25 @@ def test_ctrl_c_cancel_rerenders_the_restored_browsing_frame():
     assert "Filter:" in filter_line(frames[-1])  # back to the browsing prompt
 
 
-def test_ctrl_c_outside_an_edit_still_quits():
-    result, frames = run_keys(["3", CTRL_C, "4"])
+def test_ctrl_c_outside_an_edit_enters_exit_confirmation_and_second_quits():
+    result, frames = run_keys(["3", CTRL_C, CTRL_C, "4"])
     assert result is None
-    assert "Filter: 3" in filter_line(frames[-1])  # the trailing "4" never ran
+    assert any("Skip adding commodities?" in line for line in frames[-1])  # left at exit confirmation
 
 
-def test_ctrl_c_in_confirming_quits_the_run():
+def test_ctrl_c_in_confirming_enters_exit_confirmation_and_second_quits():
     # Resolve the final collision (ordinal 3 -> "ATT") to land in CONFIRMING,
-    # then ctrl+c: no EXIT-confirmation flow exists yet, so the run ends and
-    # the trailing key is never consumed.
+    # then ctrl+c enters EXIT confirmation, then second ctrl+c quits.
     result, frames = run_keys(
         [Key(name="KEY_DOWN"), Key(name="KEY_DOWN"), Key(name="KEY_ENTER"),
-         "A", "T", "T", Key(name="KEY_ENTER"), CTRL_C, "3"]
+         "A", "T", "T", Key(name="KEY_ENTER"), CTRL_C, CTRL_C, "3"]
     )
     assert result is None
-    # No Filter line exists in CONFIRMING mode, so we just check it entered it:
-    assert any("Accept all?" in line for line in frames[-1])
+    assert any("Skip adding commodities?" in line for line in frames[-1])
 
 
 def test_quit_does_not_render_a_terminal_frame():
     # Ending the run repaints nothing: the §6.7 result frame is a later task,
-    # so the last rendered frame is the state before ctrl+c.
-    _, frames = run_keys(["3", CTRL_C])
-    assert len(frames) == 2  # initial + the "3" insert only
+    # so the last rendered frame is the state before the second ctrl+c (the exit confirmation).
+    _, frames = run_keys(["3", CTRL_C, CTRL_C])
+    assert len(frames) == 3  # initial + the "3" insert + EXIT confirmation

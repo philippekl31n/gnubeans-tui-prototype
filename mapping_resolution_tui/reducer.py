@@ -509,17 +509,31 @@ def _reduce_redraw(state: AppState) -> AppState:
     return state  # ctrl+l re-renders only; never mutates state (spec S5.1)
 
 
-def _reduce_quit(state: AppState) -> AppState:
-    """Mark the run cancelled; the loop exits on any non-RUNNING result status.
+def _reduce_browsing_quit(state: AppState) -> AppState:
+    return replace(
+        state,
+        mode=Mode.CONFIRMING,
+        confirmation=replace(
+            state.confirmation,
+            kind=ConfirmationKind.EXIT,
+            choice=ConfirmationChoice.NO,
+            second_ctrl_c_armed=True,
+        )
+    )
 
-    Interim pre-confirmation behavior for ctrl+c outside an edit: the full
-    spec §4.2 contract routes ctrl+c in BROWSING and CONFIRMING through the
-    EXIT confirmation (frame 1b, with a second armed ctrl+c sending SIGINT).
-    Until that story lands, ctrl+c ends the review directly. In EDITING the
-    mode table maps QUIT to :func:`_reduce_cancel_edit` instead, so an edit
-    is never fatal (FR16).
-    """
-    return replace(state, result=ResultState(status="CANCELLED"))
+def _reduce_confirming_quit(state: AppState) -> AppState:
+    if state.confirmation.kind == ConfirmationKind.EXIT and state.confirmation.second_ctrl_c_armed:
+        return replace(state, result=ResultState(status="SIGINT"))
+    return replace(
+        state,
+        mode=Mode.CONFIRMING,
+        confirmation=replace(
+            state.confirmation,
+            kind=ConfirmationKind.EXIT,
+            choice=ConfirmationChoice.NO,
+            second_ctrl_c_armed=True,
+        )
+    )
 
 
 # ── BROWSING table/navigation handlers ───────────────────────────────────────
@@ -764,7 +778,7 @@ def _reduce_confirming_page_down(state: AppState) -> AppState:
 
 
 _BROWSING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
-    KeyEvent.QUIT:               _reduce_quit,
+    KeyEvent.QUIT:               _reduce_browsing_quit,
     KeyEvent.ESCAPE:             _reduce_clear_filter,
     KeyEvent.ENTER:              _reduce_enter_edit,
     KeyEvent.BACKSPACE:          _reduce_filter_backspace,
@@ -811,7 +825,7 @@ _EDITING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
 
 # CONFIRMING key handling (y/n/arrows/Enter, spec §4.2)
 _CONFIRMING_HANDLERS: dict[KeyEvent, Callable[[AppState], AppState]] = {
-    KeyEvent.QUIT: _reduce_quit,
+    KeyEvent.QUIT: _reduce_confirming_quit,
     KeyEvent.CURSOR_LEFT: _reduce_confirming_left,
     KeyEvent.CURSOR_RIGHT: _reduce_confirming_right,
     KeyEvent.ENTER: _reduce_confirming_enter,
