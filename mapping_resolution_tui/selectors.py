@@ -351,13 +351,19 @@ def select_ordinal_match_spans(
 
 
 def select_body_rows(state: "AppState") -> list[Mapping]:
-    """Return the mappings to render in the table body (spec §8.2)."""
-    visible = select_visible_rows(state)
+    """Return the mappings to render in the table body (spec §8.2).
+
+    ``BROWSING`` windows the filtered ``visibleRows``; ``CONFIRMING`` windows
+    the full mapping list, so the active filter never constrains the confirming
+    table (spec §10.1 frame 14). Both apply the same ``scrollOffset`` window
+    over their respective row lists.
+    """
+    rows = state.mappings if state.mode is Mode.CONFIRMING else select_visible_rows(state)
     capacity = select_body_capacity(state.terminal.height)
-    if capacity <= 0 or not visible:
+    if capacity <= 0 or not rows:
         return []
     scroll = state.selection.scroll_offset
-    return visible[scroll : scroll + capacity]
+    return rows[scroll : scroll + capacity]
 
 
 def select_filter_prompt(state: "AppState", unresolved_count: int) -> FilterPromptContent:

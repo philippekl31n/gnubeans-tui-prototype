@@ -9,10 +9,12 @@ from dataclasses import FrozenInstanceError, replace
 import pytest
 
 from tests.fixtures.storyboard import make_config, make_mappings
-from mapping_resolution_tui.reducer import make_initial_state
+from mapping_resolution_tui.reducer import make_initial_state, reduce
 from mapping_resolution_tui.selectors import (
+    select_body_rows,
     select_confirmation_header,
     select_confirmation_prompt,
+    select_visible_rows,
 )
 from mapping_resolution_tui.state import (
     ConfirmationChoice,
@@ -155,3 +157,28 @@ def test_header_is_pure_and_leaves_state_unchanged():
     before = state
     select_confirmation_header(state)
     assert state is before
+
+
+# ── select_body_rows ignores the filter in CONFIRMING (spec §10.1 frame 14) ──
+
+def test_body_rows_in_confirming_ignore_the_active_filter():
+    state = _resolved_state()
+    state = reduce(state, "1")
+    state = reduce(state, "2")  # filter "12" matches no rows (frame 13)
+    state = _confirming(state, ConfirmationKind.ACCEPT, ConfirmationChoice.NO)
+
+    assert select_visible_rows(state) == []  # filter matches nothing
+    assert [m.ordinal for m in select_body_rows(state)] == [1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+
+def test_body_rows_in_confirming_apply_the_scroll_offset_window():
+    state = _confirming(_resolved_state(), ConfirmationKind.ACCEPT, ConfirmationChoice.NO)
+    state = replace(state, selection=replace(state.selection, scroll_offset=1))
+    assert [m.ordinal for m in select_body_rows(state)][0] == 2
+
+
+def test_body_rows_in_browsing_still_respect_the_filter():
+    state = _resolved_state()
+    state = reduce(state, "1")
+    state = reduce(state, "2")  # BROWSING with filter "12" -> no rows
+    assert select_body_rows(state) == []
