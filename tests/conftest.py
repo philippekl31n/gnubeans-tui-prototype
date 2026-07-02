@@ -380,6 +380,100 @@ def frame_submit_no_resolution_screen(frame_submit_no_resolution_lines):
 
 
 @pytest.fixture
+def frame_6_lines():
+    """Frame 6: resolving the final collision auto-enters the accept confirmation.
+
+    From the frame 5 context (collision metafilter, edit on ordinal 3, buffer
+    "ATT") the reviewer submits; the commit leaves zero unresolved collisions,
+    so the app enters CONFIRMING/ACCEPT with choice NO (FR23). The full table
+    renders at scroll 0 with no row cursor, the prompt reads "Accept all?"
+    with the N reverse-video, and the footer reads "enter edit mappings" —
+    identical to frame 7a, never "enter confirm" (spec §4.1, §6.4–6.6).
+    """
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.events import KeyEvent
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    state = reduce(state, KeyEvent.TAB)
+    state = reduce(state, KeyEvent.SELECTION_DOWN)
+    state = reduce(state, KeyEvent.ENTER)
+    for char in "ATT":
+        state = reduce(state, char)
+    state = reduce(state, KeyEvent.ENTER)
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_6_screen(frame_6_lines):
+    return make_pyte_screen(frame_6_lines)
+
+
+@pytest.fixture
+def frame_14_lines():
+    """Frame 14: ctrl+s from the frame 13 no-match filter re-enters the accept
+    confirmation.
+
+    The collisions are all resolved, so ctrl+s opens CONFIRMING/ACCEPT/NO even
+    though the preserved '12' filter matches no rows (spec §3.4). CONFIRMING
+    windows the full mapping list, so the frame is identical to frame 6.
+    """
+    from dataclasses import replace
+
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.events import KeyEvent
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    mappings = [
+        replace(m, target_value="ATT") if m.ordinal == 3 else m
+        for m in state.mappings
+    ]
+    state = replace(state, mappings=mappings)
+    state = reduce(state, "1")
+    state = reduce(state, "2")
+    state = reduce(state, KeyEvent.SUBMIT)
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_14_screen(frame_14_lines):
+    return make_pyte_screen(frame_14_lines)
+
+
+@pytest.fixture
+def frame_accept_terminal_lines():
+    """Accept-terminal frame: Enter on YES commits and paints frame 15.
+
+    From frame 6 the reviewer presses y (choice YES) and Enter: the run is
+    ACCEPTED and the render collapses to the two-row terminal result frame —
+    the created message over a bare prompt glyph (spec §6.7).
+    """
+    from tests.fixtures.storyboard import make_config, make_mappings
+    from mapping_resolution_tui.events import KeyEvent
+    from mapping_resolution_tui.reducer import make_initial_state, reduce
+    from mapping_resolution_tui.renderer import render_lines
+
+    state = make_initial_state(make_config(), make_mappings(), frame_height=15)
+    state = reduce(state, KeyEvent.TAB)
+    state = reduce(state, KeyEvent.SELECTION_DOWN)
+    state = reduce(state, KeyEvent.ENTER)
+    for char in "ATT":
+        state = reduce(state, char)
+    state = reduce(state, KeyEvent.ENTER)
+    state = reduce(state, "y")
+    state = reduce(state, KeyEvent.ENTER)
+    return render_lines(state)
+
+
+@pytest.fixture
+def frame_accept_terminal_screen(frame_accept_terminal_lines):
+    return make_pyte_screen(frame_accept_terminal_lines)
+
+
+@pytest.fixture
 def assert_snapshot(update_snapshots):
     def _check(screen: pyte.Screen, snapshot_path: Path):
         actual = "\n".join(row.rstrip() for row in screen.display) + "\n"
